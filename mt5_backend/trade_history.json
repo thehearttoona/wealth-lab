@@ -1,0 +1,18 @@
+[
+  {
+    "id": "20260212_225924_999999",
+    "magic": 999999,
+    "symbol": "GOLDmicro",
+    "direction": "SELL",
+    "first_lot": 0.11,
+    "max_positions_opened": 5,
+    "total_lots": 3.41,
+    "profit": 10.87,
+    "cost_basis": 17275.08,
+    "profit_percent": 0.0629,
+    "close_reason": "tp_hit",
+    "opened_at": "2026-02-12T21:58:09.600733",
+    "closed_at": "2026-02-12T22:59:24.288270",
+    "duration_minutes": 61.24
+  }
+]

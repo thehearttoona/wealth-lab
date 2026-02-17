@@ -1,0 +1,54 @@
+export type InvestmentType = 'stock' | 'fund' | 'crypto' | 'gold' | 'bond' | 'property' | 'other';
+
+export type Currency = 'THB' | 'USD' | 'EUR' | 'JPY' | 'CNY';
+
+export interface Investment {
+  id: string;
+  type: InvestmentType;
+  symbol: string;        // ตัวย่อ เช่น PTT, BTC, XAU
+  name: string;          // ชื่อเต็ม
+  quantity: number;      // จำนวนหุ้น/หน่วย
+  buyPrice: number;      // ราคาซื้อเฉลี่ย
+  currency?: Currency;   // สกุลเงินของราคาซื้อ
+  currentPrice?: number; // ราคาปัจจุบัน (จาก API หรือกรอกเอง)
+  buyDate: string;       // วันที่ซื้อ
+  notes?: string;        // บันทึกเพิ่มเติม
+  fees?: number;         // ค่าธรรมเนียม
+}
+
+export interface Transaction {
+  id: string;
+  investmentId: string;
+  type: 'buy' | 'sell';
+  quantity: number;
+  price: number;
+  date: string;
+  fees?: number;
+  notes?: string;
+}
+
+export interface PortfolioSummary {
+  totalValue: number;      // มูลค่ารวม
+  totalCost: number;       // ต้นทุนรวม
+  totalProfit: number;     // กำไร/ขาดทุนรวม
+  totalProfitPercent: number; // % กำไร/ขาดทุน
+  byType: {
+    [key in InvestmentType]?: {
+      value: number;
+      cost: number;
+      profit: number;
+      profitPercent: number;
+      count: number;
+    };
+  };
+}
+
+export const INVESTMENT_TYPES: { value: InvestmentType; label: string; icon: any }[] = [
+  { value: 'stock', label: 'หุ้น', icon: 'trending-up-outline' },
+  { value: 'fund', label: 'กองทุน', icon: 'briefcase-outline' },
+  { value: 'crypto', label: 'Crypto', icon: 'logo-bitcoin' },
+  { value: 'gold', label: 'ทอง', icon: 'diamond-outline' },
+  { value: 'bond', label: 'พันธบัตร', icon: 'document-text-outline' },
+  { value: 'property', label: 'อสังหา', icon: 'home-outline' },
+  { value: 'other', label: 'อื่นๆ', icon: 'cube-outline' },
+];
