@@ -1,21 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   Alert,
   ScrollView,
   Platform,
-  Switch,
 } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
+import { Swipeable } from 'react-native-gesture-handler';
+import { FontAwesome,Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, DateData } from 'react-native-calendars';
-import { RootStackParamList, Expense, RecurringBill } from '../types';
-import { getExpenses, deleteExpense, getRecurringBills, deleteRecurringBill, updateRecurringBill } from '../services/storage';
+import { RootStackParamList, Expense, RecurringBill, Income } from '../types';
+import { getIncomes, getMonthlyIncomeTotal } from '../services/incomeStorage';
+
+import { getExpenses, deleteExpense, getRecurringBills, deleteRecurringBill } from '../services/storage';
 import { formatCurrency, formatDate, COLORS, getCurrentMonthYear } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 
@@ -23,9 +24,8 @@ type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'H
 
 export default function HomeScreen() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
-  const { isDesktop } = useResponsive();
+  const { isDesktop, isMobile } = useResponsive();
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [totalToday, setTotalToday] = useState(0);
   const [weekTotal, setWeekTotal] = useState(0);
   const [totalMonth, setTotalMonth] = useState(0);
   const [selectedDate, setSelectedDate] = useState('');
@@ -33,9 +33,10 @@ export default function HomeScreen() {
   const [filteredExpenses, setFilteredExpenses] = useState<Expense[]>([]);
   const [recurringBills, setRecurringBills] = useState<RecurringBill[]>([]);
   const [totalMonthlyBills, setTotalMonthlyBills] = useState(0);
+  const [monthlyIncome, setMonthlyIncome] = useState(0);
+
 
   const calculateMarkedDates = async (dailyExpenses: Expense[]) => {
-    const bills = await getRecurringBills();
     const marked: any = {};
     const today = new Date();
     const currentMonth = today.getMonth();
@@ -54,11 +55,7 @@ export default function HomeScreen() {
         })
         .reduce((sum, e) => sum + e.amount, 0);
 
-      const recurringTotal = bills
-        .filter((b) => b.isActive && b.dueDay === day)
-        .reduce((sum, b) => sum + b.amount, 0);
-
-      const totalAmount = dailyTotal + recurringTotal;
+      const totalAmount = dailyTotal;
 
       if (totalAmount > 0) {
         marked[dateStr] = {
@@ -84,10 +81,7 @@ export default function HomeScreen() {
       marked[todayStr].selected = true;
       marked[todayStr].selectedColor = COLORS.primary;
     } else {
-      marked[todayStr] = {
-        selected: true,
-        selectedColor: COLORS.primary,
-      };
+      marked[todayStr] = { selected: true, selectedColor: COLORS.primary };
     }
 
     setMarkedDates(marked);
@@ -98,7 +92,6 @@ export default function HomeScreen() {
       setFilteredExpenses(allExpenses.slice(0, 10));
       return;
     }
-
     const selectedDateObj = new Date(dateStr);
     const filtered = allExpenses.filter((e) => {
       const expenseDate = new Date(e.date);
@@ -110,14 +103,15 @@ export default function HomeScreen() {
   };
 
   const loadExpenses = async () => {
+    console.log(await getIncomes());
     const allExpenses = await getExpenses();
-    const dailyExpenses = allExpenses.filter((e) => e.type === 'daily' );
+    const dailyExpenses = allExpenses.filter((e) => e.type === 'daily');
     const sorted = dailyExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setExpenses(sorted);
 
     const today = new Date();
     const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - today.getDay()); 
+    startOfWeek.setDate(today.getDate() - today.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
     const endOfWeek = new Date(startOfWeek);
     endOfWeek.setDate(startOfWeek.getDate() + 6);
@@ -125,19 +119,18 @@ export default function HomeScreen() {
 
     const weekTotal = dailyExpenses
       .filter((e) => {
-        const expenseDate = new Date(e.date);
-        return expenseDate >= startOfWeek && expenseDate <= endOfWeek;
+        const d = new Date(e.date);
+        return d >= startOfWeek && d <= endOfWeek;
       })
       .reduce((sum, e) => sum + e.amount, 0);
     setWeekTotal(weekTotal);
-
 
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
     const monthTotal = dailyExpenses
       .filter((e) => {
-        const expenseDate = new Date(e.date);
-        return expenseDate.getMonth() === currentMonth && expenseDate.getFullYear() === currentYear;
+        const d = new Date(e.date);
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       })
       .reduce((sum, e) => sum + e.amount, 0);
     setTotalMonth(monthTotal);
@@ -147,9 +140,9 @@ export default function HomeScreen() {
 
     const bills = await getRecurringBills();
     setRecurringBills(bills);
-    const monthlyTotal = bills
-      .filter((b) => b.isActive)
-      .reduce((sum, b) => sum + b.amount, 0);
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const monthlyTotal = bills.reduce((sum, b) => sum + (b.monthlyAmounts?.[currentMonthKey] ?? 0), 0);
     setTotalMonthlyBills(monthlyTotal);
   };
 
@@ -183,12 +176,6 @@ export default function HomeScreen() {
 
   const handleEdit = (item: Expense) => {
     navigation.navigate('AddExpense', { type: 'daily', expense: item });
-  };
-
-  const handleToggleBill = async (bill: RecurringBill) => {
-    const updatedBill = { ...bill, isActive: !bill.isActive };
-    await updateRecurringBill(updatedBill);
-    loadExpenses();
   };
 
   const handleDeleteBill = async (id: string) => {
@@ -226,28 +213,65 @@ export default function HomeScreen() {
     return markedDates[dateString]?.amount || 0;
   };
 
-  const renderExpenseItem = (item: Expense) => (
-    <View style={styles.expenseItem}>
+  const renderExpenseItem = (item: Expense) => {
+    const renderRightActions = () => (
       <TouchableOpacity
-        style={styles.expenseContent}
-        onPress={() => handleEdit(item)}
-      >
-        <View style={styles.expenseLeft}>
-          <Text style={styles.expenseCategory}>{item.category}</Text>
-          <Text style={styles.expenseDescription}>{item.description || '-'}</Text>
-          <Text style={styles.expenseDate}>{formatDate(item.date)}</Text>
-        </View>
-        <Text style={styles.expenseAmount}>{formatCurrency(item.amount)}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.deleteButton}
+        style={styles.swipeDeleteAction}
         onPress={() => handleDelete(item.id)}
       >
-        <FontAwesome name="trash" size={14} color={COLORS.error} />
-        <Text style={styles.deleteButtonText}> ลบ</Text>
+        <FontAwesome name="trash" size={16} color="#fff" />
+        <Text style={styles.swipeDeleteText}>ลบ</Text>
       </TouchableOpacity>
-    </View>
-  );
+    );
+
+    return (
+      <Swipeable
+        key={item.id}
+        renderRightActions={renderRightActions}
+        containerStyle={styles.expenseItem}
+        overshootRight={false}
+      >
+        <TouchableOpacity style={styles.expenseContent} onPress={() => handleEdit(item)}>
+          <View style={styles.expenseLeft}>
+            <Text style={styles.expenseCategory}>{item.category}</Text>
+            <Text style={styles.expenseDescription}>{item.description || '-'}</Text>
+            <Text style={styles.expenseDate}>{formatDate(item.date)}</Text>
+          </View>
+          <Text style={styles.expenseAmount}>{formatCurrency(item.amount)}</Text>
+        </TouchableOpacity>
+      </Swipeable>
+    );
+  };
+
+  const renderIncomeItem = (item: Income) => {
+    const renderRightActions = () => (
+      <TouchableOpacity
+        style={styles.swipeDeleteAction}
+        onPress={() => handleDelete(item.id)}
+      >
+        <FontAwesome name="trash" size={16} color="#fff" />
+        <Text style={styles.swipeDeleteText}>ลบ</Text>
+      </TouchableOpacity>
+    );
+
+    return (
+      <Swipeable
+        key={item.id}
+        renderRightActions={renderRightActions}
+        containerStyle={styles.expenseItem}
+        overshootRight={false}
+      >
+        <TouchableOpacity style={styles.expenseContent} onPress={() => handleEdit(item)}>
+          <View style={styles.expenseLeft}>
+            <Text style={styles.expenseCategory}>{item.category}</Text>
+            <Text style={styles.expenseDescription}>{item.description || '-'}</Text>
+            <Text style={styles.expenseDate}>{formatDate(item.date)}</Text>
+          </View>
+          <Text style={styles.expenseAmount}>{formatCurrency(item.amount)}</Text>
+        </TouchableOpacity>
+      </Swipeable>
+    );
+  };
 
   const renderCalendar = () => (
     <View style={[styles.calendarContainer, isDesktop && styles.calendarContainerDesktop]}>
@@ -309,9 +333,8 @@ export default function HomeScreen() {
       {selectedDate && (
         <View style={styles.selectedDayInfo}>
           <View style={styles.selectedDayTitleContainer}>
-            <FontAwesome name="calendar-check-o" size={14} color={COLORS.text} />
             <Text style={styles.selectedDayTitle}>
-              {' '}{new Date(selectedDate).toLocaleDateString('th-TH', {
+              {new Date(selectedDate).toLocaleDateString('en-EN', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
@@ -319,165 +342,201 @@ export default function HomeScreen() {
             </Text>
           </View>
           <Text style={styles.selectedDayAmount}>
-            รวม: {formatCurrency(getDayTotal(selectedDate))}
+            Total: {formatCurrency(getDayTotal(selectedDate))}
           </Text>
         </View>
       )}
     </View>
   );
 
-  const renderRecurringBills = () => (
-    <View style={[styles.recurringBillsSection, isDesktop && styles.recurringBillsSectionDesktop]}>
-      <View style={styles.sectionHeader}>
-        <View style={styles.sectionTitleContainer}>
-          <FontAwesome name="credit-card" size={16} color={COLORS.text} />
-          <Text style={styles.sectionTitle}> รายจ่ายประจำเดือน</Text>
+  const renderRecurringBills = () => {
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const currentMonthLabel = now.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+
+    return (
+      <View style={[styles.recurringBillsSection, isDesktop && styles.recurringBillsSectionDesktop]}>
+        <View style={styles.sectionHeader}>
+          <View style={styles.sectionTitleContainer}>
+            <FontAwesome name="credit-card" size={16} color={COLORS.text} />
+            <Text style={styles.sectionTitle}> รายจ่ายประจำเดือน</Text>
+          </View>
+          <Text style={styles.monthlyTotal}>{formatCurrency(totalMonthlyBills)}</Text>
         </View>
-        <Text style={styles.monthlyTotal}>{formatCurrency(totalMonthlyBills)}/เดือน</Text>
+
+        <Text style={styles.billMonthLabel}>{currentMonthLabel}</Text>
+
+        {recurringBills.length > 0 ? (
+          <View style={styles.billsList}>
+            {recurringBills.map((bill) => {
+              const thisMonthAmount = bill.monthlyAmounts?.[currentMonthKey];
+              const recordedCount = Object.keys(bill.monthlyAmounts ?? {}).length;
+              return (
+                <View key={bill.id} style={styles.billItem}>
+                  <TouchableOpacity
+                    style={styles.billContent}
+                    onPress={() => handleEditBill(bill)}
+                  >
+                    <View style={styles.billLeft}>
+                      <Text style={styles.billName}>{bill.name}</Text>
+                      <View style={styles.billInfoRow}>
+                        <FontAwesome name="calendar" size={10} color={COLORS.textSecondary} />
+                        <Text style={styles.billDueDate}>
+                          {' '}บันทึกแล้ว {recordedCount} เดือน
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.billRight}>
+                      {thisMonthAmount !== undefined ? (
+                        <Text style={styles.billAmount}>{formatCurrency(thisMonthAmount)}</Text>
+                      ) : (
+                        <Text style={styles.billAmountEmpty}>ยังไม่บันทึก</Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.billDeleteButton}
+                    onPress={() => handleDeleteBill(bill.id)}
+                  >
+                    <FontAwesome name="trash" size={12} color={COLORS.textSecondary} />
+                    <Text style={styles.billDeleteText}> ลบ</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <Text style={styles.emptyBillsText}>ยังไม่มีรายจ่ายประจำเดือน</Text>
+        )}
+
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary]}
+          onPress={() => navigation.navigate('AddExpense', { type: 'recurring' })}
+        >
+          <FontAwesome name="plus-circle" size={16} color={COLORS.primary} />
+          <Text style={styles.buttonSecondaryText}> เพิ่มรายจ่ายประจำเดือน</Text>
+        </TouchableOpacity>
       </View>
-
-      {recurringBills.length > 0 ? (
-        <View style={styles.billsList}>
-          {recurringBills.map((bill) => (
-            <View key={bill.id} style={styles.billItem}>
-              <TouchableOpacity
-                style={styles.billContent}
-                onPress={() => handleEditBill(bill)}
-              >
-                <View style={styles.billLeft}>
-                  <Text style={styles.billName}>{bill.name}</Text>
-                  <View style={styles.billInfoRow}>
-                    <FontAwesome name="calendar" size={10} color={COLORS.textSecondary} />
-                    <Text style={styles.billDueDate}> วันที่ {bill.dueDay} ของทุกเดือน</Text>
-                  </View>
-                </View>
-                <View style={styles.billRight}>
-                  <Text style={styles.billAmount}>{formatCurrency(bill.amount)}</Text>
-                  <Switch
-                    value={bill.isActive}
-                    onValueChange={() => handleToggleBill(bill)}
-                    trackColor={{ false: '#767577', true: COLORS.primary }}
-                    thumbColor={'#ffffff'}
-                    style={styles.billSwitch}
-                  />
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.billDeleteButton}
-                onPress={() => handleDeleteBill(bill.id)}
-              >
-                <FontAwesome name="trash" size={12} color={COLORS.textSecondary} />
-                <Text style={styles.billDeleteText}> ลบ</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
-        </View>
-      ) : (
-        <Text style={styles.emptyBillsText}>ยังไม่มีรายจ่ายประจำเดือน</Text>
-      )}
-
-      <TouchableOpacity
-        style={[styles.button, styles.buttonSecondary]}
-        onPress={() => navigation.navigate('AddExpense', { type: 'recurring' })}
-      >
-        <FontAwesome name="plus-circle" size={16} color={COLORS.primary} />
-        <Text style={styles.buttonSecondaryText}> เพิ่มรายจ่ายประจำเดือน</Text>
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   return (
     <ScrollView style={styles.container}>
       <View style={isDesktop ? styles.desktopInner : undefined}>
-        <View style={styles.summaryContainer}>
-          <TouchableOpacity
-            style={[styles.button, styles.buttonSecondary]}
-            onPress={() => navigation.navigate('AddExpense', { type: 'daily' })}
-          >
-            <FontAwesome name="plus-circle" size={16} color={COLORS.primary} />
-            <Text style={styles.buttonSecondaryText}> เพิ่มรายรับเดือนนี้</Text>
-          </TouchableOpacity>
-        </View>
 
-        {/* Summary Cards */}
-        <View style={styles.summaryContainer}>
+        {/* ── Header ── */}
+        {isDesktop && (
+          /* Desktop: title + add button inline */
+          <View style={styles.desktopHeader}>
+            <View style={styles.desktopHeaderLeft}>
+              <TouchableOpacity
+                style={styles.desktopAddBtn}
+                onPress={() => navigation.navigate('AddExpense', { type: 'daily' })}
+              >
+                <FontAwesome name="plus" size={12} color="#fff" />
+                <Text style={styles.desktopAddBtnText}> Add Expense</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.desktopAddBtn}
+                onPress={() => navigation.navigate('AddIncome', {})}
+              >
+                <FontAwesome name="plus" size={12} color="#fff" />
+                <Text style={styles.desktopAddBtnText}> Add Income</Text>
+              </TouchableOpacity>
+            </View>
+            
+          </View>
+        )}
+
+        {/* ── Summary Cards ── */}
+        <View style={[styles.summaryContainer, isMobile && styles.summaryContainerMobile]}>
           <View style={[styles.summaryCard, isDesktop && styles.summaryCardDesktop]}>
             <View style={styles.summaryLabelContainer}>
               <Text style={styles.summaryLabel}>This Week</Text>
             </View>
-            <Text style={[styles.summaryAmount, isDesktop && styles.summaryAmountDesktop]}>{formatCurrency(weekTotal)}</Text>
+            <Text style={[styles.summaryAmount, isDesktop && styles.summaryAmountDesktop]}>
+              {formatCurrency(weekTotal)}
+            </Text>
           </View>
           <View style={[styles.summaryCard, isDesktop && styles.summaryCardDesktop]}>
             <View style={styles.summaryLabelContainer}>
               <Text style={styles.summaryLabel}>This Month</Text>
             </View>
-            <Text style={[styles.summaryAmount, isDesktop && styles.summaryAmountDesktop]}>{formatCurrency(totalMonth)}</Text>
+            <Text style={[styles.summaryAmount, isDesktop && styles.summaryAmountDesktop]}>
+              {formatCurrency(totalMonth)}
+            </Text>
           </View>
         </View>
 
-        {/* Desktop: Two column layout */}
+        {/* ── Calendar + Recurring Bills ── */}
         {isDesktop ? (
           <View style={styles.desktopTwoColumn}>
             <View style={styles.desktopColumnLeft}>
               {renderCalendar()}
             </View>
-            <View style={styles.desktopColumnRight}>
+            {/* <View style={styles.desktopColumnRight}>
               {renderRecurringBills()}
-            </View>
+            </View> */}
           </View>
         ) : (
           <>
             {renderCalendar()}
-            {renderRecurringBills()}
+            {/* {renderRecurringBills()} */}
           </>
         )}
 
-        {/* Add Button */}
-        <View style={[styles.buttonContainer, isDesktop && styles.buttonContainerDesktop]}>
-          <TouchableOpacity
-            style={[styles.button, styles.buttonPrimary]}
-            onPress={() => navigation.navigate('AddExpense', { type: 'daily' })}
-          >
-            <FontAwesome name="plus-circle" size={18} color="#ffffff" />
-            <Text style={styles.buttonText}> เพิ่มรายจ่ายวันนี้</Text>
-          </TouchableOpacity>
-        </View>
+        {/* ── Add Buttons (mobile only) ── */}
+        {!isDesktop && (
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonIncome]}
+              onPress={() => navigation.navigate('AddIncome', {type: 'income'})}
+            >
+              <Ionicons name="add" size={16} color="#fff" />
+              <Text style={styles.buttonText}> Add Income</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonExpense]}
+              onPress={() => navigation.navigate('AddExpense', { type: 'daily' })}
+            >
+              <Ionicons name="add" size={16} color="#fff" />
+              <Text style={styles.buttonText}> Add Expense</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
-        {/* Expense List */}
+        {/* ── Expense List Header ── */}
         <View style={styles.listHeader}>
           <View style={styles.listTitleContainer}>
-            <FontAwesome name="list-alt" size={16} color={COLORS.text} />
             <Text style={styles.listTitle}>
-              {' '}{selectedDate ? `รายการวันที่เลือก (${filteredExpenses.length})` : 'รายการล่าสุด'}
+              {selectedDate ? `Select List (${filteredExpenses.length})` : 'Last List'}
             </Text>
           </View>
-          {selectedDate && (
-            <TouchableOpacity
-              style={styles.clearButtonContainer}
-              onPress={() => {
-                setSelectedDate('');
-                updateFilteredExpenses('', expenses);
-              }}
-            >
-              <FontAwesome name="times-circle" size={14} color={COLORS.primary} />
-              <Text style={styles.clearButton}> ล้างการเลือก</Text>
-            </TouchableOpacity>
-          )}
+          
         </View>
 
-        <View style={styles.listContainer}>
+        {/* ── Expense List: 2-column on desktop ── */}
+        <View style={[styles.listContainer, isDesktop && styles.listContainerDesktop]}>
           {filteredExpenses.length > 0 ? (
-            filteredExpenses.map((item) => (
-              <View key={item.id}>
+            filteredExpenses.map((item, index) => (
+              <View
+                key={item.id}
+                style={isDesktop ? [
+                  styles.expenseColItem,
+                  index % 2 === 0 && styles.expenseColLeft,
+                ] : undefined}
+              >
                 {renderExpenseItem(item)}
               </View>
             ))
           ) : (
             <Text style={styles.emptyText}>
-              {selectedDate ? 'ไม่มีรายการในวันที่เลือก' : 'ยังไม่มีรายการค่าใช้จ่าย'}
+              {selectedDate ? 'No List Select Found' : 'No List Found'}
             </Text>
           )}
         </View>
+
       </View>
     </ScrollView>
   );
@@ -488,15 +547,59 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  // Desktop layout
+
+  // ── Desktop wrapper ──
   desktopInner: {
     alignSelf: 'center' as const,
     width: '100%',
-    paddingHorizontal: 16,
   },
+
+  // ── Desktop header (title + add button) ──
+  desktopHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+  },
+  desktopHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  desktopHeaderTitle: {
+    fontSize: 13,
+    fontWeight: '400',
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: COLORS.text,
+  },
+  desktopHeaderMonth: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_300Light',
+    letterSpacing: 0.5,
+  },
+  desktopAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  desktopAddBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 1.5,
+  },
+
+  // ── Two-column layout ──
   desktopTwoColumn: {
     flexDirection: 'row',
-    gap: 24,
+    gap: 16,
     paddingHorizontal: 24,
   },
   desktopColumnLeft: {
@@ -505,29 +608,16 @@ const styles = StyleSheet.create({
   desktopColumnRight: {
     flex: 2,
   },
-  header: {
-    backgroundColor: COLORS.primary,
-    padding: 20,
-    paddingTop: 50,
-    paddingBottom: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
-  },
-  headerSubtitle: {
-    fontSize: 11,
-    fontWeight: '300',
-    fontFamily: 'NotoSansThai_300Light',
-    letterSpacing: 1.5,
-    color: '#ffffff',
-    opacity: 0.8,
-    marginTop: 8,
-  },
+
+  // ── Summary cards ──
   summaryContainer: {
     flexDirection: 'row',
-    padding: 24,
+    paddingHorizontal: 24,
+    paddingTop: 24,
     gap: 16,
+  },
+  summaryContainerMobile: {
+    flexDirection: 'column',
   },
   summaryCard: {
     flex: 1,
@@ -564,24 +654,28 @@ const styles = StyleSheet.create({
   summaryAmountDesktop: {
     fontSize: 28,
   },
+
+  // ── Buttons ──
   buttonContainer: {
-    padding: 24,
-    paddingTop: 0,
-  },
-  buttonContainerDesktop: {
-    maxWidth: 400,
+    flexDirection: 'row', 
+    paddingTop: 24,
+    paddingHorizontal: 24,
+    gap: 16,
   },
   button: {
-    borderRadius: 0,
+    borderRadius: 8,
     padding: 18,
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.primary,
   },
-  buttonPrimary: {
+  buttonIncome: {
+    backgroundColor: '#10B981',
+    flex: 1,
+  },
+  buttonExpense: {
     backgroundColor: COLORS.primary,
+    flex: 1,
   },
   buttonText: {
     color: '#ffffff',
@@ -589,20 +683,27 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 2,
-    textTransform: 'uppercase',
   },
+  buttonSecondaryText: {
+    color: COLORS.primary,
+    fontSize: 11,
+    fontWeight: '400',
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 1.5,
+  },
+
+  // ── Calendar ──
   calendarContainer: {
     backgroundColor: COLORS.surface,
-    margin: 0,
-    marginTop: 0,
+    marginTop: 24,
     borderRadius: 0,
-    padding: 0,
+    paddingVertical: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   calendarContainerDesktop: {
     margin: 0,
-    marginBottom: 24,
+    paddingVertical: 24,
     borderRadius: 8,
   },
   dayContainer: {
@@ -619,6 +720,7 @@ const styles = StyleSheet.create({
   todayContainer: {
     borderWidth: 1,
     borderColor: COLORS.primary,
+    borderRadius: 8,
   },
   dayText: {
     fontSize: 11,
@@ -675,49 +777,135 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
   },
-  legendContainer: {
-    marginTop: 20,
-    padding: 16,
-    backgroundColor: COLORS.background,
-    borderRadius: 0,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  legendTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  legendTitle: {
-    fontSize: 10,
-    color: COLORS.text,
-    fontWeight: '400',
-    fontFamily: 'NotoSansThai_400Regular',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-  },
-  legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  legendBox: {
-    width: 16,
-    height: 16,
-    borderRadius: 0,
-    marginRight: 12,
+
+  // ── Recurring Bills ──
+  recurringBillsSection: {
+    backgroundColor: COLORS.surface,
+    margin: 24,
+    marginTop: 0,
+    padding: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  legendText: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
+  recurringBillsSectionDesktop: {
+    margin: 0,
+    borderRadius: 8,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  sectionTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '400',
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: COLORS.text,
+  },
+  monthlyTotal: {
+    fontSize: 14,
     fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.primary,
   },
+  billMonthLabel: {
+    fontSize: 11,
+    fontWeight: '300',
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  billsList: {
+    marginBottom: 16,
+  },
+  billItem: {
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  billContent: {
+    paddingVertical: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  billLeft: {
+    flex: 1,
+  },
+  billName: {
+    fontSize: 14,
+    fontWeight: '400',
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
+    marginBottom: 6,
+  },
+  billInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  billDueDate: {
+    fontSize: 10,
+    fontWeight: '300',
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  billRight: {
+    alignItems: 'flex-end',
+    marginLeft: 16,
+  },
+  billAmount: {
+    fontSize: 14,
+    fontWeight: '300',
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.primary,
+  },
+  billAmountEmpty: {
+    fontSize: 11,
+    fontWeight: '300',
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    fontStyle: 'italic',
+  },
+  billDeleteButton: {
+    paddingVertical: 10,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  billDeleteText: {
+    fontSize: 9,
+    fontWeight: '300',
+    fontFamily: 'NotoSansThai_300Light',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    color: COLORS.textSecondary,
+  },
+  emptyBillsText: {
+    textAlign: 'center',
+    color: COLORS.textSecondary,
+    fontSize: 11,
+    fontWeight: '300',
+    fontFamily: 'NotoSansThai_300Light',
+    paddingVertical: 24,
+  },
+
+  // ── Expense List ──
   listHeader: {
     padding: 24,
-    paddingBottom: 16,
+    paddingTop:48,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -748,9 +936,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   listContainer: {
-    padding: 24,
+    paddingVertical: 24,
     paddingTop: 0,
   },
+  // Desktop: 2-column flex-wrap
+  listContainerDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    padding: 0,
+  },
+  expenseColItem: {
+    width: '100%',
+  },
+  // Left column gets a right border as column divider
+  expenseColLeft: {
+    borderRightWidth: 1,
+    borderRightColor: COLORS.border,
+  },
+
+  // ── Expense item ──
   expenseItem: {
     backgroundColor: COLORS.surface,
     borderRadius: 0,
@@ -797,22 +1002,16 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     marginLeft: 20,
   },
-  deleteButton: {
-    padding: 12,
-    paddingHorizontal: 20,
-    backgroundColor: COLORS.surface,
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    alignItems: 'center',
-    flexDirection: 'row',
+  swipeDeleteAction: {
+    width: 72,
+    backgroundColor: COLORS.error,
     justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4,
   },
-  deleteButtonText: {
-    color: COLORS.textSecondary,
+  swipeDeleteText: {
+    color: '#fff',
     fontSize: 10,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
@@ -824,131 +1023,7 @@ const styles = StyleSheet.create({
     fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 1,
-    marginTop: 48,
-  },
-  recurringBillsSection: {
-    backgroundColor: COLORS.surface,
-    margin: 24,
-    marginTop: 0,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  recurringBillsSectionDesktop: {
-    margin: 0,
-    borderRadius: 8,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  sectionTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '400',
-    fontFamily: 'NotoSansThai_400Regular',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    color: COLORS.text,
-  },
-  monthlyTotal: {
-    fontSize: 14,
-    fontWeight: '300',
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.primary,
-  },
-  billsList: {
-    marginBottom: 16,
-  },
-  billItem: {
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    marginBottom: 0,
-  },
-  billContent: {
-    paddingVertical: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  billLeft: {
-    flex: 1,
-  },
-  billName: {
-    fontSize: 14,
-    fontWeight: '400',
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.text,
-    marginBottom: 6,
-  },
-  billInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  billDueDate: {
-    fontSize: 10,
-    fontWeight: '300',
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-  },
-  billRight: {
-    alignItems: 'flex-end',
-    marginLeft: 16,
-  },
-  billAmount: {
-    fontSize: 14,
-    fontWeight: '300',
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.primary,
-    marginBottom: 8,
-  },
-  billSwitch: {
-    transform: [{ scale: 0.8 }],
-  },
-  billDeleteButton: {
-    paddingVertical: 10,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    backgroundColor: COLORS.background,
-  },
-  billDeleteText: {
-    fontSize: 9,
-    fontWeight: '300',
-    fontFamily: 'NotoSansThai_300Light',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    color: COLORS.textSecondary,
-  },
-  emptyBillsText: {
-    textAlign: 'center',
-    color: COLORS.textSecondary,
-    fontSize: 11,
-    fontWeight: '300',
-    fontFamily: 'NotoSansThai_300Light',
-    paddingVertical: 24,
-  },
-  buttonSecondary: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-  },
-  buttonSecondaryText: {
-    color: COLORS.primary,
-    fontSize: 11,
-    fontWeight: '400',
-    fontFamily: 'NotoSansThai_400Regular',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
+    marginVertical: 48,
+    width: '100%',
   },
 });

@@ -43,8 +43,8 @@ export default function OverviewScreen() {
 
     // รายจ่ายประจำเดือน
     const bills = await getRecurringBills();
-    const activeBills = bills.filter((b) => b.isActive);
-    setMonthlyBills(activeBills.reduce((sum, b) => sum + b.amount, 0));
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    setMonthlyBills(bills.reduce((sum, b) => sum + (b.monthlyAmounts?.[currentMonthKey] ?? 0), 0));
 
     // พอร์ตการลงทุน
     const portfolio = await getPortfolioSummary();

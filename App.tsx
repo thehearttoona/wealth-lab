@@ -3,6 +3,7 @@ import { useFonts, NotoSansThai_300Light, NotoSansThai_400Regular, NotoSansThai_
 import { Nunito_400Regular, Nunito_500Medium, Nunito_600SemiBold, Nunito_700Bold } from '@expo-google-fonts/nunito';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Navigation from './src/navigation';
 
 SplashScreen.preventAutoHideAsync();
@@ -30,9 +31,9 @@ export default function App() {
   }
 
   return (
-    <>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <Navigation />
       <StatusBar style="dark" />
-    </>
+    </GestureHandlerRootView>
   );
 }

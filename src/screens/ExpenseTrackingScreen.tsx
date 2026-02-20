@@ -23,10 +23,10 @@ export default function ExpenseTrackingScreen() {
   const navigation = useNavigation<ExpenseTrackingScreenNavigationProp>();
   const [activeTab, setActiveTab] = useState<'daily' | 'recurring'>('daily');
   const { isDesktop } = useResponsive();
-
+  
   return (
     <View style={styles.container}>
-      <View style={[styles.header, isDesktop && styles.headerDesktop]}>
+      {/* <View style={[styles.header, isDesktop && styles.headerDesktop]}>
         <View style={[styles.tabContainer, isDesktop && styles.tabContainerDesktop]}>
           <TouchableOpacity
             style={[styles.tab, activeTab === 'daily' && styles.tabActive, isDesktop && styles.tabDesktop]}
@@ -45,7 +45,7 @@ export default function ExpenseTrackingScreen() {
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </View> */}
 
       <View style={styles.content}>
         {activeTab === 'daily' ? (

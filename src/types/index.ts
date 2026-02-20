@@ -4,17 +4,26 @@ export interface Expense {
   category: string;
   description: string;
   date: string;
-  type: 'daily' | 'recurring';
+  type: 'daily' | 'recurring' | 'income';
 }
 
 export interface RecurringBill {
   id: string;
   name: string;
+  amount: number; // ยอดอ้างอิง (ใช้เป็น placeholder เท่านั้น)
+  category: string;
+  monthlyAmounts: { [key: string]: number }; // YYYY-MM -> amount (บันทึกเองแต่ละเดือน)
+  // legacy fields (backward compat กับข้อมูลเก่า)
+  dueDay?: number;
+  isActive?: boolean;
+}
+
+export interface Income {
+  id: string;
   amount: number;
   category: string;
-  dueDay: number; // วันที่ต้องจ่ายในแต่ละเดือน (1-31)
-  isActive: boolean;
-  monthlyAmounts?: { [key: string]: number }; // เก็บจำนวนเงินแต่ละเดือน เช่น { "2026-01": 5000, "2026-02": 5500 }
+  description: string;
+  date: string; // YYYY-MM-DD
 }
 
 export interface MonthlySummary {
@@ -71,4 +80,5 @@ export type RootStackParamList = {
   Overview: undefined;
   ExpenseTracking: undefined;
   AddMonthlySummary: { summary?: MonthlySummary; month?: string };
+  AddIncome: { income?: Income };
 };

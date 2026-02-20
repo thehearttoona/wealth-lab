@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-nati
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { FontAwesome } from '@expo/vector-icons';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { RootStackParamList } from '../types';
 import HomeScreen from '../screens/HomeScreen';
 import AddExpenseScreen from '../screens/AddExpenseScreen';
@@ -16,6 +16,7 @@ import AddTradingOrderScreen from '../screens/AddTradingOrderScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import ExpenseTrackingScreen from '../screens/ExpenseTrackingScreen';
 import AddMonthlySummaryScreen from '../screens/AddMonthlySummaryScreen';
+import AddIncomeScreen from '../screens/AddIncomeScreen';
 import GridTradingScreen from '../screens/GridTradingScreen';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
@@ -24,20 +25,19 @@ const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const TAB_ITEMS = [
-  { name: 'ExpenseTrackingTab', title: 'รายจ่าย', icon: 'credit-card' as const, component: ExpenseTrackingScreen },
-  { name: 'OverviewTab', title: 'ภาพรวม', icon: 'pie-chart' as const, component: OverviewScreen },
-  { name: 'PortfolioTab', title: 'พอร์ตการลงทุน', icon: 'briefcase' as const, component: PortfolioScreen },
-  { name: 'TradingTab', title: 'Trading', icon: 'line-chart' as const, component: TradingOrdersScreen },
-  { name: 'GridTradingTab', title: 'Grid MT5', icon: 'th' as const, component: GridTradingScreen },
-  { name: 'StatisticsTab', title: 'วิเคราะห์', icon: 'bar-chart' as const, component: StatisticsScreen },
+  { name: 'ExpenseTrackingTab', title: 'Finance', icon: 'credit-card' as const, mobileIcon: 'wallet-outline' as const, component: ExpenseTrackingScreen },
+  { name: 'OverviewTab', title: 'Overview', icon: 'pie-chart' as const, mobileIcon: 'pie-chart-outline' as const, component: OverviewScreen },
+  { name: 'PortfolioTab', title: 'Portfolio', icon: 'briefcase' as const, mobileIcon: 'briefcase-outline' as const, component: PortfolioScreen },
+  { name: 'TradingTab', title: 'Trading', icon: 'line-chart' as const, mobileIcon: 'trending-up-outline' as const, component: TradingOrdersScreen },
+  { name: 'GridTradingTab', title: 'Grid MT5', icon: 'th' as const, mobileIcon: 'grid-outline' as const, component: GridTradingScreen },
+  { name: 'StatisticsTab', title: 'Statistics', icon: 'bar-chart' as const, mobileIcon: 'bar-chart-outline' as const, component: StatisticsScreen },
 ];
 
 function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPress: (name: string) => void }) {
   return (
     <View style={sidebarStyles.container}>
       <View style={sidebarStyles.logoSection}>
-        <FontAwesome name="diamond" size={20} color={COLORS.primary} />
-        <Text style={sidebarStyles.logoText}>Narix Tracking</Text>
+        <Text style={sidebarStyles.logoText}>WEALTH LAB</Text>
       </View>
       <ScrollView style={sidebarStyles.navList}>
         {TAB_ITEMS.map((item) => {
@@ -86,7 +86,15 @@ function MobileTabNavigator() {
   return (
     <Tab.Navigator
       screenOptions={{
-        headerShown: false,
+        headerShown: true,
+        headerStyle: { backgroundColor: COLORS.surface },
+        headerTitleStyle: {
+          color: COLORS.text,
+          fontSize: 14,
+          fontFamily: 'NotoSansThai_400Regular',
+          letterSpacing: 1,
+        },
+        headerShadowVisible: false,
         tabBarActiveTintColor: COLORS.primary,
         tabBarInactiveTintColor: COLORS.textSecondary,
         tabBarStyle: {
@@ -96,13 +104,8 @@ function MobileTabNavigator() {
           paddingBottom: 0,
           paddingTop: 0,
         },
-        tabBarItemStyle: {
-          paddingVertical: 6,
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '500',
-        },
+        tabBarItemStyle: { paddingVertical: 4 },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '500', marginTop: 2 },
       }}
     >
       {TAB_ITEMS.map((item) => (
@@ -111,8 +114,10 @@ function MobileTabNavigator() {
           name={item.name}
           component={item.component}
           options={{
-            title: item.name === 'ExpenseTrackingTab' ? 'Narix รายจ่าย' : item.title,
-            tabBarIcon: ({ color }) => <FontAwesome name={item.icon} size={18} color={color} />,
+            title: item.title,
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name={item.mobileIcon} size={size} color={color} />
+            ),
           }}
         />
       ))}
@@ -171,6 +176,11 @@ export default function Navigation() {
           component={AddMonthlySummaryScreen}
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="AddIncome"
+          component={AddIncomeScreen}
+          options={{ headerShown: false }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
@@ -182,12 +192,11 @@ const sidebarStyles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRightWidth: 1,
     borderRightColor: COLORS.border,
-    paddingTop: 24,
   },
   logoSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
     paddingVertical: 16,
     marginBottom: 8,
     gap: 10,
@@ -195,7 +204,7 @@ const sidebarStyles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   logoText: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
     color: COLORS.text,
     letterSpacing: 0.5,
@@ -238,3 +247,4 @@ const desktopStyles = StyleSheet.create({
     flex: 1,
   },
 });
+

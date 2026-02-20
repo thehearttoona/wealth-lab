@@ -12,15 +12,13 @@ import {
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Calendar, DateData } from 'react-native-calendars';
 import { RootStackParamList, Expense, RecurringBill } from '../types';
 import { saveExpense, updateExpense, saveRecurringBill, updateRecurringBill } from '../services/storage';
-import { EXPENSE_CATEGORIES, COLORS } from '../utils/constants';
+import { EXPENSE_CATEGORIES, COLORS, formatCurrency } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 
-type AddExpenseScreenNavigationProp = NativeStackNavigationProp<
-  RootStackParamList,
-  'AddExpense'
->;
+type AddExpenseScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'AddExpense'>;
 type AddExpenseScreenRouteProp = RouteProp<RootStackParamList, 'AddExpense'>;
 
 export default function AddExpenseScreen() {
@@ -30,25 +28,26 @@ export default function AddExpenseScreen() {
   const { isDesktop } = useResponsive();
 
   const isEditing = !!(expense || bill);
-  const editingData = expense || bill;
 
+  // ── Shared ──
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
   const [description, setDescription] = useState('');
-  const [dueDay, setDueDay] = useState('1');
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
-  const [customAmount, setCustomAmount] = useState('');
+
+  // ── Daily ──
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const todayLocal = `${yyyy}-${mm}-${dd}`;
+  const todayLocal = `${yyyy}-${mm}-${String(now.getDate()).padStart(2, '0')}`;
   const [expenseDate, setExpenseDate] = useState(() => todayLocal);
-  console.log(expenseDate);
-  // console.log('AddExpenseScreen render', { type, expense, bill });
+  const [showCalendar, setShowCalendar] = useState(false);
+
+  // ── Recurring: per-month ──
+  const [viewMonth, setViewMonth] = useState<string>(() => `${yyyy}-${mm}`);
+  const [monthEntries, setMonthEntries] = useState<{ [key: string]: string }>({});
+  const [monthAmount, setMonthAmount] = useState('');
+
+  // ── Load existing data ──
   useEffect(() => {
     if (expense) {
       setAmount(expense.amount.toString());
@@ -61,23 +60,64 @@ export default function AddExpenseScreen() {
       setAmount(bill.amount.toString());
       setCategory(bill.category);
       setDescription(bill.name || '');
-      setDueDay(bill.dueDay.toString());
-      // โหลดจำนวนเงิน custom ของเดือนที่เลือก (ถ้ามี)
-      if (bill.monthlyAmounts && bill.monthlyAmounts[selectedMonth]) {
-        setCustomAmount(bill.monthlyAmounts[selectedMonth].toString());
+      if (bill.monthlyAmounts) {
+        const entries: { [key: string]: string } = {};
+        Object.entries(bill.monthlyAmounts).forEach(([month, amt]) => {
+          entries[month] = amt.toString();
+        });
+        setMonthEntries(entries);
       }
     }
-  }, [expense, bill, selectedMonth]);
+  }, [expense, bill]);
 
-  
+  // sync monthAmount input เมื่อเปลี่ยนเดือน
+  useEffect(() => {
+    setMonthAmount(monthEntries[viewMonth] || '');
+  }, [viewMonth]);
+
+  // ── Helpers ──
+  const formatMonthLabel = (monthKey: string) => {
+    const [y, m] = monthKey.split('-').map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' });
+  };
+
+  const navigateViewMonth = (delta: number) => {
+    const [y, m] = viewMonth.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    setViewMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  const handleSaveMonthEntry = () => {
+    const amt = parseFloat(monthAmount.replace(/,/g, ''));
+    if (!monthAmount || isNaN(amt) || amt <= 0) return;
+    setMonthEntries((prev) => ({ ...prev, [viewMonth]: monthAmount }));
+  };
+
+  const handleRemoveMonthEntry = (month: string) => {
+    setMonthEntries((prev) => {
+      const next = { ...prev };
+      delete next[month];
+      return next;
+    });
+  };
+
+  const showMsg = (msg: string) => {
+    if (Platform.OS === 'web') window.alert(msg);
+    else Alert.alert('', msg);
+  };
+
+  // ── Save ──
   const handleSave = async () => {
-    if (!amount || parseFloat(amount) <= 0) {
-      if (Platform.OS === 'web') {
-        window.alert('กรุณากรอกจำนวนเงินที่ถูกต้อง');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'กรุณากรอกจำนวนเงินที่ถูกต้อง');
+    if (type === 'daily') {
+      if (!amount || parseFloat(amount) <= 0) {
+        showMsg('กรุณากรอกจำนวนเงินที่ถูกต้อง');
+        return;
       }
-      return;
+    } else {
+      if (Object.keys(monthEntries).length === 0) {
+        showMsg('กรุณาบันทึกยอดอย่างน้อย 1 เดือน');
+        return;
+      }
     }
 
     try {
@@ -90,86 +130,64 @@ export default function AddExpenseScreen() {
           date: new Date(expenseDate).toISOString(),
           type: 'daily',
         };
-
         if (isEditing && expense) {
           await updateExpense(expenseData);
-          if (Platform.OS === 'web') {
-            window.alert('แก้ไขรายจ่ายเรียบร้อย');
-          } else {
-            Alert.alert('สำเร็จ', 'แก้ไขรายจ่ายเรียบร้อย');
-          }
         } else {
           await saveExpense(expenseData);
-          if (Platform.OS === 'web') {
-            window.alert('บันทึกรายจ่ายเรียบร้อย');
-          } else {
-            Alert.alert('สำเร็จ', 'บันทึกรายจ่ายเรียบร้อย');
-          }
         }
+        showMsg(isEditing ? 'แก้ไขรายจ่ายเรียบร้อย' : 'บันทึกรายจ่ายเรียบร้อย');
       } else {
-        const existingMonthlyAmounts = bill?.monthlyAmounts || {};
-        const monthlyAmounts = { ...existingMonthlyAmounts };
-
-        // ถ้ามีการกำหนด custom amount ให้บันทึก
-        if (customAmount && parseFloat(customAmount) !== parseFloat(amount)) {
-          monthlyAmounts[selectedMonth] = parseFloat(customAmount);
-        } else if (monthlyAmounts[selectedMonth]) {
-          // ถ้าไม่มี custom amount แล้วแต่เคยมี ให้ลบออก
-          delete monthlyAmounts[selectedMonth];
-        }
+        const parsedMonthly: { [key: string]: number } = {};
+        Object.entries(monthEntries).forEach(([month, amtStr]) => {
+          const v = parseFloat(amtStr);
+          if (!isNaN(v) && v > 0) parsedMonthly[month] = v;
+        });
 
         const billData: RecurringBill = {
           id: bill?.id || Date.now().toString(),
           name: description || category,
-          amount: parseFloat(amount),
+          amount: parseFloat(amount) || 0,
           category,
-          dueDay: parseInt(dueDay),
-          isActive: bill?.isActive ?? true,
-          monthlyAmounts: Object.keys(monthlyAmounts).length > 0 ? monthlyAmounts : undefined,
+          monthlyAmounts: parsedMonthly,
         };
-
         if (isEditing && bill) {
           await updateRecurringBill(billData);
-          if (Platform.OS === 'web') {
-            window.alert('แก้ไขรายจ่ายประจำเดือนเรียบร้อย');
-          } else {
-            Alert.alert('สำเร็จ', 'แก้ไขรายจ่ายประจำเดือนเรียบร้อย');
-          }
         } else {
           await saveRecurringBill(billData);
-          if (Platform.OS === 'web') {
-            window.alert('บันทึกรายจ่ายประจำเดือนเรียบร้อย');
-          } else {
-            Alert.alert('สำเร็จ', 'บันทึกรายจ่ายประจำเดือนเรียบร้อย');
-          }
         }
+        showMsg(isEditing ? 'แก้ไขรายจ่ายประจำเดือนเรียบร้อย' : 'บันทึกรายจ่ายประจำเดือนเรียบร้อย');
       }
       navigation.goBack();
-    } catch (error) {
-      if (Platform.OS === 'web') {
-        window.alert('ไม่สามารถบันทึกข้อมูลได้');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'ไม่สามารถบันทึกข้อมูลได้');
-      }
+    } catch {
+      showMsg('ไม่สามารถบันทึกข้อมูลได้');
     }
   };
 
+  const sortedEntries = Object.entries(monthEntries).sort(([a], [b]) => b.localeCompare(a));
+  const totalSaved = sortedEntries.reduce((sum, [, v]) => sum + (parseFloat(v) || 0), 0);
+
+
+  
+  // ── Render ──
   return (
     <ScrollView style={styles.container}>
-      <View style={[
-        styles.content,
-        isDesktop && { maxWidth: 600, alignSelf: 'center' as const, width: '100%' as any },
-      ]}>
-        <Text style={styles.label}>จำนวนเงิน (บาท)</Text>
+      <View
+        style={[
+          styles.content,
+          isDesktop && { maxWidth: 600, alignSelf: 'center' as const, width: '100%' as any },
+        ]}
+      >
+        {/* ── ชื่อ / รายละเอียด ── */}
+        <Text style={styles.label}>{type === 'daily' ? 'รายละเอียด' : 'ชื่อรายการ'}</Text>
         <TextInput
-          style={styles.input}
-          value={amount}
-          onChangeText={setAmount}
-          keyboardType="numeric"
-          placeholder="0.00"
+          style={[styles.input, { minHeight: 56 }]}
+          value={description}
+          onChangeText={setDescription}
+          placeholder={type === 'daily' ? '' : 'เช่น ค่าเช่าบ้าน, ค่าโทรศัพท์'}
           placeholderTextColor={COLORS.textSecondary}
         />
 
+        {/* ── หมวดหมู่ ── */}
         <Text style={styles.label}>หมวดหมู่</Text>
         {isDesktop ? (
           <View style={styles.categoryScrollWrapper}>
@@ -177,21 +195,10 @@ export default function AddExpenseScreen() {
               {EXPENSE_CATEGORIES.map((cat) => (
                 <TouchableOpacity
                   key={cat}
-                  style={[
-                    styles.categoryButton,
-                    { marginRight: 0 },
-                    category === cat && styles.categoryButtonSelected,
-                  ]}
+                  style={[styles.categoryButton, { marginRight: 0 }, category === cat && styles.categoryButtonSelected]}
                   onPress={() => setCategory(cat)}
                 >
-                  <Text
-                    style={[
-                      styles.categoryText,
-                      category === cat && styles.categoryTextSelected,
-                    ]}
-                  >
-                    {cat}
-                  </Text>
+                  <Text style={[styles.categoryText, category === cat && styles.categoryTextSelected]}>{cat}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -203,124 +210,157 @@ export default function AddExpenseScreen() {
               showsHorizontalScrollIndicator={false}
               style={styles.categoryContainer}
               contentContainerStyle={styles.categoryContentContainer}
-              nestedScrollEnabled={true}
+              nestedScrollEnabled
             >
               {EXPENSE_CATEGORIES.map((cat) => (
                 <TouchableOpacity
                   key={cat}
-                  style={[
-                    styles.categoryButton,
-                    category === cat && styles.categoryButtonSelected,
-                  ]}
+                  style={[styles.categoryButton, category === cat && styles.categoryButtonSelected]}
                   onPress={() => setCategory(cat)}
                 >
-                  <Text
-                    style={[
-                      styles.categoryText,
-                      category === cat && styles.categoryTextSelected,
-                    ]}
-                  >
-                    {cat}
-                  </Text>
+                  <Text style={[styles.categoryText, category === cat && styles.categoryTextSelected]}>{cat}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
           </View>
         )}
 
-        <Text style={styles.label}>
-          {type === 'daily' ? 'รายละเอียด' : 'ชื่อรายการ'}
-        </Text>
-        <TextInput
-          style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
-          value={description}
-          onChangeText={setDescription}
-          placeholder={type === 'daily' ? '' : 'เช่น ค่าเช่าบ้าน, ค่าโทรศัพท์'}
-          placeholderTextColor={COLORS.textSecondary}
-          multiline
-          numberOfLines={4}
-        />
-
+        {/* ════════════ DAILY ════════════ */}
         {type === 'daily' && (
           <>
-            <Text style={styles.label}>วันที่</Text>
+            <Text style={styles.label}>จำนวนเงิน (บาท)</Text>
             <TextInput
               style={styles.input}
-              value={expenseDate}
-              onChangeText={setExpenseDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={COLORS.textSecondary}
-            />
-            <Text style={styles.hintText}>
-              รูปแบบ: ปี-เดือน-วัน (เช่น 2026-01-30)
-            </Text>
-          </>
-        )}
-    
-        {type === 'recurring' && (
-          <>
-            <Text style={styles.label}>วันที่ต้องจ่ายในแต่ละเดือน</Text>
-            <TextInput
-              style={styles.input}
-              value={dueDay}
-              onChangeText={setDueDay}
+              value={amount}
+              onChangeText={setAmount}
               keyboardType="numeric"
-              placeholder="1-31"
+              placeholder="0.00"
               placeholderTextColor={COLORS.textSecondary}
             />
 
-            {isEditing && bill && (
-              <>
-                <View style={styles.monthSection}>
-                  <Text style={styles.label}>กำหนดยอดเงินสำหรับเดือนนี้</Text>
-                  <View style={styles.monthSelector}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const [year, month] = selectedMonth.split('-').map(Number);
-                        const date = new Date(year, month - 1 - 1, 1);
-                        setSelectedMonth(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
-                      }}
-                      style={styles.monthArrow}
-                    >
-                      <FontAwesome name="chevron-left" size={16} color={COLORS.primary} />
-                    </TouchableOpacity>
-                    <Text style={styles.selectedMonthText}>
-                      {(() => {
-                        const [year, month] = selectedMonth.split('-').map(Number);
-                        const date = new Date(year, month - 1, 1);
-                        return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'long' });
-                      })()}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const [year, month] = selectedMonth.split('-').map(Number);
-                        const date = new Date(year, month - 1 + 1, 1);
-                        setSelectedMonth(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
-                      }}
-                      style={styles.monthArrow}
-                    >
-                      <FontAwesome name="chevron-right" size={16} color={COLORS.primary} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <Text style={styles.label}>ยอดเงินเดือนนี้ (ปล่อยว่างถ้าเหมือนปกติ)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={customAmount}
-                  onChangeText={setCustomAmount}
-                  keyboardType="decimal-pad"
-                  placeholder={`ปกติ: ${amount} บาท`}
-                  placeholderTextColor={COLORS.textSecondary}
+            <Text style={styles.label}>วันที่</Text>
+            <TouchableOpacity
+              style={styles.datePickerButton}
+              onPress={() => setShowCalendar((v) => !v)}
+            >
+              <FontAwesome name="calendar" size={15} color={COLORS.primary} />
+              <Text style={styles.datePickerText}>
+                {new Date(expenseDate).toLocaleDateString('th-TH', {
+                  year: 'numeric', month: 'long', day: 'numeric',
+                })}
+              </Text>
+              <FontAwesome name={showCalendar ? 'chevron-up' : 'chevron-down'} size={12} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+            {showCalendar && (
+              <View style={styles.calendarWrapper}>
+                <Calendar
+                  current={expenseDate}
+                  markedDates={{ [expenseDate]: { selected: true, selectedColor: COLORS.primary } }}
+                  onDayPress={(day: DateData) => { setExpenseDate(day.dateString); setShowCalendar(false); }}
+                  theme={{
+                    backgroundColor: COLORS.surface, calendarBackground: COLORS.surface,
+                    textSectionTitleColor: COLORS.text, selectedDayBackgroundColor: COLORS.primary,
+                    selectedDayTextColor: '#ffffff', todayTextColor: COLORS.primary,
+                    dayTextColor: COLORS.text, textDisabledColor: COLORS.textSecondary,
+                    monthTextColor: COLORS.text, arrowColor: COLORS.primary,
+                    textMonthFontWeight: 'bold', textDayFontSize: 14, textMonthFontSize: 16,
+                  }}
                 />
-                <Text style={styles.hintText}>
-                  หมายเหตุ: ถ้าต้องการปรับยอดเงินเฉพาะเดือนนี้ ให้กรอกจำนวนใหม่ ไม่เช่นนั้นจะใช้ยอดเงินปกติ
-                </Text>
-              </>
+              </View>
             )}
           </>
         )}
 
+        {/* ════════════ RECURRING ════════════ */}
+        {type === 'recurring' && (
+          <>
+            {/* ยอดอ้างอิง */}
+            <Text style={styles.label}>ยอดอ้างอิง (บาท) — ไม่บังคับ</Text>
+            <TextInput
+              style={styles.input}
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="numeric"
+              placeholder="เช่น 8000 (ใช้เป็น placeholder ช่วยจำ)"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+
+            {/* Month navigator */}
+            <Text style={styles.label}>เลือกเดือนและกรอกยอด</Text>
+
+            <View style={styles.monthNavigator}>
+              <TouchableOpacity onPress={() => navigateViewMonth(-1)} style={styles.monthNavBtn}>
+                <FontAwesome name="chevron-left" size={16} color={COLORS.primary} />
+              </TouchableOpacity>
+              <View style={styles.monthNavCenter}>
+                <Text style={styles.monthNavigatorLabel}>{formatMonthLabel(viewMonth)}</Text>
+                {monthEntries[viewMonth] !== undefined && (
+                  <View style={styles.monthSavedBadge}>
+                    <FontAwesome name="check" size={9} color="#fff" />
+                    <Text style={styles.monthSavedBadgeText}> บันทึกแล้ว</Text>
+                  </View>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => navigateViewMonth(1)} style={styles.monthNavBtn}>
+                <FontAwesome name="chevron-right" size={16} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Amount input + save */}
+            <View style={styles.monthAmountRow}>
+              <TextInput
+                style={[styles.input, styles.monthAmountInput]}
+                value={monthAmount}
+                onChangeText={setMonthAmount}
+                keyboardType="decimal-pad"
+                placeholder={amount ? `ปกติ ${amount} บาท` : 'ยอดเงิน (บาท)'}
+                placeholderTextColor={COLORS.textSecondary}
+              />
+              <TouchableOpacity
+                style={[styles.saveMonthBtn, !monthAmount && styles.saveMonthBtnDisabled]}
+                onPress={handleSaveMonthEntry}
+                disabled={!monthAmount}
+              >
+                <FontAwesome name="check" size={14} color="#fff" />
+                <Text style={styles.saveMonthBtnText}> บันทึก</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Saved months list */}
+            {sortedEntries.length > 0 ? (
+              <View style={styles.savedMonthsContainer}>
+                <View style={styles.savedMonthsHeader}>
+                  <Text style={styles.savedMonthsTitle}>
+                    บันทึกแล้ว {sortedEntries.length} เดือน
+                  </Text>
+                  <Text style={styles.savedMonthsTotal}>{formatCurrency(totalSaved)}</Text>
+                </View>
+                {sortedEntries.map(([month, amtStr]) => (
+                  <View
+                    key={month}
+                    style={[styles.savedMonthRow, month === viewMonth && styles.savedMonthRowActive]}
+                  >
+                    <TouchableOpacity style={styles.savedMonthMain} onPress={() => setViewMonth(month)}>
+                      <Text style={[styles.savedMonthLabel, month === viewMonth && styles.savedMonthLabelActive]}>
+                        {formatMonthLabel(month)}
+                      </Text>
+                      <Text style={styles.savedMonthAmount}>{formatCurrency(parseFloat(amtStr))}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.removeMonthBtn} onPress={() => handleRemoveMonthEntry(month)}>
+                      <FontAwesome name="trash" size={13} color={COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.noEntriesHint}>
+                ยังไม่มีรายการ — เลือกเดือนแล้วกรอกยอดและกด "บันทึก"
+              </Text>
+            )}
+          </>
+        )}
+
+        {/* ── Save ── */}
         <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
           <Text style={styles.saveButtonText}>
             {isEditing ? 'บันทึกการแก้ไข' : 'บันทึก'}
@@ -332,114 +372,97 @@ export default function AddExpenseScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  content: {
-    padding: 24,
-  },
+  container: { flex: 1, backgroundColor: COLORS.background },
+  content: { padding: 24 },
   label: {
-    fontSize: 10,
-    fontWeight: '400',
-    fontFamily: 'NotoSansThai_400Regular',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    color: COLORS.textSecondary,
-    marginBottom: 12,
-    marginTop: 24,
+    fontSize: 10, fontWeight: '400', fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 1.5, textTransform: 'uppercase', color: COLORS.textSecondary,
+    marginBottom: 12, marginTop: 24,
   },
   input: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 0,
-    padding: 16,
-    fontSize: 16,
-    fontFamily: 'NotoSansThai_300Light',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    color: COLORS.text,
+    backgroundColor: COLORS.surface, borderRadius: 0, padding: 16,
+    fontSize: 16, fontFamily: 'NotoSansThai_300Light',
+    borderWidth: 1, borderColor: COLORS.border, color: COLORS.text,
   },
-  categoryScrollWrapper: {
-    marginVertical: 12,
-  },
-  categoryContainer: {
-    flexGrow: 0,
-  },
-  categoryContentContainer: {
-    paddingRight: 24,
-    paddingVertical: 8,
-  },
+  categoryScrollWrapper: { marginVertical: 12 },
+  categoryContainer: { flexGrow: 0 },
+  categoryContentContainer: { paddingRight: 24, paddingVertical: 8 },
   categoryButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 0,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginRight: 12,
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 0,
+    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, marginRight: 12,
   },
-  categoryButtonSelected: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+  categoryButtonSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  categoryText: { fontSize: 12, fontWeight: '300', fontFamily: 'NotoSansThai_300Light', letterSpacing: 0.5, color: COLORS.text },
+  categoryTextSelected: { color: '#ffffff', fontWeight: '400', fontFamily: 'NotoSansThai_400Regular' },
+
+  // date picker
+  datePickerButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, padding: 16,
   },
-  categoryText: {
-    fontSize: 12,
-    fontWeight: '300',
-    fontFamily: 'NotoSansThai_300Light',
-    letterSpacing: 0.5,
-    color: COLORS.text,
+  datePickerText: { flex: 1, fontSize: 16, fontFamily: 'NotoSansThai_300Light', color: COLORS.text },
+  calendarWrapper: { borderWidth: 1, borderTopWidth: 0, borderColor: COLORS.border, backgroundColor: COLORS.surface },
+
+  // month navigator
+  monthNavigator: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8,
   },
-  categoryTextSelected: {
-    color: '#ffffff',
-    fontWeight: '400',
-    fontFamily: 'NotoSansThai_400Regular',
+  monthNavBtn: { padding: 16 },
+  monthNavCenter: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 12 },
+  monthNavigatorLabel: {
+    fontSize: 15, fontWeight: '600', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, textAlign: 'center',
   },
+  monthSavedBadge: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: COLORS.success, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 99,
+  },
+  monthSavedBadgeText: { fontSize: 10, color: '#fff', fontFamily: 'NotoSansThai_300Light' },
+
+  // month amount row
+  monthAmountRow: { flexDirection: 'row', gap: 8, marginBottom: 16, alignItems: 'stretch' },
+  monthAmountInput: { flex: 1 },
+  saveMonthBtn: {
+    backgroundColor: COLORS.primary, paddingHorizontal: 20,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+  },
+  saveMonthBtnDisabled: { opacity: 0.35 },
+  saveMonthBtnText: { color: '#fff', fontSize: 12, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 0.5 },
+
+  // saved months
+  savedMonthsContainer: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, marginBottom: 8 },
+  savedMonthsHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border,
+  },
+  savedMonthsTitle: {
+    fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase',
+    fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary,
+  },
+  savedMonthsTotal: { fontSize: 13, fontFamily: 'NotoSansThai_400Regular', color: COLORS.primary },
+  savedMonthRow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  savedMonthRowActive: { backgroundColor: `${COLORS.primary}18` },
+  savedMonthMain: {
+    flex: 1, flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', padding: 14, paddingHorizontal: 16,
+  },
+  savedMonthLabel: { fontSize: 14, fontFamily: 'NotoSansThai_300Light', color: COLORS.text },
+  savedMonthLabelActive: { color: COLORS.primary, fontFamily: 'NotoSansThai_400Regular' },
+  savedMonthAmount: { fontSize: 14, fontFamily: 'NotoSansThai_300Light', color: COLORS.primary },
+  removeMonthBtn: { padding: 16, borderLeftWidth: 1, borderLeftColor: COLORS.border },
+  noEntriesHint: {
+    textAlign: 'center', color: COLORS.textSecondary, fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light', paddingVertical: 24,
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+
+  // save button
   saveButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 0,
-    padding: 18,
-    alignItems: 'center',
-    marginTop: 40,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primary, borderRadius: 0, padding: 18,
+    alignItems: 'center', marginTop: 40, borderWidth: 1, borderColor: COLORS.primary,
   },
   saveButtonText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '400',
-    fontFamily: 'NotoSansThai_400Regular',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-  },
-  monthSection: {
-    marginTop: 16,
-  },
-  monthSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 12,
-    gap: 16,
-  },
-  monthArrow: {
-    padding: 8,
-  },
-  selectedMonthText: {
-    fontSize: 16,
-    fontWeight: '600',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-    minWidth: 150,
-    textAlign: 'center',
-  },
-  hintText: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    marginTop: 8,
-    lineHeight: 16,
+    color: '#ffffff', fontSize: 12, fontWeight: '400',
+    fontFamily: 'NotoSansThai_400Regular', letterSpacing: 2, textTransform: 'uppercase',
   },
 });

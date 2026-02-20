@@ -4,96 +4,232 @@
 // CoinGecko API สำหรับ Crypto (ฟรี ไม่ต้อง API key)
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
 
-// Alpha Vantage API สำหรับหุ้น (ต้องมี API key ฟรี)
-const ALPHA_VANTAGE_API = 'https://www.alphavantage.co/query';
-const ALPHA_VANTAGE_KEY = 'demo'; // ใช้ demo key หรือสมัครฟรีที่ https://www.alphavantage.co/support/#api-key
+// Yahoo Finance API สำหรับหุ้นต่างประเทศ (ไม่ต้อง API key)
+const YAHOO_FINANCE_API = 'https://query1.finance.yahoo.com/v8/finance/chart';
+const YAHOO_FINANCE_API_2 = 'https://query2.finance.yahoo.com/v8/finance/chart';
+
+// Frankfurter API สำหรับอัตราแลกเปลี่ยน (ฟรี ไม่ต้อง API key)
+const FRANKFURTER_API = 'https://api.frankfurter.app/latest';
+
+// ========================
+// Exchange Rate Cache
+// ========================
+let exchangeRateCache: { rates: { [key: string]: number }; timestamp: number } | null = null;
+const CACHE_DURATION_MS = 60 * 60 * 1000; // cache 1 ชั่วโมง
+
+async function fetchWithTimeout(url: string, timeout = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getExchangeRates(): Promise<{ [key: string]: number }> {
+  if (exchangeRateCache && Date.now() - exchangeRateCache.timestamp < CACHE_DURATION_MS) {
+    return exchangeRateCache.rates;
+  }
+  try {
+    const response = await fetchWithTimeout(`${FRANKFURTER_API}?from=USD`);
+    if (!response.ok) throw new Error('Exchange rate fetch failed');
+    const data = await response.json();
+    const rates = data.rates as { [key: string]: number };
+    exchangeRateCache = { rates, timestamp: Date.now() };
+    return rates;
+  } catch {
+    // Fallback อัตราแลกเปลี่ยนโดยประมาณ
+    return { THB: 35, EUR: 0.92, GBP: 0.78, JPY: 148, CNY: 7.1, HKD: 7.8, SGD: 1.34 };
+  }
+}
+
+export async function getUsdToThbRate(): Promise<number> {
+  const rates = await getExchangeRates();
+  return rates['THB'] ?? 35;
+}
+
+// แปลงราคาจากสกุลเงินใดก็ได้ → THB
+async function convertToThb(amount: number, fromCurrency: string): Promise<number> {
+  if (fromCurrency === 'THB') return amount;
+  const rates = await getExchangeRates();
+  if (fromCurrency === 'USD') {
+    return amount * (rates['THB'] ?? 35);
+  }
+  // fromCurrency → USD → THB
+  const rateToUSD = 1 / (rates[fromCurrency] ?? 1);
+  return amount * rateToUSD * (rates['THB'] ?? 35);
+}
+
+// ========================
+// Crypto (CoinGecko)
+// ========================
+
+// ตาราง symbol → CoinGecko ID
+const CRYPTO_ID_MAP: { [key: string]: string } = {
+  'BTC': 'bitcoin',
+  'ETH': 'ethereum',
+  'USDT': 'tether',
+  'USDC': 'usd-coin',
+  'BNB': 'binancecoin',
+  'XRP': 'ripple',
+  'ADA': 'cardano',
+  'DOGE': 'dogecoin',
+  'SOL': 'solana',
+  'DOT': 'polkadot',
+  'MATIC': 'matic-network',
+  'POL': 'matic-network',
+  'TAO': 'bittensor',
+  'LINK': 'chainlink',
+  'UNI': 'uniswap',
+  'AVAX': 'avalanche-2',
+  'ATOM': 'cosmos',
+  'LTC': 'litecoin',
+  'BCH': 'bitcoin-cash',
+  'TRX': 'tron',
+  'NEAR': 'near',
+  'APT': 'aptos',
+  'OP': 'optimism',
+  'ARB': 'arbitrum',
+  'SUI': 'sui',
+  'INJ': 'injective-protocol',
+  'FET': 'fetch-ai',
+  'RENDER': 'render-token',
+  'WLD': 'worldcoin-wld',
+  'TON': 'the-open-network',
+  'PEPE': 'pepe',
+  'SHIB': 'shiba-inu',
+  'FTM': 'fantom',
+  'SAND': 'the-sandbox',
+  'MANA': 'decentraland',
+  'IMX': 'immutable-x',
+  'AAVE': 'aave',
+  'MKR': 'maker',
+  'SNX': 'havven',
+  'CRV': 'curve-dao-token',
+  'LDO': 'lido-dao',
+  'STX': 'blockstack',
+  'FIL': 'filecoin',
+  'THETA': 'theta-token',
+  'VET': 'vechain',
+  'XLM': 'stellar',
+  'ALGO': 'algorand',
+  'EOS': 'eos',
+  'XTZ': 'tezos',
+  'EGLD': 'elrond-erd-2',
+  'FLOW': 'flow',
+  'XMR': 'monero',
+  'ZEC': 'zcash',
+  'DASH': 'dash',
+};
 
 export async function getCryptoPrice(symbol: string): Promise<number | null> {
   try {
-    // แปลง symbol เป็น coingecko id
-    const symbolMap: { [key: string]: string } = {
-      'BTC': 'bitcoin',
-      'ETH': 'ethereum',
-      'USDT': 'tether',
-      'BNB': 'binancecoin',
-      'XRP': 'ripple',
-      'ADA': 'cardano',
-      'DOGE': 'dogecoin',
-      'SOL': 'solana',
-      'DOT': 'polkadot',
-      'MATIC': 'matic-network',
-      'TAO': 'bittensor',
-      'LINK': 'chainlink',
-      'UNI': 'uniswap',
-      'AVAX': 'avalanche-2',
-      'ATOM': 'cosmos',
-    };
+    const upperSymbol = symbol.toUpperCase();
+    const coinId = CRYPTO_ID_MAP[upperSymbol] || upperSymbol.toLowerCase();
 
-    const coinId = symbolMap[symbol.toUpperCase()] || symbol.toLowerCase();
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${COINGECKO_API}/simple/price?ids=${coinId}&vs_currencies=thb`
     );
-
-    if (!response.ok) {
-      throw new Error('Failed to fetch crypto price');
-    }
+    if (!response.ok) throw new Error('CoinGecko fetch failed');
 
     const data = await response.json();
-    return data[coinId]?.thb || null;
+    return data[coinId]?.thb ?? null;
   } catch (error) {
     console.error('Error fetching crypto price:', error);
     return null;
   }
 }
 
-export async function getStockPrice(symbol: string): Promise<number | null> {
+// ดึงราคา crypto หลายตัวในครั้งเดียว (ประหยัด request)
+export async function getCryptoPrices(
+  symbols: string[]
+): Promise<{ [symbol: string]: number | null }> {
+  if (symbols.length === 0) return {};
   try {
-    // Alpha Vantage API
-    const response = await fetch(
-      `${ALPHA_VANTAGE_API}?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${ALPHA_VANTAGE_KEY}`
-    );
+    const upperSymbols = symbols.map((s) => s.toUpperCase());
+    const coinIds = upperSymbols.map((s) => CRYPTO_ID_MAP[s] || s.toLowerCase());
+    const uniqueIds = [...new Set(coinIds)];
 
-    if (!response.ok) {
-      throw new Error('Failed to fetch stock price');
-    }
+    const response = await fetchWithTimeout(
+      `${COINGECKO_API}/simple/price?ids=${uniqueIds.join(',')}&vs_currencies=thb`
+    );
+    if (!response.ok) throw new Error('CoinGecko batch fetch failed');
 
     const data = await response.json();
-    const price = data['Global Quote']?.['05. price'];
-    
-    if (price) {
-      // แปลง USD เป็น THB (อัตราประมาณ 35 บาท/ดอลลาร์)
-      return parseFloat(price) * 35;
+    const result: { [symbol: string]: number | null } = {};
+    upperSymbols.forEach((sym, i) => {
+      const coinId = coinIds[i];
+      result[sym] = data[coinId]?.thb ?? null;
+    });
+    return result;
+  } catch (error) {
+    console.error('Error fetching crypto prices batch:', error);
+    return {};
+  }
+}
+
+// ========================
+// Stock (Yahoo Finance)
+// ========================
+
+export async function getStockPrice(symbol: string): Promise<number | null> {
+  try {
+    // ลอง query1 ก่อน ถ้าล้มเหลวลอง query2
+    let response = await fetchWithTimeout(
+      `${YAHOO_FINANCE_API}/${encodeURIComponent(symbol)}`
+    ).catch(() => null);
+
+    if (!response || !response.ok) {
+      response = await fetchWithTimeout(
+        `${YAHOO_FINANCE_API_2}/${encodeURIComponent(symbol)}`
+      );
     }
-    
-    return null;
+
+    if (!response.ok) throw new Error(`Yahoo Finance returned ${response.status}`);
+
+    const data = await response.json();
+    const meta = data?.chart?.result?.[0]?.meta;
+
+    if (!meta?.regularMarketPrice) return null;
+
+    const priceInOriginalCurrency: number = meta.regularMarketPrice;
+    const currency: string = meta.currency || 'USD';
+
+    return await convertToThb(priceInOriginalCurrency, currency);
   } catch (error) {
     console.error('Error fetching stock price:', error);
     return null;
   }
 }
 
+// ========================
+// Gold (metals.live)
+// ========================
+
 export async function getGoldPrice(): Promise<number | null> {
   try {
-    // Gold API - สามารถใช้ Gold API ฟรี
-    const response = await fetch('https://api.metals.live/v1/spot/gold');
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch gold price');
-    }
+    const response = await fetchWithTimeout('https://api.metals.live/v1/spot/gold');
+    if (!response.ok) throw new Error('metals.live fetch failed');
 
     const data = await response.json();
-    // แปลง USD/oz เป็น THB/บาท (1 oz = 31.1 กรัม, 15.244 กรัม = 1 บาท)
-    const pricePerOz = data[0]?.price || 0;
-    const pricePerGram = pricePerOz / 31.1;
-    const pricePerBaht = pricePerGram * 15.244 * 35; // แปลงเป็นบาทไทย
-    
-    return pricePerBaht;
+    const pricePerOzUSD: number = data[0]?.price || 0;
+    // USD/oz → THB/กรัม → THB/บาททอง (15.244 กรัม = 1 บาททอง)
+    const pricePerGramUSD = pricePerOzUSD / 31.1;
+    const pricePerBahtTongUSD = pricePerGramUSD * 15.244;
+
+    const usdToThb = await getUsdToThbRate();
+    return pricePerBahtTongUSD * usdToThb;
   } catch (error) {
     console.error('Error fetching gold price:', error);
-    // ถ้าดึงไม่ได้ ใช้ราคาประมาณ (30,000 บาท/บาททอง)
-    return 30000;
+    return 30000; // fallback ราคาประมาณ
   }
 }
+
+// ========================
+// Search
+// ========================
 
 export interface CryptoSearchResult {
   id: string;
@@ -110,23 +246,15 @@ export interface StockSearchResult {
 
 export async function searchCryptoList(query: string): Promise<CryptoSearchResult[]> {
   try {
-    if (!query || query.trim().length < 1) {
-      return [];
-    }
+    if (!query || query.trim().length < 1) return [];
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${COINGECKO_API}/search?query=${encodeURIComponent(query.trim())}`
     );
-
-    if (!response.ok) {
-      throw new Error('Failed to search crypto');
-    }
+    if (!response.ok) throw new Error('CoinGecko search failed');
 
     const data = await response.json();
-    const coins = data.coins || [];
-
-    // จำกัดผลลัพธ์ 10 รายการแรก
-    return coins.slice(0, 10).map((coin: any) => ({
+    return (data.coins || []).slice(0, 10).map((coin: any) => ({
       id: coin.id,
       symbol: coin.symbol.toUpperCase(),
       name: coin.name,
@@ -139,33 +267,37 @@ export async function searchCryptoList(query: string): Promise<CryptoSearchResul
 
 export async function searchStockList(query: string): Promise<StockSearchResult[]> {
   try {
-    if (!query || query.trim().length < 1) {
-      return [];
-    }
+    if (!query || query.trim().length < 1) return [];
 
-    const response = await fetch(
-      `${ALPHA_VANTAGE_API}?function=SYMBOL_SEARCH&keywords=${encodeURIComponent(query.trim())}&apikey=${ALPHA_VANTAGE_KEY}`
+    // Yahoo Finance search endpoint
+    const response = await fetchWithTimeout(
+      `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(
+        query.trim()
+      )}&lang=en-US&region=US&quotesCount=10&newsCount=0`
     );
-
-    if (!response.ok) {
-      throw new Error('Failed to search stock');
-    }
+    if (!response.ok) throw new Error('Yahoo Finance search failed');
 
     const data = await response.json();
-    const matches = data.bestMatches || [];
+    const quotes: any[] = data?.quotes || [];
 
-    // จำกัดผลลัพธ์ 10 รายการแรก
-    return matches.slice(0, 10).map((match: any) => ({
-      symbol: match['1. symbol'],
-      name: match['2. name'],
-      region: match['4. region'],
-      currency: match['8. currency'],
-    }));
+    return quotes
+      .filter((q) => q.quoteType === 'EQUITY' || q.quoteType === 'ETF')
+      .slice(0, 10)
+      .map((q) => ({
+        symbol: q.symbol,
+        name: q.longname || q.shortname || q.symbol,
+        region: q.exchange || '',
+        currency: q.currency || 'USD',
+      }));
   } catch (error) {
     console.error('Error searching stock:', error);
     return [];
   }
 }
+
+// ========================
+// Main update function
+// ========================
 
 export async function updateInvestmentPrice(
   type: string,
@@ -173,11 +305,11 @@ export async function updateInvestmentPrice(
 ): Promise<number | null> {
   switch (type) {
     case 'crypto':
-      return await getCryptoPrice(symbol);
+      return getCryptoPrice(symbol);
     case 'stock':
-      return await getStockPrice(symbol);
+      return getStockPrice(symbol);
     case 'gold':
-      return await getGoldPrice();
+      return getGoldPrice();
     default:
       return null;
   }
