@@ -57,11 +57,34 @@ export const convertToTHB = (amount: number, currency?: string): number => {
   return amount * rate;
 };
 
+// แปลงปีพุทธศักราช (2568) → คริสต์ศักราช (2025) ถ้าจำเป็น
+export const toChristianYear = (dateString: string): string => {
+  if (!dateString) return dateString;
+  const parts = dateString.split('-');
+  if (parts.length < 1) return dateString;
+  const year = parseInt(parts[0], 10);
+  // ปีไทย (BE) จะมีค่า > 2400 เช่น 2568
+  if (year > 2400) {
+    parts[0] = String(year - 543);
+    return parts.join('-');
+  }
+  return dateString;
+};
+
 export const formatDate = (dateString: string): string => {
-  const date = new Date(dateString);
+  const date = new Date(toChristianYear(dateString));
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
+    day: 'numeric',
+  });
+};
+
+export const formatDateShort = (dateString: string): string => {
+  const date = new Date(toChristianYear(dateString));
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
     day: 'numeric',
   });
 };

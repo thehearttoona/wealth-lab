@@ -4,6 +4,7 @@ import { Nunito_400Regular, Nunito_500Medium, Nunito_600SemiBold, Nunito_700Bold
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Navigation from './src/navigation';
 
 SplashScreen.preventAutoHideAsync();
@@ -32,8 +33,10 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <Navigation />
-      <StatusBar style="dark" />
+      <SafeAreaProvider>
+        <Navigation />
+        <StatusBar style="light" />
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

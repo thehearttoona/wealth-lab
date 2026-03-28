@@ -8,6 +8,7 @@ import {
   TextInput,
   Alert,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -15,19 +16,152 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, DateData } from 'react-native-calendars';
 import { RootStackParamList, Expense, RecurringBill } from '../types';
 import { saveExpense, updateExpense, saveRecurringBill, updateRecurringBill } from '../services/storage';
-import { EXPENSE_CATEGORIES, COLORS, formatCurrency } from '../utils/constants';
+import { setPendingReturnDate } from '../services/pendingNavigation';
+import { EXPENSE_CATEGORIES, COLORS, formatCurrency, toChristianYear } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
+import * as ImagePicker from 'expo-image-picker';
+import { supabase } from '../services/supabase';
 
 type AddExpenseScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'AddExpense'>;
 type AddExpenseScreenRouteProp = RouteProp<RootStackParamList, 'AddExpense'>;
 
+// แปลงวันที่จาก OCR ที่อาจอ่านปีพ.ศ.ผิด
+// case: "69"   → 2-digit BE → 2026
+// case: "2569" → full BE    → 2026
+// case: "2069" → AI เติม 2000 หน้าเลข BE 2 หลัก → 2026
+const normalizeScanDate = (dateStr: string): string => {
+  if (!dateStr) return dateStr;
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return dateStr;
+  let year = parseInt(parts[0], 10);
+  if (isNaN(year)) return dateStr;
+  const currentYear = new Date().getFullYear();
+  if (year < 100) {
+    // เช่น "69" → 69 + 2500 - 543 = 2026
+    year = year + 2500 - 543;
+  } else if (year > 2400) {
+    // เช่น "2569" → 2569 - 543 = 2026
+    year = year - 543;
+  } else if (year > currentYear + 20 && year < 2200) {
+    // AI เติม 2000 หน้า 2-digit BE เช่น "2069" (= 2000 + 69) → 2069 - 43 = 2026
+    year = year - 43;
+  }
+  return `${year}-${parts[1]}-${parts[2]}`;
+};
+
 export default function AddExpenseScreen() {
   const navigation = useNavigation<AddExpenseScreenNavigationProp>();
   const route = useRoute<AddExpenseScreenRouteProp>();
-  const { type, expense, bill } = route.params;
+  const { type, expense, bill, date: paramDate } = route.params;
   const { isDesktop } = useResponsive();
 
   const isEditing = !!(expense || bill);
+
+  // ── OCR ──
+  const [scanning, setScanning] = useState(false);
+
+  const scanWithSupabase = async (image_base64: string, media_type: string) => {
+    setScanning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('scan-receipt', {
+        body: { image_base64, media_type },
+      });
+      if (error) throw error;
+      if (data.success) {
+        console.log('[scan] raw date from OCR:', data.date);
+        if (data.amount) setAmount(data.amount.toString());
+        if (data.description) setDescription(data.description);
+        if (data.category && EXPENSE_CATEGORIES.includes(data.category)) setCategory(data.category);
+        if (data.date) setExpenseDate(normalizeScanDate(data.date));
+      } else {
+        showMsg(data.error || 'ไม่สามารถอ่านข้อมูลจากรูปได้');
+      }
+    } catch (err: any) {
+      showMsg('Error: ' + (err?.message || JSON.stringify(err) || 'unknown'));
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const pickAndScan = async (useCamera: boolean) => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.style.display = 'none';
+      if (useCamera) input.capture = 'environment';
+      input.onchange = async (e: any) => {
+        const file: File = e.target.files?.[0];
+        document.body.removeChild(input);
+        if (!file) return;
+        setScanning(true);
+        try {
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (ev) => resolve(ev.target?.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          // resize ด้วย Canvas ก่อนส่ง — ลดขนาดรูปให้ไม่เกิน 1024px
+          const resized = await new Promise<string>((resolve) => {
+            const img = new (window as any).Image();
+            img.onload = () => {
+              const MAX = 1024;
+              let w = img.width, h = img.height;
+              if (w > h ? w > MAX : h > MAX) {
+                if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+                else { w = Math.round(w * MAX / h); h = MAX; }
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = w; canvas.height = h;
+              canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+              resolve(canvas.toDataURL('image/jpeg', 0.7));
+            };
+            img.src = dataUrl;
+          });
+          const base64 = resized.split(',')[1];
+          await scanWithSupabase(base64, 'image/jpeg');
+        } catch (err: any) {
+          showMsg('อ่านไฟล์ไม่ได้: ' + (err?.message || ''));
+          setScanning(false);
+        }
+      };
+      document.body.appendChild(input);
+      input.click();
+    } else {
+      if (useCamera) {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') { showMsg('กรุณาอนุญาตใช้กล้อง'); return; }
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'], quality: 0.4, exif: false, base64: true,
+        });
+        if (!result.canceled && result.assets[0]) {
+          await scanWithSupabase(result.assets[0].base64!, result.assets[0].mimeType || 'image/jpeg');
+        }
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') { showMsg('กรุณาอนุญาตเข้าถึงรูปภาพ'); return; }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'], quality: 0.4, exif: false, base64: true,
+        });
+        if (!result.canceled && result.assets[0]) {
+          await scanWithSupabase(result.assets[0].base64!, result.assets[0].mimeType || 'image/jpeg');
+        }
+      }
+    }
+  };
+
+  const handleScanReceipt = async () => {
+    if (Platform.OS === 'web') {
+      await pickAndScan(false);
+    } else {
+      Alert.alert('สแกนใบเสร็จ', 'เลือกตัวเลือก', [
+        { text: 'ถ่ายรูป', onPress: () => pickAndScan(true) },
+        { text: 'เลือกจากคลัง', onPress: () => pickAndScan(false) },
+        { text: 'ยกเลิก', style: 'cancel' },
+      ]);
+    }
+  };
 
   // ── Shared ──
   const [amount, setAmount] = useState('');
@@ -39,8 +173,18 @@ export default function AddExpenseScreen() {
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const todayLocal = `${yyyy}-${mm}-${String(now.getDate()).padStart(2, '0')}`;
-  const [expenseDate, setExpenseDate] = useState(() => todayLocal);
+  const [expenseDate, setExpenseDate] = useState(() => paramDate || todayLocal);
+  const [expenseTime, setExpenseTime] = useState(() => {
+    const n = new Date();
+    return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
+  });
   const [showCalendar, setShowCalendar] = useState(false);
+
+  const handleTimeChange = (text: string) => {
+    const digits = text.replace(/\D/g, '');
+    if (digits.length <= 2) setExpenseTime(digits);
+    else setExpenseTime(digits.slice(0, 2) + ':' + digits.slice(2, 4));
+  };
 
   // ── Recurring: per-month ──
   const [viewMonth, setViewMonth] = useState<string>(() => `${yyyy}-${mm}`);
@@ -54,7 +198,9 @@ export default function AddExpenseScreen() {
       setCategory(expense.category);
       setDescription(expense.description || '');
       if (expense.date) {
-        setExpenseDate(new Date(expense.date).toISOString().split('T')[0]);
+        const d = new Date(expense.date);
+        setExpenseDate(d.toISOString().split('T')[0]);
+        setExpenseTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
       }
     } else if (bill) {
       setAmount(bill.amount.toString());
@@ -78,7 +224,8 @@ export default function AddExpenseScreen() {
   // ── Helpers ──
   const formatMonthLabel = (monthKey: string) => {
     const [y, m] = monthKey.split('-').map(Number);
-    return new Date(y, m - 1, 1).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' });
+    const year = y > 2400 ? y - 543 : y;
+    return new Date(year, m - 1, 1).toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
   };
 
   const navigateViewMonth = (delta: number) => {
@@ -115,19 +262,21 @@ export default function AddExpenseScreen() {
       }
     } else {
       if (Object.keys(monthEntries).length === 0) {
-        showMsg('กรุณาบันทึกยอดอย่างน้อย 1 เดือน');
+        showMsg('กรุณาบันทึกอย่างน้อย 1 เดือน');
         return;
       }
     }
 
     try {
       if (type === 'daily') {
+        const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+        const timeStr = timeRegex.test(expenseTime) ? expenseTime : '00:00';
         const expenseData: Expense = {
           id: expense?.id || Date.now().toString(),
           amount: parseFloat(amount),
           category,
           description,
-          date: new Date(expenseDate).toISOString(),
+          date: new Date(`${expenseDate}T${timeStr}:00`).toISOString(),
           type: 'daily',
         };
         if (isEditing && expense) {
@@ -135,7 +284,7 @@ export default function AddExpenseScreen() {
         } else {
           await saveExpense(expenseData);
         }
-        showMsg(isEditing ? 'แก้ไขรายจ่ายเรียบร้อย' : 'บันทึกรายจ่ายเรียบร้อย');
+        showMsg(isEditing ? 'แก้ไขรายจ่ายแล้ว' : 'บันทึกรายจ่ายแล้ว');
       } else {
         const parsedMonthly: { [key: string]: number } = {};
         Object.entries(monthEntries).forEach(([month, amtStr]) => {
@@ -155,11 +304,14 @@ export default function AddExpenseScreen() {
         } else {
           await saveRecurringBill(billData);
         }
-        showMsg(isEditing ? 'แก้ไขรายจ่ายประจำเดือนเรียบร้อย' : 'บันทึกรายจ่ายประจำเดือนเรียบร้อย');
+        showMsg(isEditing ? 'แก้ไขรายการแล้ว' : 'บันทึกรายการแล้ว');
+      }
+      if (type === 'daily') {
+        setPendingReturnDate(expenseDate);
       }
       navigation.goBack();
     } catch {
-      showMsg('ไม่สามารถบันทึกข้อมูลได้');
+      showMsg('บันทึกไม่สำเร็จ กรุณาลองใหม่');
     }
   };
 
@@ -177,7 +329,53 @@ export default function AddExpenseScreen() {
           isDesktop && { maxWidth: 600, alignSelf: 'center' as const, width: '100%' as any },
         ]}
       >
-        {/* ── ชื่อ / รายละเอียด ── */}
+        {/* ════════════ DAILY ════════════ */}
+        {type === 'daily' && (
+          <>
+            {/* ── Scan Receipt ── */}
+            <TouchableOpacity
+              style={[styles.scanButton, scanning && styles.scanButtonDisabled]}
+              onPress={handleScanReceipt}
+              disabled={scanning}
+            >
+              {scanning ? (
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              ) : (
+                <FontAwesome name="camera" size={14} color={COLORS.primary} />
+              )}
+              <Text style={styles.scanButtonText}>
+                {scanning ? 'กำลังอ่านใบเสร็จ...' : 'สแกนใบเสร็จ'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* ── Amount ── */}
+            <Text style={styles.label}>จำนวนเงิน (฿)</Text>
+            <TextInput
+              style={styles.input}
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="numeric"
+              placeholder="0.00"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+          </>
+        )}
+
+        {/* ── Category ── */}
+        <Text style={styles.label}>หมวดหมู่</Text>
+        <View style={styles.categoryGrid}>
+          {EXPENSE_CATEGORIES.map((cat) => (
+            <TouchableOpacity
+              key={cat}
+              style={[styles.categoryChip, category === cat && styles.categoryChipActive]}
+              onPress={() => setCategory(cat)}
+            >
+              <Text style={[styles.categoryChipText, category === cat && styles.categoryChipTextActive]}>{cat}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* ── Description ── */}
         <Text style={styles.label}>{type === 'daily' ? 'รายละเอียด' : 'ชื่อรายการ'}</Text>
         <TextInput
           style={[styles.input, { minHeight: 56 }]}
@@ -187,57 +385,9 @@ export default function AddExpenseScreen() {
           placeholderTextColor={COLORS.textSecondary}
         />
 
-        {/* ── หมวดหมู่ ── */}
-        <Text style={styles.label}>หมวดหมู่</Text>
-        {isDesktop ? (
-          <View style={styles.categoryScrollWrapper}>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 8 }}>
-              {EXPENSE_CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[styles.categoryButton, { marginRight: 0 }, category === cat && styles.categoryButtonSelected]}
-                  onPress={() => setCategory(cat)}
-                >
-                  <Text style={[styles.categoryText, category === cat && styles.categoryTextSelected]}>{cat}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        ) : (
-          <View style={styles.categoryScrollWrapper}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.categoryContainer}
-              contentContainerStyle={styles.categoryContentContainer}
-              nestedScrollEnabled
-            >
-              {EXPENSE_CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[styles.categoryButton, category === cat && styles.categoryButtonSelected]}
-                  onPress={() => setCategory(cat)}
-                >
-                  <Text style={[styles.categoryText, category === cat && styles.categoryTextSelected]}>{cat}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* ════════════ DAILY ════════════ */}
+        {/* ── Daily: Date ── */}
         {type === 'daily' && (
           <>
-            <Text style={styles.label}>จำนวนเงิน (บาท)</Text>
-            <TextInput
-              style={styles.input}
-              value={amount}
-              onChangeText={setAmount}
-              keyboardType="numeric"
-              placeholder="0.00"
-              placeholderTextColor={COLORS.textSecondary}
-            />
-
             <Text style={styles.label}>วันที่</Text>
             <TouchableOpacity
               style={styles.datePickerButton}
@@ -245,7 +395,7 @@ export default function AddExpenseScreen() {
             >
               <FontAwesome name="calendar" size={15} color={COLORS.primary} />
               <Text style={styles.datePickerText}>
-                {new Date(expenseDate).toLocaleDateString('th-TH', {
+                {new Date(toChristianYear(expenseDate)).toLocaleDateString('en-US', {
                   year: 'numeric', month: 'long', day: 'numeric',
                 })}
               </Text>
@@ -268,6 +418,20 @@ export default function AddExpenseScreen() {
                 />
               </View>
             )}
+
+            <Text style={styles.label}>เวลา</Text>
+            <View style={styles.timeRow}>
+              <FontAwesome name="clock-o" size={15} color={COLORS.primary} style={styles.timeIcon} />
+              <TextInput
+                style={styles.timeInput}
+                value={expenseTime}
+                onChangeText={handleTimeChange}
+                keyboardType="numeric"
+                placeholder="HH:MM"
+                placeholderTextColor={COLORS.textSecondary}
+                maxLength={5}
+              />
+            </View>
           </>
         )}
 
@@ -286,7 +450,7 @@ export default function AddExpenseScreen() {
             />
 
             {/* Month navigator */}
-            <Text style={styles.label}>เลือกเดือนและกรอกยอด</Text>
+            <Text style={styles.label}>เลือกเดือน & กรอกยอด</Text>
 
             <View style={styles.monthNavigator}>
               <TouchableOpacity onPress={() => navigateViewMonth(-1)} style={styles.monthNavBtn}>
@@ -354,7 +518,7 @@ export default function AddExpenseScreen() {
               </View>
             ) : (
               <Text style={styles.noEntriesHint}>
-                ยังไม่มีรายการ — เลือกเดือนแล้วกรอกยอดและกด "บันทึก"
+                ยังไม่มีข้อมูล — เลือกเดือน กรอกยอด แล้วกด "บันทึก"
               </Text>
             )}
           </>
@@ -384,16 +548,32 @@ const styles = StyleSheet.create({
     fontSize: 16, fontFamily: 'NotoSansThai_300Light',
     borderWidth: 1, borderColor: COLORS.border, color: COLORS.text,
   },
-  categoryScrollWrapper: { marginVertical: 12 },
-  categoryContainer: { flexGrow: 0 },
-  categoryContentContainer: { paddingRight: 24, paddingVertical: 8 },
-  categoryButton: {
-    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 0,
-    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, marginRight: 12,
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginVertical: 12,
   },
-  categoryButtonSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  categoryText: { fontSize: 12, fontWeight: '300', fontFamily: 'NotoSansThai_300Light', letterSpacing: 0.5, color: COLORS.text },
-  categoryTextSelected: { color: '#ffffff', fontWeight: '400', fontFamily: 'NotoSansThai_400Regular' },
+  categoryChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  categoryChipActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: `${COLORS.primary}20`,
+  },
+  categoryChipText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  categoryChipTextActive: {
+    color: COLORS.primary,
+    fontFamily: 'NotoSansThai_400Regular',
+  },
 
   // date picker
   datePickerButton: {
@@ -454,6 +634,30 @@ const styles = StyleSheet.create({
     textAlign: 'center', color: COLORS.textSecondary, fontSize: 12,
     fontFamily: 'NotoSansThai_300Light', paddingVertical: 24,
     borderWidth: 1, borderColor: COLORS.border,
+  },
+
+  // time picker
+  timeRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border,
+  },
+  timeIcon: { paddingHorizontal: 16 },
+  timeInput: {
+    flex: 1, padding: 16, fontSize: 16,
+    fontFamily: 'NotoSansThai_300Light', color: COLORS.text,
+  },
+
+  // scan button
+  scanButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, padding: 14, marginBottom: 8,
+    borderWidth: 1, borderColor: COLORS.primary, borderStyle: 'dashed',
+    backgroundColor: `${COLORS.primary}10`,
+  },
+  scanButtonDisabled: { opacity: 0.5 },
+  scanButtonText: {
+    color: COLORS.primary, fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular', letterSpacing: 0.5,
   },
 
   // save button

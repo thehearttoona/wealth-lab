@@ -24,7 +24,14 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single",
+      "name": "Narix Tracking",
+      "shortName": "Narix",
+      "description": "Personal finance & trading tracker",
+      "themeColor": "#F68048",
+      "backgroundColor": "#0D1B2A"
     }
   }
 }

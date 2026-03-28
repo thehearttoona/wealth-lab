@@ -1,71 +1,69 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MonthlySummary } from '../types';
+import { supabase } from './supabase';
 
-const MONTHLY_SUMMARY_KEY = '@monthly_summary';
+const getUserId = async (): Promise<string> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  return user.id;
+};
+
+const mapFromDb = (row: any): MonthlySummary => ({
+  id: row.id,
+  month: row.month,
+  totalExpense: row.total_expense,
+  notes: row.notes,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapToDb = (s: MonthlySummary, userId: string) => ({
+  id: s.id,
+  month: s.month,
+  total_expense: s.totalExpense,
+  notes: s.notes,
+  created_at: s.createdAt,
+  updated_at: s.updatedAt,
+  user_id: userId,
+});
 
 export const saveMonthlySummary = async (summary: MonthlySummary): Promise<void> => {
-  try {
-    const existingSummaries = await getMonthlySummaries();
-    const index = existingSummaries.findIndex((s) => s.month === summary.month);
-    
-    let updatedSummaries;
-    if (index >= 0) {
-      // Update existing
-      updatedSummaries = existingSummaries.map((s) =>
-        s.month === summary.month ? summary : s
-      );
-    } else {
-      // Add new
-      updatedSummaries = [...existingSummaries, summary];
-    }
-    
-    await AsyncStorage.setItem(MONTHLY_SUMMARY_KEY, JSON.stringify(updatedSummaries));
-  } catch (error) {
-    console.error('Error saving monthly summary:', error);
-    throw error;
-  }
+  const userId = await getUserId();
+  const { error } = await supabase
+    .from('monthly_summaries')
+    .upsert(mapToDb(summary, userId), { onConflict: 'month' });
+  if (error) throw error;
 };
 
 export const getMonthlySummaries = async (): Promise<MonthlySummary[]> => {
-  try {
-    const summaries = await AsyncStorage.getItem(MONTHLY_SUMMARY_KEY);
-    return summaries ? JSON.parse(summaries) : [];
-  } catch (error) {
-    console.error('Error getting monthly summaries:', error);
-    return [];
-  }
+  const { data, error } = await supabase
+    .from('monthly_summaries')
+    .select('*')
+    .order('month', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapFromDb);
 };
 
 export const getMonthlySummaryByMonth = async (month: string): Promise<MonthlySummary | null> => {
-  try {
-    const summaries = await getMonthlySummaries();
-    return summaries.find((s) => s.month === month) || null;
-  } catch (error) {
-    console.error('Error getting monthly summary by month:', error);
-    return null;
-  }
+  const { data, error } = await supabase
+    .from('monthly_summaries')
+    .select('*')
+    .eq('month', month)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? mapFromDb(data) : null;
 };
 
 export const deleteMonthlySummary = async (month: string): Promise<void> => {
-  try {
-    const summaries = await getMonthlySummaries();
-    const filteredSummaries = summaries.filter((s) => s.month !== month);
-    await AsyncStorage.setItem(MONTHLY_SUMMARY_KEY, JSON.stringify(filteredSummaries));
-  } catch (error) {
-    console.error('Error deleting monthly summary:', error);
-    throw error;
-  }
+  const { error } = await supabase.from('monthly_summaries').delete().eq('month', month);
+  if (error) throw error;
 };
 
-// Get summaries for a specific year
 export const getMonthlySummariesByYear = async (year: number): Promise<MonthlySummary[]> => {
-  try {
-    const summaries = await getMonthlySummaries();
-    return summaries
-      .filter((s) => s.month.startsWith(`${year}-`))
-      .sort((a, b) => a.month.localeCompare(b.month));
-  } catch (error) {
-    console.error('Error getting monthly summaries by year:', error);
-    return [];
-  }
+  const { data, error } = await supabase
+    .from('monthly_summaries')
+    .select('*')
+    .like('month', `${year}-%`)
+    .order('month', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapFromDb);
 };

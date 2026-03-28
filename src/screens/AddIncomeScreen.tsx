@@ -15,7 +15,8 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, DateData } from 'react-native-calendars';
 import { RootStackParamList } from '../types';
 import { saveIncome, updateIncome, deleteIncome, INCOME_CATEGORIES } from '../services/incomeStorage';
-import { COLORS, formatCurrency } from '../utils/constants';
+import { setPendingReturnDate } from '../services/pendingNavigation';
+import { COLORS, formatCurrency, toChristianYear } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 
 type AddIncomeNavProp = NativeStackNavigationProp<RootStackParamList, 'AddIncome'>;
@@ -25,7 +26,7 @@ export default function AddIncomeScreen() {
   const navigation = useNavigation<AddIncomeNavProp>();
   const route = useRoute<AddIncomeRouteProp>();
   console.log(route.params);
-  const { income } = route.params;
+  const { income, date: paramDate } = route.params;
   const { isDesktop } = useResponsive();
 
   const isEditing = !!income;
@@ -36,21 +37,36 @@ export default function AddIncomeScreen() {
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState(INCOME_CATEGORIES[0]);
   const [description, setDescription] = useState('');
-  const [date, setDate] = useState(todayStr);
+  const [date, setDate] = useState(paramDate || todayStr);
+  const [time, setTime] = useState(() => {
+    const n = new Date();
+    return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
+  });
   const [showCalendar, setShowCalendar] = useState(false);
+
+  const handleTimeChange = (text: string) => {
+    const digits = text.replace(/\D/g, '');
+    if (digits.length <= 2) setTime(digits);
+    else setTime(digits.slice(0, 2) + ':' + digits.slice(2, 4));
+  };
 
   useEffect(() => {
     if (income) {
       setAmount(income.amount.toString());
       setCategory(income.category);
       setDescription(income.description || '');
-      setDate(income.date);
+      const d = new Date(income.date);
+      // support both YYYY-MM-DD (old) and ISO string (new)
+      setDate(income.date.length === 10 ? income.date : d.toISOString().split('T')[0]);
+      if (income.date.length > 10) {
+        setTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+      }
     }
   }, [income]);
 
   const formatDateLabel = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+    const d = new Date(toChristianYear(dateStr));
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   };
 
   const handleSave = async () => {
@@ -60,12 +76,14 @@ export default function AddIncomeScreen() {
       return;
     }
 
+    const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    const timeStr = timeRegex.test(time) ? time : '00:00';
     const entry = {
       id: income?.id ?? Date.now().toString(),
       amount: parsed,
       category,
       description: description.trim(),
-      date,
+      date: new Date(`${date}T${timeStr}:00`).toISOString(),
     };
     console.log('Saving income:', entry);
 
@@ -74,6 +92,7 @@ export default function AddIncomeScreen() {
     } else {
       await saveIncome(entry);
     }
+    setPendingReturnDate(date);
     navigation.goBack();
   };
 
@@ -114,10 +133,10 @@ export default function AddIncomeScreen() {
         {/* ── Header ── */}
         <View style={styles.header}>
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-            <FontAwesome name="arrow-left" size={14} color={COLORS.textSecondary} />
+            <FontAwesome name="chevron-left" size={16} color="#ffffff" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>
-            {isEditing ? 'Edit Income' : 'Add Income'}
+            {isEditing ? 'แก้ไขรายรับ' : 'เพิ่มรายรับ'}
           </Text>
         </View>
 
@@ -125,7 +144,7 @@ export default function AddIncomeScreen() {
 
           {/* ── Amount ── */}
           <View style={styles.field}>
-            <Text style={styles.label}>Amount (฿)</Text>
+            <Text style={styles.label}>จำนวนเงิน (฿)</Text>
             <TextInput
               style={styles.input}
               value={amount}
@@ -141,7 +160,7 @@ export default function AddIncomeScreen() {
 
           {/* ── Category ── */}
           <View style={styles.field}>
-            <Text style={styles.label}>Category</Text>
+            <Text style={styles.label}>หมวดหมู่</Text>
             <View style={styles.categoryGrid}>
               {INCOME_CATEGORIES.map((cat) => (
                 <TouchableOpacity
@@ -159,22 +178,19 @@ export default function AddIncomeScreen() {
 
           {/* ── Description ── */}
           <View style={styles.field}>
-            <Text style={styles.label}>Description</Text>
+            <Text style={styles.label}>รายละเอียด</Text>
             <TextInput
-              style={[styles.input, styles.textarea]}
+              style={[styles.input, { minHeight: 56 }]}
               value={description}
               onChangeText={setDescription}
-              placeholder="Additional details (optional)"
+              placeholder="ไม่บังคับ"
               placeholderTextColor={COLORS.textSecondary}
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
             />
           </View>
 
           {/* ── Date ── */}
           <View style={styles.field}>
-            <Text style={styles.label}>Date</Text>
+            <Text style={styles.label}>วันที่</Text>
             <TouchableOpacity
               style={styles.dateBtn}
               onPress={() => setShowCalendar(!showCalendar)}
@@ -202,17 +218,34 @@ export default function AddIncomeScreen() {
             )}
           </View>
 
+          {/* ── Time ── */}
+          <View style={styles.field}>
+            <Text style={styles.label}>เวลา</Text>
+            <View style={styles.timeRow}>
+              <FontAwesome name="clock-o" size={15} color={COLORS.accent} style={styles.timeIcon} />
+              <TextInput
+                style={styles.timeInput}
+                value={time}
+                onChangeText={handleTimeChange}
+                keyboardType="numeric"
+                placeholder="HH:MM"
+                placeholderTextColor={COLORS.textSecondary}
+                maxLength={5}
+              />
+            </View>
+          </View>
+
           {/* ── Buttons ── */}
           <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
             <Text style={styles.saveBtnText}>
-              Save
+              บันทึก
             </Text>
           </TouchableOpacity>
 
           {isEditing && (
             <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
               <FontAwesome name="trash" size={14} color={COLORS.error} />
-              <Text style={styles.deleteBtnText}> Delete Income</Text>
+              <Text style={styles.deleteBtnText}> ลบรายรับ</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -236,22 +269,19 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: COLORS.success,
+    gap: 12,
   },
   backBtn: {
-    padding: 4,
+    padding: 6,
   },
   headerTitle: {
-    fontSize: 14,
-    fontWeight: '400',
+    fontSize: 16,
+    fontWeight: 'bold',
     fontFamily: 'NotoSansThai_400Regular',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    color: COLORS.text,
+    color: '#ffffff',
   },
 
   // ── Form ──
@@ -280,10 +310,6 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: 16,
     fontFamily: 'NotoSansThai_300Light',
-  },
-  textarea: {
-    height: 100,
-    paddingTop: 14,
   },
   amountPreview: {
     fontSize: 13,
@@ -338,6 +364,24 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     marginTop: 4,
     paddingVertical:24
+  },
+
+  // ── Time picker ──
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  timeIcon: { paddingHorizontal: 16 },
+  timeInput: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.text,
   },
 
   // ── Buttons ──

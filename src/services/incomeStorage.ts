@@ -15,8 +15,15 @@ export const INCOME_CATEGORIES = [
   'อื่นๆ',
 ];
 
+const getUserId = async (): Promise<string> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  return user.id;
+};
+
 export const saveIncome = async (income: Income): Promise<void> => {
-  const { error } = await supabase.from('incomes').insert(income);
+  const userId = await getUserId();
+  const { error } = await supabase.from('incomes').insert({ ...income, user_id: userId });
   if (error) throw error;
 };
 
@@ -42,7 +49,6 @@ export const deleteIncome = async (id: string): Promise<void> => {
   if (error) throw error;
 };
 
-// ดึงรายรับของเดือนที่ระบุ (YYYY-MM)
 export const getIncomesByMonth = async (monthKey: string): Promise<Income[]> => {
   const { data, error } = await supabase
     .from('incomes')
@@ -52,7 +58,6 @@ export const getIncomesByMonth = async (monthKey: string): Promise<Income[]> => 
   return data || [];
 };
 
-// ยอดรวมรายรับของเดือนที่ระบุ (YYYY-MM)
 export const getMonthlyIncomeTotal = async (monthKey: string): Promise<number> => {
   const incomes = await getIncomesByMonth(monthKey);
   return incomes.reduce((sum, i) => sum + i.amount, 0);

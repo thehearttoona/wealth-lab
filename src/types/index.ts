@@ -23,7 +23,7 @@ export interface Income {
   amount: number;
   category: string;
   description: string;
-  date: string; // YYYY-MM-DD
+  date: string; // ISO string or YYYY-MM-DD (legacy)
 }
 
 export interface MonthlySummary {
@@ -68,8 +68,8 @@ export interface TradingOrder {
 
 export type RootStackParamList = {
   Main: undefined;
-  Home: undefined;
-  AddExpense: { type: 'daily' | 'recurring'; expense?: Expense; bill?: RecurringBill };
+  Home: { returnDate?: string } | undefined;
+  AddExpense: { type: 'daily' | 'recurring'; expense?: Expense; bill?: RecurringBill; date?: string };
   ExpenseList: undefined;
   RecurringBills: undefined;
   Portfolio: undefined;
@@ -80,5 +80,23 @@ export type RootStackParamList = {
   Overview: undefined;
   ExpenseTracking: undefined;
   AddMonthlySummary: { summary?: MonthlySummary; month?: string };
-  AddIncome: { income?: Income };
+  AddIncome: { income?: Income; date?: string };
 };
+
+export interface AIMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+export interface AIFinancialContext {
+  totalExpenseThisMonth?: number;
+  totalExpenseLastMonth?: number;
+  topExpenseCategories?: { category: string; amount: number }[];
+  totalIncomeThisMonth?: number;
+  portfolioTotalValue?: number;
+  portfolioTotalProfit?: number;
+  openTradingOrders?: number;
+  tradingWinRate?: number;
+}

@@ -51,6 +51,39 @@ class MT5API {
     }
   }
 
+  async openOrder(params: {
+    symbol: string;
+    direction: 'BUY' | 'SELL';
+    lot: number;
+    tpPoints: number;
+    slPoints: number;
+    price?: number;
+    useLimit?: boolean;
+    magic?: number;
+    comment?: string;
+  }): Promise<{ success: boolean; message: string; data?: any }> {
+    try {
+      const response = await fetch(`${this.baseUrl}/order/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: params.symbol,
+          direction: params.direction,
+          lot: params.lot,
+          tp_points: params.tpPoints,
+          sl_points: params.slPoints,
+          price: params.price ?? null,
+          use_limit: params.useLimit ?? false,
+          magic: params.magic ?? 888888,
+          comment: params.comment ?? 'Narix Order',
+        }),
+      });
+      return await response.json();
+    } catch (error: any) {
+      return { success: false, message: error.message };
+    }
+  }
+
   async openGrid(settings: GridSettings): Promise<{ success: boolean; message: string; data?: any }> {
     try {
       const response = await fetch(`${this.baseUrl}/grid/open`, {

@@ -1,6 +1,12 @@
 import { Expense, RecurringBill } from '../types';
 import { supabase } from './supabase';
 
+const getUserId = async (): Promise<string> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  return user.id;
+};
+
 // ── mapper: recurring_bills (DB snake_case ↔ TS camelCase) ──────────────────
 
 const mapBillFromDb = (row: any): RecurringBill => ({
@@ -13,7 +19,7 @@ const mapBillFromDb = (row: any): RecurringBill => ({
   isActive: row.is_active,
 });
 
-const mapBillToDb = (bill: RecurringBill) => ({
+const mapBillToDb = (bill: RecurringBill, userId: string) => ({
   id: bill.id,
   name: bill.name,
   amount: bill.amount,
@@ -21,12 +27,14 @@ const mapBillToDb = (bill: RecurringBill) => ({
   monthly_amounts: bill.monthlyAmounts,
   due_day: bill.dueDay,
   is_active: bill.isActive,
+  user_id: userId,
 });
 
 // ── Expenses ─────────────────────────────────────────────────────────────────
 
 export const saveExpense = async (expense: Expense): Promise<void> => {
-  const { error } = await supabase.from('expenses').insert(expense);
+  const userId = await getUserId();
+  const { error } = await supabase.from('expenses').insert({ ...expense, user_id: userId });
   if (error) throw error;
 };
 
@@ -55,7 +63,8 @@ export const deleteExpense = async (id: string): Promise<void> => {
 // ── Recurring Bills ───────────────────────────────────────────────────────────
 
 export const saveRecurringBill = async (bill: RecurringBill): Promise<void> => {
-  const { error } = await supabase.from('recurring_bills').insert(mapBillToDb(bill));
+  const userId = await getUserId();
+  const { error } = await supabase.from('recurring_bills').insert(mapBillToDb(bill, userId));
   if (error) throw error;
 };
 
@@ -69,9 +78,10 @@ export const getRecurringBills = async (): Promise<RecurringBill[]> => {
 };
 
 export const updateRecurringBill = async (bill: RecurringBill): Promise<void> => {
+  const userId = await getUserId();
   const { error } = await supabase
     .from('recurring_bills')
-    .update(mapBillToDb(bill))
+    .update(mapBillToDb(bill, userId))
     .eq('id', bill.id);
   if (error) throw error;
 };

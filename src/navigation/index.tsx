@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { useAuth } from '../hooks/useAuth';
+import LoginScreen from '../screens/LoginScreen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -18,19 +20,22 @@ import ExpenseTrackingScreen from '../screens/ExpenseTrackingScreen';
 import AddMonthlySummaryScreen from '../screens/AddMonthlySummaryScreen';
 import AddIncomeScreen from '../screens/AddIncomeScreen';
 import GridTradingScreen from '../screens/GridTradingScreen';
+import TradingCalculatorScreen from '../screens/TradingCalculatorScreen';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
+import AIAssistant from '../components/AIAssistant';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const TAB_ITEMS = [
-  { name: 'ExpenseTrackingTab', title: 'Finance', icon: 'credit-card' as const, mobileIcon: 'wallet-outline' as const, component: ExpenseTrackingScreen },
-  { name: 'OverviewTab', title: 'Overview', icon: 'pie-chart' as const, mobileIcon: 'pie-chart-outline' as const, component: OverviewScreen },
-  { name: 'PortfolioTab', title: 'Portfolio', icon: 'briefcase' as const, mobileIcon: 'briefcase-outline' as const, component: PortfolioScreen },
-  { name: 'TradingTab', title: 'Trading', icon: 'line-chart' as const, mobileIcon: 'trending-up-outline' as const, component: TradingOrdersScreen },
+  { name: 'ExpenseTrackingTab', title: 'การเงิน', icon: 'credit-card' as const, mobileIcon: 'wallet-outline' as const, component: ExpenseTrackingScreen },
+  { name: 'OverviewTab', title: 'ภาพรวม', icon: 'pie-chart' as const, mobileIcon: 'pie-chart-outline' as const, component: OverviewScreen },
+  { name: 'PortfolioTab', title: 'พอร์ต', icon: 'briefcase' as const, mobileIcon: 'briefcase-outline' as const, component: PortfolioScreen },
+  { name: 'TradingTab', title: 'เทรด', icon: 'line-chart' as const, mobileIcon: 'trending-up-outline' as const, component: TradingOrdersScreen },
   { name: 'GridTradingTab', title: 'Grid MT5', icon: 'th' as const, mobileIcon: 'grid-outline' as const, component: GridTradingScreen },
-  { name: 'StatisticsTab', title: 'Statistics', icon: 'bar-chart' as const, mobileIcon: 'bar-chart-outline' as const, component: StatisticsScreen },
+  { name: 'StatisticsTab', title: 'สถิติ', icon: 'bar-chart' as const, mobileIcon: 'bar-chart-outline' as const, component: StatisticsScreen },
+  { name: 'CalculatorTab', title: 'คำนวณ', icon: 'calculator' as const, mobileIcon: 'calculator-outline' as const, component: TradingCalculatorScreen },
 ];
 
 function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPress: (name: string) => void }) {
@@ -126,16 +131,29 @@ function MobileTabNavigator() {
 }
 
 function TabNavigator() {
-  const { isDesktop } = useResponsive();
-
-  if (isDesktop) {
-    return <DesktopTabNavigator />;
-  }
-
-  return <MobileTabNavigator />;
+  return (
+    <View style={{ flex: 1, backgroundColor: COLORS.background }}>
+      <ExpenseTrackingScreen />
+      {/* <AIAssistant fabBottom={90} /> */}
+    </View>
+  );
 }
 
 export default function Navigation() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator color={COLORS.primary} size="large" />
+      </View>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen />;
+  }
+
   return (
     <NavigationContainer>
       <Stack.Navigator
@@ -157,8 +175,14 @@ export default function Navigation() {
         <Stack.Screen
           name="AddExpense"
           component={AddExpenseScreen}
-          options={({ route }) => ({
-            title: route.params.type === 'daily' ? 'Add Daily Expense' : 'Add Recurring Expense',
+          options={({ route, navigation }) => ({
+            title: route.params.type === 'daily' ? 'เพิ่มรายจ่าย' : 'เพิ่มค่าใช้จ่ายประจำ',
+            headerBackTitleVisible: false,
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <FontAwesome name="chevron-left" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
           })}
         />
         <Stack.Screen
