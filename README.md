@@ -1,143 +1,122 @@
-# 💰 Wealth Lab - ระบบจัดการการเงินส่วนตัว
+# 💰 Wealth Lab - แอปจัดการเงินส่วนตัว
 
-เว็บแอปพลิเคชันมือถือสำหรับติดตามค่าใช้จ่ายรายวัน จัดการบิลประจำเดือน และวิเคราะห์พฤติกรรมการใช้เงิน พัฒนาด้วย React Native + Expo + TypeScript
+ติดตามรายรับรายจ่ายของคุณได้ง่ายๆ ผ่านมือถือ
+รู้ว่าเงินหายไปไหน วางแผนการเงินได้ดีขึ้น
 
-## ✨ ฟีเจอร์หลัก
+📱 พัฒนาด้วย React Native + Expo + TypeScript
 
-- 📊 **Dashboard สรุปการเงิน** - ดู Income, Expense และ Balance รายเดือนในหน้าเดียว
-- 📅 **Calendar View** - ดูรายรับรายจ่ายแบบรายวันผ่านปฏิทิน เห็นภาพรวมทั้งเดือน
-- 📋 **Weekly Summary** - สรุปรายรับรายจ่ายแยกตามสัปดาห์อัตโนมัติ
-- 📝 **บันทึกรายจ่าย** - พร้อมหมวดหมู่ครบ เช่น อาหาร เดินทาง ช้อปปิ้ง สุขภาพ ค่าเช่า และอื่นๆ
-- 💰 **บันทึกรายรับ** - แยกหมวดหมู่ได้ เช่น เงินเดือน Freelance ธุรกิจ การลงทุน โบนัส และอื่นๆ
-- 📷 **สแกนใบเสร็จ** - เพิ่มรายจ่ายได้รวดเร็วด้วยการถ่ายรูปใบเสร็จ
-- 🌙 **Dark Mode** - UI สวยงามสบายตา ใช้งานได้ทั้งกลางวันและกลางคืน
+---
+
+## 📸 หน้าตาแอป
+
+> *(ใส่ screenshot ตรงนี้ครับ)*
+
+---
+
+## ✨ ทำอะไรได้บ้าง
+
+| ฟีเจอร์ | รายละเอียด |
+|--------|-----------|
+| 📊 Dashboard | ดูยอดรายรับ รายจ่าย และเงินคงเหลือรายเดือนในหน้าเดียว |
+| 📅 ปฏิทิน | ดูว่าวันไหนใช้เงินไปเท่าไหร่ |
+| 📋 สรุปรายสัปดาห์ | เปรียบเทียบการใช้เงินแต่ละสัปดาห์ |
+| 📝 บันทึกรายจ่าย | เลือกหมวดหมู่ได้ เช่น อาหาร เดินทาง ช้อปปิ้ง |
+| 💰 บันทึกรายรับ | แยกประเภทได้ เช่น เงินเดือน Freelance โบนัส |
+| 📷 สแกนใบเสร็จ | ถ่ายรูปใบเสร็จ ระบบบันทึกให้อัตโนมัติ |
+| 🌙 Dark Mode | สบายตาทั้งกลางวันและกลางคืน |
+
+---
 
 ## 🛠️ เทคโนโลยีที่ใช้
 
-- **React Native** - Framework สำหรับพัฒนาแอปมือถือ Cross-platform
-- **Expo** - เครื่องมือที่ช่วยให้พัฒนาและ deploy ได้รวดเร็ว
-- **TypeScript** - เพิ่มความปลอดภัยและ maintainability ของโค้ด
-- **React Navigation** - การนำทางระหว่างหน้าจอ
-- **Supabase** - Backend as a Service สำหรับจัดเก็บข้อมูล
-- **AsyncStorage** - จัดเก็บข้อมูล offline ในเครื่อง
+- **React Native + Expo** — พัฒนาแอปมือถือ iOS และ Android ในโค้ดเดียว
+- **TypeScript** — ช่วยให้โค้ดปลอดภัยและดูแลรักษาง่าย
+- **Supabase** — จัดเก็บข้อมูลบน Cloud อย่างปลอดภัย
+- **React Navigation** — จัดการการเปลี่ยนหน้าจอในแอป
+- **AsyncStorage** — เก็บข้อมูลในเครื่องสำหรับใช้งาน offline
 
-## 📦 การติดตั้ง
+---
 
-### ข้อกำหนดเบื้องต้น
+## 🚀 วิธีติดตั้งและใช้งาน
 
-- Node.js (แนะนำเวอร์ชัน 20.16.0 ขึ้นไป)
-- npm หรือ yarn
-- แอป Expo Go บนมือถือ (ดาวน์โหลดจาก App Store หรือ Google Play)
+### สิ่งที่ต้องมีก่อน
+- Node.js เวอร์ชัน 20 ขึ้นไป
+- แอป **Expo Go** บนมือถือ ([iOS](https://apps.apple.com/app/expo-go/id982107779) / [Android](https://play.google.com/store/apps/details?id=host.exp.exponent))
 
-### ขั้นตอนการติดตั้ง
+### ขั้นตอน
 ```bash
+# 1. โหลดโปรเจกต์
 git clone https://github.com/thehearttoona/wealth-lab.git
 cd wealth-lab
+
+# 2. ติดตั้ง dependencies
 npm install
-```
 
-### ตั้งค่า Environment Variables
-```bash
+# 3. ตั้งค่า environment
 cp .env.example .env
-# แก้ไขค่าใน .env ให้ตรงกับ config ของคุณ
-```
+# เปิดไฟล์ .env แล้วใส่ค่าที่จำเป็น
 
-## 🚀 วิธีใช้งาน
-
-### รันบนมือถือด้วย Expo Go
-```bash
+# 4. รันแอป
 npm start
 ```
 
-สแกน QR Code ที่ปรากฏด้วยแอป Expo Go:
-- **iOS**: เปิดแอป Camera สแกน QR Code
-- **Android**: เปิดแอป Expo Go และกด "Scan QR code"
+แสกน QR Code ที่ขึ้นมาด้วยแอป Expo Go ในมือถือได้เลยครับ
 
-### รันบน Emulator / Simulator
-```bash
-npm run android   # Android
-npm run ios       # iOS (เฉพาะ macOS)
-npm run web       # Web Browser
-```
+---
 
-## 📱 วิธีใช้แอป
-
-### เพิ่มรายจ่ายรายวัน
-
-1. กดปุ่ม **"+ เพิ่มรายจ่ายวันนี้"** ที่หน้าหลัก
-2. กรอกจำนวนเงิน และเลือกหมวดหมู่
-3. กรอกรายละเอียด (ถ้ามี) แล้วกด **"บันทึก"**
-
-### จัดการค่าใช้จ่ายประจำ
-
-1. กดปุ่ม **"ค่าใช้จ่ายประจำ"** ที่หน้าหลัก
-2. เพิ่มรายการพร้อมจำนวนเงิน หมวดหมู่ และวันที่ต้องจ่าย
-3. ระบบจะคำนวณยอดรวมรายเดือนให้อัตโนมัติ
-
-## 📂 โครงสร้างโปรเจค
+## 📂 โครงสร้างโปรเจกต์
 ```
 wealth-lab/
 ├── src/
-│   ├── navigation/       # React Navigation setup
-│   ├── screens/          # หน้าจอต่างๆ
-│   │   ├── HomeScreen.tsx
-│   │   ├── AddExpenseScreen.tsx
-│   │   └── RecurringBillsScreen.tsx
-│   ├── services/         # Business logic และ API calls
-│   │   └── storage.ts
-│   ├── types/            # TypeScript type definitions
-│   │   └── index.ts
-│   └── utils/            # Utilities และ constants
-│       └── constants.ts
-├── supabase/             # Supabase configuration
-├── assets/               # Images และ fonts
-├── App.tsx               # Entry point
-└── README.md
+│   ├── screens/       # หน้าจอต่างๆ ของแอป
+│   ├── navigation/    # กำหนดเส้นทางระหว่างหน้าจอ
+│   ├── services/      # จัดการข้อมูลและ API
+│   ├── types/         # กำหนดประเภทข้อมูล TypeScript
+│   └── utils/         # ฟังก์ชันและค่าคงที่ที่ใช้ร่วมกัน
+├── supabase/          # ตั้งค่า Supabase
+├── assets/            # รูปภาพและ fonts
+├── App.tsx            # จุดเริ่มต้นของแอป
+└── .env.example       # ตัวอย่างการตั้งค่า environment
 ```
 
-## 🎨 หมวดหมู่ค่าใช้จ่าย
+---
 
-🍜 อาหาร · 🚗 เดินทาง · 🛍️ ช้อปปิ้ง · 🎮 บันเทิง · 💊 สุขภาพ · 📚 การศึกษา · 🏠 ค่าเช่า · ⚡ ค่าน้ำค่าไฟ · 📦 อื่นๆ
+## 🔒 ข้อมูลของคุณปลอดภัย
 
-## 🔒 ความปลอดภัยของข้อมูล
+- เข้ารหัสข้อมูลทั้งหมดผ่าน Supabase
+- ไม่ส่งข้อมูลให้บุคคลที่สาม
+- ใช้งานเบื้องต้นได้โดยไม่ต้องสมัครบัญชี
 
-- ข้อมูลเก็บไว้ในเครื่องและ Supabase ที่เข้ารหัสแล้ว
-- ไม่มีการส่งข้อมูลให้บุคคลที่สาม
-- ไม่ต้องลงทะเบียนหรือสร้างบัญชีเพื่อใช้งานเบื้องต้น
+---
 
-## 📝 Roadmap
+## 🗺️ แผนพัฒนาต่อไป
 
 - [ ] กราฟแสดงสถิติรายเดือน
 - [ ] Export ข้อมูลเป็น CSV
 - [ ] หมวดหมู่แบบกำหนดเอง
-- [ ] ระบบแจ้งเตือนก่อนครบกำหนดชำระ
-- [ ] Dark Mode
+- [ ] แจ้งเตือนก่อนครบกำหนดชำระบิล
 
-## 🐛 Troubleshooting
+---
 
-**แอปไม่โหลดบนมือถือ** — ตรวจสอบว่ามือถือและคอมพิวเตอร์อยู่ใน Wi-Fi เดียวกัน หรือลอง `npm start -- --reset-cache`
+## 🐛 แก้ปัญหาเบื้องต้น
+
+**แอปไม่โหลดบนมือถือ**
+ตรวจสอบว่ามือถือและคอมพิวเตอร์อยู่ใน Wi-Fi เดียวกัน
+หรือลองรัน `npm start -- --reset-cache`
+
+---
 
 ## 📄 License
 
-MIT License
+MIT License — ใช้และแก้ไขโค้ดได้อย่างอิสระ
+
+---
 
 ## 👨‍💻 Developer
 
 **Narin Srimongkhonthorn**
 Full Stack Developer | React Native · Node.js · DevOps
 
-- 🌐 Website: -
-- 📧 Contact: [thehearttoona@gmail.com]
-- 💼 GitHub: [@thehearttoona](https://github.com/thehearttoona)
-```
-
----
-
-## สิ่งที่เปลี่ยนไป
-```
-✅ ชื่อจาก "Expense Tracker" → "Wealth Lab" ให้ตรงกับชื่อ repo
-✅ ลบ "สร้างโดย GitHub Copilot" ออก → ใส่ชื่อคุณแทน
-✅ เพิ่ม Supabase ใน Tech Stack (มีอยู่แล้วในโปรเจกต์)
-✅ เพิ่ม git clone ในขั้นตอนติดตั้ง
-✅ เพิ่ม .env.example step
-✅ Profile section ท้าย README ดูเป็น professional
+- 🌐 
+- 📧 thehearttoona@gmail.com
+- 💼 [@thehearttoona](https://github.com/thehearttoona)
