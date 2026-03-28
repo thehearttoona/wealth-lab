@@ -126,8 +126,8 @@ MIT License
 **Narin Srimongkhonthorn**
 Full Stack Developer | React Native · Node.js · DevOps
 
-- 🌐 Website: [devgenproject.com](https://devgenproject.com)
-- 📧 Contact: [your@email.com]
+- 🌐 Website: -
+- 📧 Contact: [thehearttoona@gmail.com]
 - 💼 GitHub: [@thehearttoona](https://github.com/thehearttoona)
 ```
 
