@@ -1,167 +1,78 @@
-# 💰 Expense Tracker - แอปจดบันทึกค่าใช้จ่าย
+# Wealth Lab — Personal Finance Tracker
 
-แอปพลิเคชันมือถือสำหรับจดบันทึกค่าใช้จ่ายรายวันและจัดการค่าใช้จ่ายประจำรายเดือน พัฒนาด้วย React Native + Expo
+ติดตามรายรับรายจ่ายง่ายๆ ผ่านมือถือ
+รู้ว่าเงินหายไปไหน วางแผนการเงินได้ดีขึ้น
 
-## ✨ ฟีเจอร์หลัก
+📱 React Native + Expo + TypeScript + Gemini AI
 
-- 📝 **บันทึกรายจ่ายรายวัน** - จดบันทึกค่าใช้จ่ายพร้อมหมวดหมู่และรายละเอียด
-- 💳 **จัดการค่าใช้จ่ายประจำ** - ตั้งค่าบิลรายเดือนที่ต้องจ่ายประจำ
-- 📊 **สรุปรายงาน** - ดูยอดรวมรายวันและรายเดือน
-- 💾 **เก็บข้อมูลในเครื่อง** - ไม่ต้องใช้อินเทอร์เน็ต ข้อมูลปลอดภัย
-- 🎨 **UI สวยงามใช้งานง่าย** - ออกแบบเพื่อประสบการณ์ที่ดีที่สุด
-
-## 🛠️ เทคโนโลยีที่ใช้
-
-- **React Native** - Framework สำหรับพัฒนาแอปมือถือ
-- **Expo** - เครื่องมือที่ช่วยให้พัฒนาง่ายและรวดเร็ว
-- **TypeScript** - ความปลอดภัยในการเขียนโค้ด
-- **React Navigation** - การนำทางระหว่างหน้าจอ
-- **AsyncStorage** - จัดเก็บข้อมูลในเครื่อง
-
-## 📦 การติดตั้ง
-
-### ข้อกำหนดเบื้องต้น
-
-- Node.js (แนะนำเวอร์ชัน 20.16.0 ขึ้นไป)
-- npm หรือ yarn
-- แอป Expo Go บนมือถือ (ดาวน์โหลดจาก App Store หรือ Google Play)
-
-### ขั้นตอนการติดตั้ง
-
-Dependencies ถูกติดตั้งเรียบร้อยแล้ว คุณสามารถเริ่มใช้งานได้ทันที
-
-## 🚀 วิธีใช้งาน
-
-### รันบนมือถือด้วย Expo Go
-
-1. เปิด Terminal และรันคำสั่ง:
-```bash
-npm start
-```
-
-2. สแกน QR Code ที่ปรากฏด้วยแอป Expo Go:
-   - **iOS**: เปิดแอป Camera สแกน QR Code
-   - **Android**: เปิดแอป Expo Go และกด "Scan QR code"
-
-### รันบน Android Emulator
-
-```bash
-npm run android
-```
-
-### รันบน iOS Simulator (เฉพาะ macOS)
-
-```bash
-npm run ios
-```
-
-### รันบนเว็บเบราว์เซอร์
-
-```bash
-npm run web
-```
-
-## 📱 วิธีใช้แอป
-
-### เพิ่มรายจ่ายรายวัน
-
-1. กดปุ่ม **"+ เพิ่มรายจ่ายวันนี้"** ที่หน้าหลัก
-2. กรอกจำนวนเงิน
-3. เลือกหมวดหมู่ (อาหาร, เดินทาง, ช้อปปิ้ง, ฯลฯ)
-4. กรอกรายละเอียด (ถ้ามี)
-5. กดปุ่ม **"บันทึก"**
-
-### จัดการค่าใช้จ่ายประจำ
-
-1. กดปุ่ม **"ค่าใช้จ่ายประจำ"** ที่หน้าหลัก
-2. กดปุ่ม **"+ เพิ่มค่าใช้จ่ายประจำ"**
-3. กรอกข้อมูล:
-   - จำนวนเงิน
-   - หมวดหมู่
-   - ชื่อรายการ (เช่น ค่าเช่าบ้าน, ค่าโทรศัพท์)
-   - วันที่ต้องจ่ายในแต่ละเดือน (1-31)
-4. กดปุ่ม **"บันทึก"**
-
-### ดูสรุปรายงาน
-
-- **ยอดรวมวันนี้**: แสดงที่หน้าหลักด้านบน
-- **ยอดรวมเดือนนี้**: แสดงที่หน้าหลักด้านบน
-- **รายการล่าสุด**: แสดง 10 รายการล่าสุดที่หน้าหลัก
-
-### ลบรายการ
-
-- **รายจ่ายรายวัน**: กดค้างที่รายการเพื่อลบ
-- **ค่าใช้จ่ายประจำ**: กดปุ่ม "ลบ" ที่รายการ
-
-## 📂 โครงสร้างโปรเจค
-
-```
-tracking/
-├── src/
-│   ├── navigation/       # React Navigation setup
-│   ├── screens/          # หน้าจอต่างๆ
-│   │   ├── HomeScreen.tsx
-│   │   ├── AddExpenseScreen.tsx
-│   │   └── RecurringBillsScreen.tsx
-│   ├── services/         # จัดการข้อมูล
-│   │   └── storage.ts
-│   ├── types/            # TypeScript types
-│   │   └── index.ts
-│   └── utils/            # Utilities และ constants
-│       └── constants.ts
-├── App.tsx               # จุดเริ่มต้นของแอป
-├── package.json
-└── README.md
-```
-
-## 🎨 หมวดหมู่ค่าใช้จ่าย
-
-- 🍜 อาหาร
-- 🚗 เดินทาง
-- 🛍️ ช้อปปิ้ง
-- 🎮 บันเทิง
-- 💊 สุขภาพ
-- 📚 การศึกษา
-- 🏠 ค่าเช่า
-- ⚡ ค่าน้ำค่าไฟ
-- 📦 อื่นๆ
-
-## 🔒 ความปลอดภัยของข้อมูล
-
-- ข้อมูลทั้งหมดเก็บไว้ในเครื่องของคุณเท่านั้น
-- ไม่มีการส่งข้อมูลไปยังเซิร์ฟเวอร์ภายนอก
-- ไม่ต้องลงทะเบียนหรือสร้างบัญชี
-
-## 🐛 การแก้ไขปัญหา
-
-### แอปไม่โหลดบนมือถือ
-
-1. ตรวจสอบว่ามือถือและคอมพิวเตอร์อยู่ใน Wi-Fi เดียวกัน
-2. ลองรีสตาร์ท Metro bundler:
-```bash
-npm start -- --reset-cache
-```
-
-### แสดงข้อความ Engine Warning
-
-ข้อความ warning เกี่ยวกับ Node.js version สามารถเพิกเฉยได้ แอปจะทำงานได้ปกติ หรือสามารถอัปเดต Node.js เป็นเวอร์ชัน 20.19.4 ขึ้นไปเพื่อแก้ปัญหานี้
-
-## 📝 To-Do (ฟีเจอร์ในอนาคต)
-
-- [ ] เพิ่มกราฟแสดงสถิติรายเดือน
-- [ ] Export ข้อมูลเป็น CSV
-- [ ] เพิ่มการจัดหมวดหมู่แบบกำหนดเอง
-- [ ] ระบบแจ้งเตือนก่อนครบกำหนดชำระ
-- [ ] ธีมสีแบบ Dark Mode
-
-## 📄 License
-
-MIT License - คุณสามารถใช้และแก้ไขโค้ดได้อย่างอิสระ
-
-## 👨‍💻 ผู้พัฒนา
-
-สร้างด้วย ❤️ โดย GitHub Copilot
+🔗 Live Demo: [narix.vercel.app](https://narix.vercel.app)
 
 ---
 
-**หมายเหตุ**: แอปนี้พัฒนาเพื่อการใช้งานส่วนตัว หากพบปัญหาหรือต้องการเพิ่มฟีเจอร์ สามารถแก้ไขโค้ดได้เลย!
+## ✨ Features
+
+| Feature | Detail |
+|---------|--------|
+| 📊 Dashboard | Income, Expense, Balance รายเดือน |
+| 📅 Calendar | ดูรายรับรายจ่ายรายวัน |
+| 📋 Weekly Summary | สรุปแยกตามสัปดาห์ |
+| 📝 บันทึกรายจ่าย | หมวดหมู่ครบ |
+| 💰 บันทึกรายรับ | Freelance, เงินเดือน, โบนัส |
+| 🤖 AI Slip Reader | ถ่ายรูป slip → Gemini อ่านบันทึกอัตโนมัติ |
+| 🌙 Dark Mode | สบายตาทั้งกลางวันและกลางคืน |
+
+---
+
+## 🛠️ Tech Stack
+
+- **React Native + Expo** — Cross-platform mobile
+- **TypeScript** — Type safety
+- **Supabase** — Cloud database
+- **Google Gemini AI** — Slip scanning & OCR
+- **React Navigation** — Screen management
+- **AsyncStorage** — Offline storage
+
+---
+
+## 📂 Project Structure
+```
+narix/
+├── src/
+│   ├── screens/       # App screens
+│   ├── navigation/    # Navigation setup
+│   ├── services/      # API & data services
+│   ├── types/         # TypeScript definitions
+│   └── utils/         # Helpers & constants
+├── supabase/          # Supabase config
+├── assets/            # Images & fonts
+└── App.tsx            # Entry point
+```
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] Monthly statistics chart
+- [ ] Export to CSV
+- [ ] Custom categories
+- [ ] Bill reminder notifications
+- [ ] Budget planning
+
+---
+
+## 📄 License
+
+© 2026 Narin Srimongkhonthorn. All Rights Reserved.
+This project is not open source.
+
+---
+
+## 👨‍💻 Developer
+
+**Narin Srimongkhonthorn**
+Full Stack Developer | React Native · Node.js · DevOps
+
+- 🌐 [narinsri.vercel.app](https://narinsri.vercel.app)
+- 📧 thehearttoona@gmail.com
+- 💼 [@thehearttoona](https://github.com/thehearttoona)
+```
