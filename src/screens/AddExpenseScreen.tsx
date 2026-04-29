@@ -539,7 +539,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   content: { padding: 24 },
   label: {
-    fontSize: 10, fontWeight: '400', fontFamily: 'NotoSansThai_400Regular',
+    fontSize: 11, fontWeight: '400', fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5, textTransform: 'uppercase', color: COLORS.textSecondary,
     marginBottom: 12, marginTop: 24,
   },
@@ -580,7 +580,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 12,
     backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, padding: 16,
   },
-  datePickerText: { flex: 1, fontSize: 16, fontFamily: 'NotoSansThai_300Light', color: COLORS.text },
+  datePickerText: { flex: 1, fontSize: 14, fontFamily: 'NotoSansThai_300Light', color: COLORS.text },
   calendarWrapper: { borderWidth: 1, borderTopWidth: 0, borderColor: COLORS.border, backgroundColor: COLORS.surface },
 
   // month navigator
@@ -595,7 +595,7 @@ const styles = StyleSheet.create({
   },
   monthSavedBadge: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: COLORS.success, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 99,
+    backgroundColor: COLORS.success, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 0,
   },
   monthSavedBadgeText: { fontSize: 10, color: '#fff', fontFamily: 'NotoSansThai_300Light' },
 
@@ -666,7 +666,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 40, borderWidth: 1, borderColor: COLORS.primary,
   },
   saveButtonText: {
-    color: '#ffffff', fontSize: 12, fontWeight: '400',
-    fontFamily: 'NotoSansThai_400Regular', letterSpacing: 2, textTransform: 'uppercase',
+    color: '#ffffff', fontSize: 13, fontWeight: '400',
+    fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.5, textTransform: 'uppercase',
   },
 });

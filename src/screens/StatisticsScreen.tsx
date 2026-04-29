@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
   refreshButton: {
     margin: 16,
     backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
@@ -227,7 +227,7 @@ const styles = StyleSheet.create({
   },
   summaryBox: {
     backgroundColor: COLORS.primary,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 16,
     marginBottom: 16,
   },
@@ -246,7 +246,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   insightCard: {
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     marginBottom: 16,
     borderLeftWidth: 4,
@@ -283,7 +283,7 @@ const styles = StyleSheet.create({
   },
   actionableContainer: {
     backgroundColor: 'rgba(30, 55, 80, 0.7)',
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 12,
     marginTop: 8,
   },
@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
   },
   savingContainer: {
     backgroundColor: COLORS.success,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 10,
     marginTop: 8,
   },
@@ -339,7 +339,7 @@ const styles = StyleSheet.create({
   },
   infoBox: {
     backgroundColor: '#162030',
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     marginTop: 8,
     marginBottom: 16,
@@ -357,7 +357,7 @@ const styles = StyleSheet.create({
   },
   tipBox: {
     backgroundColor: '#2A2210',
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     marginBottom: 32,
   },

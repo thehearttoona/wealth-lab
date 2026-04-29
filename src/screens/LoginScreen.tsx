@@ -2,78 +2,37 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../services/supabase';
 import { COLORS } from '../utils/constants';
 
-type Mode = 'login' | 'register';
-
 export default function LoginScreen() {
-  const [mode, setMode] = useState<Mode>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [registered, setRegistered] = useState(false);
 
-  const handleSubmit = async () => {
-    if (!email.trim() || !password.trim()) {
-      setError('Please enter your email and password');
-      return;
-    }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
+  const handleGoogleSignIn = async () => {
     setLoading(true);
     setError('');
-
-    if (mode === 'login') {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (error) setError(error.message);
-    } else {
-      const { error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-      });
-      if (error) {
-        setError(error.message);
-      } else {
-        setRegistered(true);
-      }
-    }
+    const redirectTo = Platform.OS === 'web'
+      ? window.location.origin
+      : 'narix://auth/callback';
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo },
+    });
+    if (error) setError(error.message);
+    else if (data.url && Platform.OS !== 'web') Linking.openURL(data.url);
     setLoading(false);
   };
 
-  if (registered) {
-    return (
-      <KeyboardAvoidingView style={styles.container}>
-        <View style={styles.card}>
-          <Text style={styles.logo}>NARIX</Text>
-          <View style={styles.sentBox}>
-            <Text style={styles.sentIcon}>✅</Text>
-            <Text style={styles.sentTitle}>Account Created!</Text>
-            <Text style={styles.sentDesc}>You can now sign in.</Text>
-            <TouchableOpacity onPress={() => { setRegistered(false); setMode('login'); }}>
-              <Text style={styles.link}>Back to Login</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  }
-
-  return (
+return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>
     <KeyboardAvoidingView
       style={styles.container}
@@ -83,57 +42,15 @@ export default function LoginScreen() {
         <Text style={styles.logo}>NARIX</Text>
         <Text style={styles.subtitle}>Personal Finance Tracker</Text>
 
-        {/* Tab */}
-        <View style={styles.tabRow}>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'login' && styles.tabActive]}
-            onPress={() => { setMode('login'); setError(''); }}
-          >
-            <Text style={[styles.tabText, mode === 'login' && styles.tabTextActive]}>Sign In</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'register' && styles.tabActive]}
-            onPress={() => { setMode('register'); setError(''); }}
-          >
-            <Text style={[styles.tabText, mode === 'register' && styles.tabTextActive]}>Register</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.label}>Email</Text>
-        <TextInput
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          placeholder="your@email.com"
-          placeholderTextColor={COLORS.textSecondary}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-
-        <Text style={styles.label}>Password</Text>
-        <TextInput
-          style={styles.input}
-          value={password}
-          onChangeText={setPassword}
-          placeholder={mode === 'register' ? 'At least 6 characters' : '••••••••'}
-          placeholderTextColor={COLORS.textSecondary}
-          secureTextEntry
-        />
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
         <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleSubmit}
+          style={[styles.googleButton, loading && styles.buttonDisabled]}
+          onPress={handleGoogleSignIn}
           disabled={loading}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" size="small" />
+            <ActivityIndicator color={COLORS.text} size="small" />
           ) : (
-            <Text style={styles.buttonText}>
-              {mode === 'login' ? 'Sign In' : 'Create Account'}
-            </Text>
+            <Text style={styles.googleButtonText}>🔑  Continue with Google</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -154,7 +71,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 400,
     backgroundColor: COLORS.surface,
-    borderRadius: 16,
+    borderRadius: 0,
     padding: 32,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -178,7 +95,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 8,
+    borderRadius: 0,
     overflow: 'hidden',
   },
   tab: {
@@ -209,7 +126,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 8,
+    borderRadius: 0,
     paddingHorizontal: 14,
     paddingVertical: 12,
     color: COLORS.text,
@@ -223,7 +140,7 @@ const styles = StyleSheet.create({
   },
   button: {
     backgroundColor: COLORS.primary,
-    borderRadius: 8,
+    borderRadius: 0,
     paddingVertical: 14,
     alignItems: 'center',
     marginTop: 4,
@@ -247,5 +164,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 8,
     textDecorationLine: 'underline',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 16,
+    gap: 10,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: COLORS.border,
+  },
+  dividerText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+  },
+  googleButton: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 0,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: COLORS.background,
+  },
+  googleButtonText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

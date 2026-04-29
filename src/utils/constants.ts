@@ -35,7 +35,7 @@ export const getCurrencySymbol = (currency?: string): string => {
 };
 
 export const formatCurrency = (amount: number): string => {
-  return `฿${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 export const formatCurrencyWithType = (amount: number, currency?: string): string => {

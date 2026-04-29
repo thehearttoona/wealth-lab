@@ -7,8 +7,9 @@ import {
   Alert,
   ScrollView,
   Platform,
+  Modal,
 } from 'react-native';
-import { FontAwesome,Ionicons } from '@expo/vector-icons';
+import { FontAwesome, Ionicons, AntDesign } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, DateData } from 'react-native-calendars';
@@ -21,6 +22,7 @@ import { getExpenses, deleteExpense, getRecurringBills, deleteRecurringBill } fr
 import { formatCurrency, formatDate, COLORS, getCurrentMonthYear } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FontDisplay } from 'expo-font';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
@@ -49,6 +51,8 @@ export default function HomeScreen() {
   const [incomeSelectMode, setIncomeSelectMode] = useState(false);
   const [viewMode, setViewMode] = useState<'week' | 'month'>('week');
   const [showWeekTable, setShowWeekTable] = useState(false);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
   const [weekStart, setWeekStart] = useState<Date>(() => {
     const today = new Date();
     const diff = today.getDay() === 0 ? -6 : 1 - today.getDay();
@@ -57,7 +61,6 @@ export default function HomeScreen() {
     mon.setHours(0, 0, 0, 0);
     return mon;
   });
-  const [showSummary, setShowSummary] = useState(true);
   const [showIncomeList, setShowIncomeList] = useState(true);
   const [showExpenseList, setShowExpenseList] = useState(true);
 
@@ -108,8 +111,8 @@ export default function HomeScreen() {
         marked[dateStr] = {
           customStyles: {
             container: {
-              backgroundColor: totalAmount > 5000 ? '#2A1015' : totalAmount > 1000 ? '#2A1F0E' : dayIncome > 0 ? '#0F2A1E' : 'transparent',
-              borderRadius: 8,
+              backgroundColor: dayIncome > 0 && totalAmount === 0 ? '#0F2A1E' : 'transparent',
+              borderRadius: 0,
             },
             text: { color: COLORS.text, fontWeight: 'bold' },
           },
@@ -126,13 +129,13 @@ export default function HomeScreen() {
       if (marked[todayStr]) {
         marked[todayStr].customStyles = {
           ...marked[todayStr].customStyles,
-          container: { ...marked[todayStr].customStyles?.container, borderWidth: 2, borderColor: COLORS.primary, borderRadius: 8 },
+          container: { ...marked[todayStr].customStyles?.container, borderWidth: 2, borderColor: COLORS.primary, borderRadius: 0},
           text: { color: COLORS.primary, fontWeight: 'bold' },
         };
       } else {
         marked[todayStr] = {
           customStyles: {
-            container: { borderWidth: 2, borderColor: COLORS.primary, borderRadius: 8 },
+            container: { borderWidth: 2, borderColor: COLORS.primary, borderRadius: 0},
             text: { color: COLORS.primary, fontWeight: 'bold' },
           },
         };
@@ -367,7 +370,7 @@ export default function HomeScreen() {
             ...updated[dateStr]?.customStyles?.container,
             borderWidth: 2,
             borderColor: COLORS.accent,
-            borderRadius: 8,
+            borderRadius: 0,
           },
           text: { color: COLORS.accent, fontWeight: 'bold' },
         },
@@ -467,8 +470,7 @@ export default function HomeScreen() {
     );
   };
 
-  const toDateStr = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const toDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   const fmtShort = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toFixed(0);
 
@@ -584,49 +586,83 @@ export default function HomeScreen() {
   };
 
   const renderCalendar = () => {
-    const { year, month } = calendarMonth;
-
-    // ── Build Mon–Sat weeks where SATURDAY falls in this month ──
-    const dayStr = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-    // Find the first Sunday on or after the 1st of the month
-    // (Sunday = last day of Mon–Sun week)
-    const firstOfMonth = new Date(year, month, 1);
-    const firstSun = new Date(firstOfMonth);
-    const dow = firstSun.getDay(); // 0=Sun,1=Mon,...,6=Sat
-    firstSun.setDate(firstSun.getDate() + (dow === 0 ? 0 : (7 - dow) % 7));
-
-    type WeekRow = { days: Date[]; label: string };
-    const weeks: WeekRow[] = [];
-
-    let sun = new Date(firstSun);
-    while (sun.getMonth() === month) {
-      const mon = new Date(sun);
-      mon.setDate(sun.getDate() - 6); // Monday = Sun - 6
-      const days = Array.from({ length: 7 }, (_, i) => {
-        const d = new Date(mon);
-        d.setDate(mon.getDate() + i);
-        return d;
-      });
-      const fmtDay = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const spansPrev = mon.getMonth() !== month;
-      // same-month: "Mar 2–8", cross-month: "Feb 24–Mar 2"
-      const label = spansPrev
-        ? `${fmtDay(mon)}–${fmtDay(sun)}`
-        : `${fmtDay(mon)}–${sun.getDate()}`;
-      weeks.push({ days, label });
-      sun = new Date(sun);
-      sun.setDate(sun.getDate() + 7);
-    }
-
     return (
       <View style={[styles.calendarContainer, isDesktop && styles.calendarContainerDesktop]}>
 
+        {/* ── Month/Year Picker Header ── */}
+        {(() => {
+          const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          const goTo = (year: number, month: number) => {
+            setCalendarMonth({ year, month });
+            setSelectedDate('');
+            updateFilteredExpenses('', expenses, incomes);
+            calculateMarkedDates(expenses, incomes, year, month);
+          };
+          return (
+            <>
+              {/* Title row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingVertical: 24 }}>
+                <TouchableOpacity hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} onPress={() => {
+                  const m = calendarMonth.month === 0 ? { year: calendarMonth.year - 1, month: 11 } : { year: calendarMonth.year, month: calendarMonth.month - 1 };
+                  goTo(m.year, m.month);
+                }}>
+                  <Ionicons name="chevron-back" size={22} color={COLORS.text} />
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 12 }}
+                  onPress={() => { setShowMonthPicker(true); setPickerYear(calendarMonth.year); }}>
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: COLORS.text, fontFamily: 'NotoSansThai_600SemiBold' }}>
+                    {MONTHS[calendarMonth.month]} {calendarMonth.year}
+                  </Text>
+                  <Ionicons name="chevron-down" size={14} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+                <TouchableOpacity hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} onPress={() => {
+                  const m = calendarMonth.month === 11 ? { year: calendarMonth.year + 1, month: 0 } : { year: calendarMonth.year, month: calendarMonth.month + 1 };
+                  goTo(m.year, m.month);
+                }}>
+                  <Ionicons name="chevron-forward" size={22} color={COLORS.text} />
+                </TouchableOpacity>
+              </View>
+              {/* Modal picker */}
+              <Modal visible={showMonthPicker} transparent animationType="fade" onRequestClose={() => setShowMonthPicker(false)}>
+                <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+                  activeOpacity={1} onPress={() => setShowMonthPicker(false)}>
+                  <View style={{ backgroundColor: COLORS.surface, width: 280, borderWidth: 1, borderColor: COLORS.border }}>
+                    {/* Year row */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
+                      <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setPickerYear(y => y - 1)}>
+                        <Ionicons name="chevron-back" size={20} color={COLORS.text} />
+                      </TouchableOpacity>
+                      <Text style={{ color: COLORS.text, fontWeight: 'bold', fontSize: 16 }}>{pickerYear}</Text>
+                      <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setPickerYear(y => y + 1)}>
+                        <Ionicons name="chevron-forward" size={20} color={COLORS.text} />
+                      </TouchableOpacity>
+                    </View>
+                    {/* Month grid */}
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                      {MONTHS.map((m, i) => {
+                        const isActive = pickerYear === calendarMonth.year && i === calendarMonth.month;
+                        return (
+                          <TouchableOpacity key={m}
+                            style={{ width: '25%', alignItems: 'center', paddingVertical: 14, backgroundColor: isActive ? COLORS.primary : 'transparent' }}
+                            onPress={() => { goTo(pickerYear, i); setShowMonthPicker(false); }}>
+                            <Text style={{ color: isActive ? '#fff' : COLORS.text, fontSize: 14 }}>{m}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              </Modal>
+            </>
+          );
+        })()}
+
         {/* ── Original Calendar ── */}
         <Calendar
+          key={`${calendarMonth.year}-${calendarMonth.month}`}
           markingType={'custom'}
           markedDates={markedDates}
+          current={`${calendarMonth.year}-${String(calendarMonth.month + 1).padStart(2, '0')}-01`}
           onDayPress={onDayPress}
           onMonthChange={(m: DateData) => {
             const y = m.year, mo = m.month - 1;
@@ -636,6 +672,9 @@ export default function HomeScreen() {
             calculateMarkedDates(expenses, incomes, y, mo);
           }}
           style={{ backgroundColor: COLORS.surface }}
+          hideArrows={true}
+          hideDayNames={false}
+          renderHeader={() => null as any}
           theme={{
             backgroundColor: COLORS.surface,
             calendarBackground: COLORS.surface,
@@ -695,18 +734,50 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {/* ── Weekly summary table ── */}
-        <TouchableOpacity style={styles.weekTableToggle} onPress={() => setShowWeekTable(v => !v)}>
-          <Text style={styles.weekTableToggleText}>Weekly Summary</Text>
-          <FontAwesome name={showWeekTable ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
-        </TouchableOpacity>
+      </View>
+    );
+  };
 
-        {showWeekTable ? <View style={styles.weekTableContainer}>
+  const renderWeeklySummary = () => {
+    const { year, month } = calendarMonth;
+    const dayStr = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const firstOfMonth = new Date(year, month, 1);
+    const firstSun = new Date(firstOfMonth);
+    const dow = firstSun.getDay();
+    firstSun.setDate(firstSun.getDate() + (dow === 0 ? 0 : (7 - dow) % 7));
+    type WeekRow = { days: Date[]; label: string };
+    const weeks: WeekRow[] = [];
+    let sun = new Date(firstSun);
+    while (sun.getMonth() === month) {
+      const mon = new Date(sun);
+      mon.setDate(sun.getDate() - 6);
+      const days = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(mon);
+        d.setDate(mon.getDate() + i);
+        return d;
+      });
+      const fmtDay = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const spansPrev = mon.getMonth() !== month;
+      const label = spansPrev ? `${fmtDay(mon)}–${fmtDay(sun)}` : `${fmtDay(mon)}–${sun.getDate()}`;
+      weeks.push({ days, label });
+      sun = new Date(sun);
+      sun.setDate(sun.getDate() + 7);
+    }
+    return (
+      <View>
+        {!isDesktop && (
+          <TouchableOpacity style={styles.weekTableToggle} onPress={() => setShowWeekTable(v => !v)}>
+            <Text style={styles.weekTableToggleText}>Weekly Summary</Text>
+            <FontAwesome name={showWeekTable ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+        )}
+        {(isDesktop || showWeekTable) ? <View style={styles.weekTableContainer}>
           <View style={styles.weekTableHeader}>
-            <Text style={[styles.weekTableCell, { flex: 1 }]}>Week</Text>
-            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: COLORS.success }]}>Income</Text>
-            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: COLORS.primary }]}>Expense</Text>
-            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right' }]}>Balance</Text>
+            <Text style={[styles.weekTableCell, { flex: 1, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>Week</Text>
+            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: COLORS.success, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>Income</Text>
+            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: COLORS.primary, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>Expense</Text>
+            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>Balance</Text>
           </View>
           {weeks.map((week, wi) => {
             const wExpense = week.days.reduce((s, d) => {
@@ -719,13 +790,13 @@ export default function HomeScreen() {
             }, 0);
             const balance = wIncome - wExpense;
             return (
-              <View key={wi} style={styles.weekTableRow}>
+              <View key={wi} style={[styles.weekTableRow, wi % 2 === 0 ? { backgroundColor: `${COLORS.surface}` } : { backgroundColor: COLORS.background }]}>
                 <Text style={[styles.weekTableCell, { flex: 1, color: COLORS.text }]} numberOfLines={1}>{week.label}</Text>
                 <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: wIncome > 0 ? COLORS.success : COLORS.textSecondary }]}>
-                  {wIncome > 0 ? `+${formatCurrency(wIncome)}` : '–'}
+                  {wIncome > 0 ? `${formatCurrency(wIncome)}` : '–'}
                 </Text>
                 <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: wExpense > 0 ? COLORS.primary : COLORS.textSecondary }]}>
-                  {wExpense > 0 ? `-${formatCurrency(wExpense)}` : '–'}
+                  {wExpense > 0 ? `${formatCurrency(wExpense)}` : '–'}
                 </Text>
                 <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: balance >= 0 ? COLORS.success : COLORS.error }]}>
                   {wIncome === 0 && wExpense === 0 ? '–' : formatCurrency(balance)}
@@ -734,7 +805,6 @@ export default function HomeScreen() {
             );
           })}
         </View> : null}
-
       </View>
     );
   };
@@ -816,46 +886,40 @@ export default function HomeScreen() {
 
         {/* ── Header ── */}
         <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
-          <Text style={styles.topBarLogo}>NARIX</Text>
-          <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.topBarLogout}>
-            <FontAwesome name="sign-out" size={16} color={COLORS.textSecondary} />
-          </TouchableOpacity>
+          <Text style={styles.topBarLogo}>WEALTH LAB</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            {isDesktop && (
+              <>
+                {/* <TouchableOpacity
+                  style={styles.topBarAddBtn}
+                  onPress={() => navigation.navigate('AddIncome', { date: selectedDate || undefined })}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={COLORS.success} />
+                  <Text style={[styles.topBarAddBtnText, { color: COLORS.success }]}>Add Income</Text>
+                </TouchableOpacity> */}
+                {/* <TouchableOpacity
+                  style={styles.topBarAddBtn}
+                  onPress={() => navigation.navigate('AddExpense', { type: 'daily', date: selectedDate || undefined })}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={COLORS.primary} />
+                  <Text style={[styles.topBarAddBtnText, { color: COLORS.primary }]}>Add Expense</Text>
+                </TouchableOpacity> */}
+              </>
+            )}
+            <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.topBarLogout}>
+              <AntDesign name="logout" size={14} color={COLORS.textSecondary} />
+              <Text style={{ color: COLORS.text, fontSize: 12, fontFamily: 'NotoSansThai_400Regular' }}>Logout</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {isDesktop && (
-          <View style={styles.desktopHeader}>
-            <View style={styles.desktopHeaderLeft}>
-              <TouchableOpacity
-                style={styles.desktopAddBtn}
-                onPress={() => navigation.navigate('AddExpense', { type: 'daily' })}
-              >
-                <FontAwesome name="plus" size={12} color="#fff" />
-                <Text style={styles.desktopAddBtnText}> Add Expense</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.desktopAddBtn}
-                onPress={() => navigation.navigate('AddIncome', {})}
-              >
-                <FontAwesome name="plus" size={12} color="#fff" />
-                <Text style={styles.desktopAddBtnText}> Add Income</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
         {/* ── Summary Cards ── */}
-        <TouchableOpacity style={styles.sectionToggle} onPress={() => setShowSummary(v => !v)}>
-          <Text style={styles.sectionToggleText}>Summary</Text>
-          <FontAwesome name={showSummary ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
-        </TouchableOpacity>
-        {showSummary && (() => {
+        {(() => {
           const viewKey = `${calendarMonth.year}-${String(calendarMonth.month + 1).padStart(2, '0')}`;
           const viewIncome = incomes.filter(i => i.date?.startsWith(viewKey)).reduce((s, i) => s + i.amount, 0);
           const viewExpense = expenses.filter(e => e.date?.startsWith(viewKey)).reduce((s, e) => s + e.amount, 0);
           const viewBalance = viewIncome - viewExpense;
-          const now = new Date();
-          const isCurrentMonth = calendarMonth.year === now.getFullYear() && calendarMonth.month === now.getMonth();
-          const monthLabel = new Date(calendarMonth.year, calendarMonth.month, 1).toLocaleDateString('en-US', { month: 'short', year: isCurrentMonth ? undefined : 'numeric' });
+          const monthLabel = new Date(calendarMonth.year, calendarMonth.month, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
           return (
             <View style={[styles.summaryContainer, isMobile && styles.summaryContainerMobile]}>
               <View style={[styles.summaryCard, styles.summaryCardIncome, isDesktop && styles.summaryCardDesktop]}>
@@ -872,13 +936,13 @@ export default function HomeScreen() {
                 </Text>
                 <Text style={styles.summarySubLabel}>{monthLabel}</Text>
               </View>
-              <View style={[styles.summaryCard, styles.summaryCardNet, isDesktop && styles.summaryCardDesktop]}>
+              {/* <View style={[styles.summaryCard, styles.summaryCardNet, isDesktop && styles.summaryCardDesktop]}>
                 <Text style={styles.summaryLabel}>Balance</Text>
                 <Text style={[styles.summaryAmount, viewBalance >= 0 ? styles.summaryAmountIncome : styles.summaryAmountExpense, isDesktop && styles.summaryAmountDesktop]}>
                   {formatCurrency(viewBalance)}
                 </Text>
                 <Text style={styles.summarySubLabel}>{monthLabel}</Text>
-              </View>
+              </View> */}
             </View>
           );
         })()}
@@ -889,10 +953,14 @@ export default function HomeScreen() {
             <View style={styles.desktopColumnLeft}>
               {renderCalendar()}
             </View>
+            <View style={styles.desktopColumnRight}>
+              {renderWeeklySummary()}
+            </View>
           </View>
         ) : (
           <>
             {renderCalendar()}
+            {renderWeeklySummary()}
           </>
         )}
 
@@ -916,9 +984,31 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {isDesktop && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10,padding:24 }}>
+            <TouchableOpacity
+              style={styles.topBarAddBtn}
+              onPress={() => navigation.navigate('AddIncome', { date: selectedDate || undefined })}
+            >
+              <Ionicons name="add-circle-outline" size={16} color={COLORS.success} />
+              <Text style={[styles.topBarAddBtnText, { color: COLORS.success }]}>Add Income</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.topBarAddBtn}
+              onPress={() => navigation.navigate('AddExpense', { type: 'daily', date: selectedDate || undefined })}
+            >
+              <Ionicons name="add-circle-outline" size={16} color={COLORS.primary} />
+              <Text style={[styles.topBarAddBtnText, { color: COLORS.primary }]}>Add Expense</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── Income / Expense Lists ── */}
+        <View style={isDesktop ? styles.desktopListsRow : undefined}>
+
         {/* ── Income List ── */}
         {filteredIncomes.length > 0 && (
-          <View style={styles.incomeSection}>
+          <View style={[styles.incomeSection, isDesktop && { flex: 1 }]}>
             <View style={styles.listHeader}>
               <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => setShowIncomeList(v => !v)}>
                 <Text style={styles.listTitle}>Income ({filteredIncomes.length})</Text>
@@ -953,6 +1043,7 @@ export default function HomeScreen() {
         )}
 
         {/* ── Expense List Header ── */}
+        <View style={[{ flex: isDesktop ? 1 : undefined }]}>
         <View style={styles.listHeader}>
           <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => setShowExpenseList(v => !v)}>
             <Text style={styles.listTitle}>
@@ -1009,6 +1100,8 @@ export default function HomeScreen() {
             </Text>
           )}
         </View>}
+        </View>
+        </View>
 
       </View>
     </ScrollView>
@@ -1079,7 +1172,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 0,
   },
   desktopAddBtnText: {
     color: '#ffffff',
@@ -1091,14 +1184,20 @@ const styles = StyleSheet.create({
   // ── Two-column layout ──
   desktopTwoColumn: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 20,
     paddingHorizontal: 24,
   },
   desktopColumnLeft: {
-    flex: 3,
+    flex: 2,
   },
   desktopColumnRight: {
-    flex: 2,
+    flex: 1,
+  },
+  desktopListsRow: {
+    flexDirection: 'row',
+    gap: 0,
+    alignItems: 'flex-start',
+    padding: 24
   },
 
   topBar: {
@@ -1111,6 +1210,21 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  topBarAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  topBarAddBtnText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
   topBarLogo: {
     fontSize: 16,
     fontWeight: '700',
@@ -1119,14 +1233,17 @@ const styles = StyleSheet.create({
   },
   topBarLogout: {
     padding: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
 
   // ── Summary cards ──
   summaryContainer: {
     flexDirection: 'row',
     paddingHorizontal: 24,
-    paddingTop: 24,
-    gap: 16,
+    paddingVertical: 24,
+    gap: 20,
   },
   summaryContainerMobile: {
     flexDirection: 'column',
@@ -1135,13 +1252,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.surface,
     borderRadius: 0,
-    padding: 20,
+    padding: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   summaryCardDesktop: {
     padding: 24,
-    borderRadius: 8,
+    borderRadius: 0,
   },
   summaryCardIncome: {
     borderColor: `${COLORS.success}40`,
@@ -1325,7 +1442,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     gap: 4,
-    borderRadius: 8,
+    borderRadius: 0,
   },
   weekDayBtnSelected: {
     backgroundColor: COLORS.accent,
@@ -1333,7 +1450,7 @@ const styles = StyleSheet.create({
   weekDayBtnToday: {
     borderWidth: 1,
     borderColor: COLORS.primary,
-    borderRadius: 8,
+    borderRadius: 0,
   },
   weekDayLabel: {
     fontSize: 9,
@@ -1364,7 +1481,7 @@ const styles = StyleSheet.create({
   weekDot: {
     width: 4,
     height: 4,
-    borderRadius: 2,
+    borderRadius: 0,
   },
 
   // ── Weekly Summary Table ──
@@ -1373,7 +1490,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 20,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
   },
@@ -1385,28 +1502,28 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   weekTableContainer: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginHorizontal: 0,
+    overflow: 'hidden',
   },
   weekTableHeader: {
     flexDirection: 'row',
-    paddingBottom: 8,
+    backgroundColor: COLORS.background,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-    marginBottom: 4,
   },
   weekTableRow: {
     flexDirection: 'row',
-    paddingVertical: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.divider,
+    borderBottomColor: COLORS.border,
   },
   weekTableCell: {
-    fontSize: 11,
+    fontSize: 12,
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     letterSpacing: 0.3,
@@ -1476,7 +1593,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     paddingVertical: 6,
-    borderRadius: 6,
+    borderRadius: 0,
     minHeight: 48,
     justifyContent: 'flex-start',
     paddingTop: 6,
@@ -1512,14 +1629,16 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     marginTop: 24,
     borderRadius: 0,
-    paddingTop: 24,
+    paddingBottom: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
+    overflow: 'visible',
   },
   calendarContainerDesktop: {
     margin: 0,
-    paddingVertical: 24,
-    borderRadius: 8,
+    marginTop: 0,
+    paddingVertical: 0,
+    borderRadius: 0,
   },
   dayContainer: {
     width: 42,
@@ -1537,12 +1656,12 @@ const styles = StyleSheet.create({
   dayContainerSelected: {
     borderColor: COLORS.accent,
     borderWidth: 1,
-    borderRadius: 4,
+    borderRadius: 0,
   },
   todayContainer: {
     borderWidth: 1,
     borderColor: COLORS.primary,
-    borderRadius: 8,
+    borderRadius: 0,
   },
   dayText: {
     fontSize: 11,
@@ -1615,7 +1734,7 @@ const styles = StyleSheet.create({
   },
   recurringBillsSectionDesktop: {
     margin: 0,
-    borderRadius: 8,
+    borderRadius: 0,
   },
   sectionHeader: {
     flexDirection: 'row',

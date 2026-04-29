@@ -612,7 +612,7 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -637,7 +637,7 @@ const styles = StyleSheet.create({
   directionBtn: {
     flex: 1,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 0,
     borderWidth: 1,
     borderColor: COLORS.border,
     alignItems: 'center',
@@ -677,7 +677,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: COLORS.background,
-    borderRadius: 8,
+    borderRadius: 0,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
@@ -690,7 +690,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     backgroundColor: COLORS.background,
-    borderRadius: 10,
+    borderRadius: 0,
     padding: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -698,7 +698,7 @@ const styles = StyleSheet.create({
   },
   resultBoxVertical: {
     backgroundColor: COLORS.background,
-    borderRadius: 10,
+    borderRadius: 0,
     padding: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -734,7 +734,7 @@ const styles = StyleSheet.create({
   emptyResult: {
     alignItems: 'center',
     paddingVertical: 16,
-    borderRadius: 10,
+    borderRadius: 0,
     borderWidth: 1,
     borderColor: COLORS.border,
     borderStyle: 'dashed',
@@ -757,7 +757,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 14,
-    borderRadius: 10,
+    borderRadius: 0,
   },
   orderBtnBuy: {
     backgroundColor: COLORS.success,
@@ -807,7 +807,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 0,
     borderWidth: 1,
     borderColor: `${COLORS.primary}44`,
     borderStyle: 'dashed',

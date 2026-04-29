@@ -24,6 +24,8 @@ import {
 import { formatCurrency, formatCurrencyWithType, convertToTHB, COLORS } from '../utils/constants';
 import { updateInvestmentPrice } from '../services/priceApi';
 import { useResponsive } from '../utils/responsive';
+import { Iconify } from 'react-native-iconify';
+
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -222,7 +224,7 @@ export default function PortfolioScreen() {
           isDesktop && styles.headerDesktop,
         ]}>
           <View style={styles.headerTitleContainer}>
-            <Ionicons name="briefcase-outline" size={24} color="#ffffff" />
+            <Iconify icon="mdi:briefcase" size={24} color="#ffffff" />
             <Text style={styles.headerTitle}> พอร์ตการลงทุน</Text>
           </View>
           <View style={styles.summaryContainer}>
@@ -332,7 +334,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   innerContainerDesktop: {
-    maxWidth: 1000,
     alignSelf: 'center',
     width: '100%',
   },
@@ -359,7 +360,7 @@ const styles = StyleSheet.create({
   },
   summaryContainer: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
   },
   summaryLabel: {
@@ -449,7 +450,7 @@ const styles = StyleSheet.create({
   },
   typeCard: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     width: 160,
     elevation: 2,
@@ -524,7 +525,7 @@ const styles = StyleSheet.create({
   },
   investmentItem: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 0,
     marginBottom: 12,
     elevation: 2,
     ...(Platform.OS === 'web' ? {

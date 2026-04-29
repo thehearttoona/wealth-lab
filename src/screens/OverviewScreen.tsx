@@ -79,7 +79,7 @@ export default function OverviewScreen() {
         </View>
 
         {/* สรุปรวม */}
-        <View style={[styles.summaryCard, isDesktop && { borderRadius: 12 }]}>
+        <View style={[styles.summaryCard, isDesktop && { borderRadius: 0}]}>
           <Text style={styles.summaryLabel}>มูลค่าสุทธิ</Text>
           <Text style={[
             styles.summaryValue,
@@ -292,7 +292,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     margin: 16,
     padding: 24,
-    borderRadius: 12,
+    borderRadius: 0,
     elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.surface,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 0,
     alignItems: 'center',
     elevation: 2,
     shadowColor: '#000',
@@ -379,7 +379,7 @@ const styles = StyleSheet.create({
   investmentCard: {
     backgroundColor: COLORS.surface,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 0,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },

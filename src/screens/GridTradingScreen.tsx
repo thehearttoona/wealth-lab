@@ -984,14 +984,14 @@ const styles = StyleSheet.create({
   desktopModalContent: {
     maxWidth: 500,
     maxHeight: 600,
-    borderRadius: 20,
+    borderRadius: 0,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     width: '90%' as any,
   },
   statusCard: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     marginBottom: 16,
     elevation: 2,
@@ -1002,7 +1002,7 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     marginBottom: 16,
     elevation: 2,
@@ -1025,7 +1025,7 @@ const styles = StyleSheet.create({
   statusDot: {
     width: 10,
     height: 10,
-    borderRadius: 5,
+    borderRadius: 0,
     backgroundColor: COLORS.success,
     marginRight: 8,
   },
@@ -1037,7 +1037,7 @@ const styles = StyleSheet.create({
   accountInfo: {
     backgroundColor: COLORS.background,
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 12,
   },
   accountText: {
@@ -1055,7 +1055,7 @@ const styles = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 12,
     marginBottom: 12,
     fontSize: 14,
@@ -1067,7 +1067,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 12,
     paddingRight: 4,
   },
@@ -1099,7 +1099,7 @@ const styles = StyleSheet.create({
   directionButton: {
     flex: 1,
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     borderWidth: 2,
     borderColor: COLORS.primary,
     marginHorizontal: 4,
@@ -1125,25 +1125,25 @@ const styles = StyleSheet.create({
   connectButton: {
     backgroundColor: COLORS.primary,
     padding: 14,
-    borderRadius: 8,
+    borderRadius: 0,
     alignItems: 'center',
   },
   disconnectButton: {
     backgroundColor: COLORS.error,
     padding: 14,
-    borderRadius: 8,
+    borderRadius: 0,
     alignItems: 'center',
   },
   openButton: {
     backgroundColor: COLORS.success,
     padding: 14,
-    borderRadius: 8,
+    borderRadius: 0,
     alignItems: 'center',
   },
   createSetButton: {
     backgroundColor: COLORS.primary,
     padding: 16,
-    borderRadius: 10,
+    borderRadius: 0,
     alignItems: 'center',
     marginTop: 16,
     marginBottom: 8,
@@ -1180,7 +1180,7 @@ const styles = StyleSheet.create({
   autoCloseToggle: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 6,
+    borderRadius: 0,
     flex: 1,
     marginRight: 8,
   },
@@ -1200,7 +1200,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.error,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 6,
+    borderRadius: 0,
   },
   closeAllText: {
     color: '#fff',
@@ -1213,7 +1213,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: COLORS.background,
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 12,
   },
   totalProfitLabel: {
@@ -1234,7 +1234,7 @@ const styles = StyleSheet.create({
   positionCard: {
     backgroundColor: COLORS.background,
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 8,
   },
   positionHeader: {
@@ -1277,7 +1277,7 @@ const styles = StyleSheet.create({
   warningCard: {
     backgroundColor: '#2A1F0E',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     marginTop: 8,
   },
   warningText: {
@@ -1287,7 +1287,7 @@ const styles = StyleSheet.create({
   infoBox: {
     backgroundColor: '#0F1E2E',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 12,
   },
   infoText: {
@@ -1298,7 +1298,7 @@ const styles = StyleSheet.create({
   lotPreview: {
     backgroundColor: COLORS.background,
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 12,
   },
   lotPreviewTitle: {
@@ -1317,7 +1317,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 12,
     marginBottom: 12,
     backgroundColor: COLORS.surface,
@@ -1366,7 +1366,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 8,
+    borderRadius: 0,
     fontSize: 14,
     color: COLORS.text,
     backgroundColor: COLORS.surface,
@@ -1381,7 +1381,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginHorizontal: 16,
     marginBottom: 4,
-    borderRadius: 8,
+    borderRadius: 0,
     backgroundColor: '#243548',
   },
   symbolListItemActive: {
@@ -1416,7 +1416,7 @@ const styles = StyleSheet.create({
   autoOpenToggle: {
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 0,
     minWidth: 120,
   },
   autoOpenOn: {
@@ -1454,7 +1454,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
     padding: 10,
-    borderRadius: 8,
+    borderRadius: 0,
     marginHorizontal: 3,
     alignItems: 'center',
   },
@@ -1471,7 +1471,7 @@ const styles = StyleSheet.create({
   historyCard: {
     backgroundColor: COLORS.background,
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 8,
     borderLeftWidth: 4,
   },
@@ -1508,7 +1508,7 @@ const styles = StyleSheet.create({
   clearHistoryButton: {
     backgroundColor: '#3A2020',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     alignItems: 'center',
     marginTop: 8,
   },

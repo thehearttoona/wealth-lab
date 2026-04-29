@@ -192,7 +192,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 16,
     fontSize: 16,
     color: COLORS.text,
@@ -214,7 +214,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -231,7 +231,7 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     backgroundColor: COLORS.primary,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 16,
     alignItems: 'center',
     flexDirection: 'row',

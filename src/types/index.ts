@@ -81,6 +81,7 @@ export type RootStackParamList = {
   ExpenseTracking: undefined;
   AddMonthlySummary: { summary?: MonthlySummary; month?: string };
   AddIncome: { income?: Income; date?: string };
+  IncomeScreen: undefined;
 };
 
 export interface AIMessage {

@@ -5,22 +5,33 @@ import LoginScreen from '../screens/LoginScreen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { FontAwesome, Ionicons } from '@expo/vector-icons';
+import { FontAwesome } from '@expo/vector-icons';
+import { Iconify } from 'react-native-iconify';
+import Svg, { G, Path } from 'react-native-svg';
+
+function HomeIcon({ size = 24, color = '#000' }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <G fill="none" fillRule="evenodd">
+        <Path
+          fill={color}
+          d="M10.8 2.65a2 2 0 0 1 2.4 0l7 5.25a2 2 0 0 1 .8 1.6V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9.5a2 2 0 0 1 .8-1.6z"
+        />
+      </G>
+    </Svg>
+  );
+}
 import { RootStackParamList } from '../types';
 import HomeScreen from '../screens/HomeScreen';
 import AddExpenseScreen from '../screens/AddExpenseScreen';
 import RecurringBillsScreen from '../screens/RecurringBillsScreen';
 import PortfolioScreen from '../screens/PortfolioScreen';
 import AddInvestmentScreen from '../screens/AddInvestmentScreen';
-import StatisticsScreen from '../screens/StatisticsScreen';
-import TradingOrdersScreen from '../screens/TradingOrdersScreen';
 import AddTradingOrderScreen from '../screens/AddTradingOrderScreen';
-import OverviewScreen from '../screens/OverviewScreen';
 import ExpenseTrackingScreen from '../screens/ExpenseTrackingScreen';
 import AddMonthlySummaryScreen from '../screens/AddMonthlySummaryScreen';
 import AddIncomeScreen from '../screens/AddIncomeScreen';
-import GridTradingScreen from '../screens/GridTradingScreen';
-import TradingCalculatorScreen from '../screens/TradingCalculatorScreen';
+import IncomeScreen from '../screens/IncomeScreen';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 import AIAssistant from '../components/AIAssistant';
@@ -29,21 +40,23 @@ const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const TAB_ITEMS = [
-  { name: 'ExpenseTrackingTab', title: 'การเงิน', icon: 'credit-card' as const, mobileIcon: 'wallet-outline' as const, component: ExpenseTrackingScreen },
-  { name: 'OverviewTab', title: 'ภาพรวม', icon: 'pie-chart' as const, mobileIcon: 'pie-chart-outline' as const, component: OverviewScreen },
-  { name: 'PortfolioTab', title: 'พอร์ต', icon: 'briefcase' as const, mobileIcon: 'briefcase-outline' as const, component: PortfolioScreen },
-  { name: 'TradingTab', title: 'เทรด', icon: 'line-chart' as const, mobileIcon: 'trending-up-outline' as const, component: TradingOrdersScreen },
-  { name: 'GridTradingTab', title: 'Grid MT5', icon: 'th' as const, mobileIcon: 'grid-outline' as const, component: GridTradingScreen },
-  { name: 'StatisticsTab', title: 'สถิติ', icon: 'bar-chart' as const, mobileIcon: 'bar-chart-outline' as const, component: StatisticsScreen },
-  { name: 'CalculatorTab', title: 'คำนวณ', icon: 'calculator' as const, mobileIcon: 'calculator-outline' as const, component: TradingCalculatorScreen },
+  {
+    name: 'ExpenseTrackingTab',
+    title: 'Home',
+    icon: 'mdi:home',
+    iconOutline: 'mdi:home-outline',
+    customIcon: (size: number, color: string) => <HomeIcon size={size} color={color} />,
+    component: ExpenseTrackingScreen,
+  },
+  { name: 'PortfolioTab', title: 'Port', icon: 'mdi:briefcase', iconOutline: 'mdi:briefcase-outline', customIcon: null, component: PortfolioScreen },
 ];
 
 function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPress: (name: string) => void }) {
   return (
     <View style={sidebarStyles.container}>
-      <View style={sidebarStyles.logoSection}>
+      {/* <View style={sidebarStyles.logoSection}>
         <Text style={sidebarStyles.logoText}>WEALTH LAB</Text>
-      </View>
+      </View> */}
       <ScrollView style={sidebarStyles.navList}>
         {TAB_ITEMS.map((item) => {
           const isActive = activeTab === item.name;
@@ -53,11 +66,10 @@ function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPre
               style={[sidebarStyles.navItem, isActive && sidebarStyles.navItemActive]}
               onPress={() => onTabPress(item.name)}
             >
-              <FontAwesome
-                name={item.icon}
-                size={16}
-                color={isActive ? COLORS.primary : COLORS.textSecondary}
-              />
+              {item.customIcon
+                ? item.customIcon(16, isActive ? COLORS.primary : COLORS.textSecondary)
+                : <Iconify icon={isActive ? item.icon : item.iconOutline} size={16} color={isActive ? COLORS.primary : COLORS.textSecondary} />
+              }
               <Text style={[sidebarStyles.navText, isActive && sidebarStyles.navTextActive]}>
                 {item.title}
               </Text>
@@ -91,15 +103,7 @@ function MobileTabNavigator() {
   return (
     <Tab.Navigator
       screenOptions={{
-        headerShown: true,
-        headerStyle: { backgroundColor: COLORS.surface },
-        headerTitleStyle: {
-          color: COLORS.text,
-          fontSize: 14,
-          fontFamily: 'NotoSansThai_400Regular',
-          letterSpacing: 1,
-        },
-        headerShadowVisible: false,
+        headerShown: false,
         tabBarActiveTintColor: COLORS.primary,
         tabBarInactiveTintColor: COLORS.textSecondary,
         tabBarStyle: {
@@ -120,9 +124,10 @@ function MobileTabNavigator() {
           component={item.component}
           options={{
             title: item.title,
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name={item.mobileIcon} size={size} color={color} />
-            ),
+            tabBarIcon: ({ color, size, focused }) =>
+              item.customIcon
+                ? item.customIcon(size, color)
+                : <Iconify icon={focused ? item.icon : item.iconOutline} size={size} color={color} />,
           }}
         />
       ))}
@@ -131,12 +136,8 @@ function MobileTabNavigator() {
 }
 
 function TabNavigator() {
-  return (
-    <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <ExpenseTrackingScreen />
-      {/* <AIAssistant fabBottom={90} /> */}
-    </View>
-  );
+  const { isDesktop } = useResponsive();
+  return isDesktop ? <DesktopTabNavigator /> : <MobileTabNavigator />;
 }
 
 export default function Navigation() {
@@ -205,6 +206,11 @@ export default function Navigation() {
           component={AddIncomeScreen}
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="IncomeScreen"
+          component={IncomeScreen}
+          options={{ headerShown: false }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
@@ -245,7 +251,7 @@ const sidebarStyles = StyleSheet.create({
     gap: 12,
     marginHorizontal: 8,
     marginVertical: 2,
-    borderRadius: 8,
+    borderRadius: 0,
   },
   navItemActive: {
     backgroundColor: `${COLORS.primary}15`,

@@ -324,7 +324,7 @@ const styles = StyleSheet.create({
     width: '30%',
     aspectRatio: 1,
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 12,
     justifyContent: 'center',
     alignItems: 'center',
@@ -353,7 +353,7 @@ const styles = StyleSheet.create({
   },
   calendarContainer: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 0,
     overflow: 'hidden',
     marginBottom: 16,
     elevation: 2,
@@ -363,7 +363,7 @@ const styles = StyleSheet.create({
     height: 50,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
+    borderRadius: 0,
   },
   markedDay: {
     backgroundColor: COLORS.primary,
@@ -390,7 +390,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 16,
     elevation: 2,
     shadowColor: '#000',
@@ -415,7 +415,7 @@ const styles = StyleSheet.create({
   },
   addButton: {
     backgroundColor: COLORS.primary,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 16,
     alignItems: 'center',
     flexDirection: 'row',
@@ -430,7 +430,7 @@ const styles = StyleSheet.create({
   listContainer: {},
   monthItem: {
     backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 12,
     elevation: 2,
     shadowColor: '#000',
@@ -502,7 +502,7 @@ const styles = StyleSheet.create({
   infoBox: {
     marginTop: 16,
     backgroundColor: '#e3f2fd',
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 16,
     flexDirection: 'row',
     gap: 12,

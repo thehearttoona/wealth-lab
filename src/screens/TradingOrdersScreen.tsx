@@ -325,7 +325,7 @@ const styles = StyleSheet.create({
   },
   statsContainer: {
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 16,
     gap: 12,
   },
@@ -367,7 +367,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: 0,
     backgroundColor: COLORS.background,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -389,7 +389,7 @@ const styles = StyleSheet.create({
     margin: 16,
     marginBottom: 8,
     backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    borderRadius: 0,
     padding: 16,
     alignItems: 'center',
     flexDirection: 'row',
@@ -406,7 +406,7 @@ const styles = StyleSheet.create({
   },
   orderItem: {
     backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    borderRadius: 0,
     marginBottom: 12,
     elevation: 2,
     shadowColor: '#000',
@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
   typeBadge: {
     paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 0,
   },
   buyBadge: {
     backgroundColor: COLORS.success,
@@ -455,7 +455,7 @@ const styles = StyleSheet.create({
   statusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 0,
   },
   openBadge: {
     backgroundColor: '#42A5F5',
@@ -513,7 +513,7 @@ const styles = StyleSheet.create({
   forexBadge: {
     paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 0,
     backgroundColor: '#FFA726',
   },
   forexBadgeText: {

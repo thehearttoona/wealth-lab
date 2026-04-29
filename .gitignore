@@ -43,3 +43,5 @@ yarn-error.*
 
 # MT5 backend
 mt5_backend/
+
+.vercel
