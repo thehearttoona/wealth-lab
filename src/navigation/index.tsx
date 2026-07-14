@@ -5,8 +5,7 @@ import LoginScreen from '../screens/LoginScreen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { FontAwesome } from '@expo/vector-icons';
-import { Iconify } from 'react-native-iconify';
+import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { G, Path } from 'react-native-svg';
 
 function HomeIcon({ size = 24, color = '#000' }: { size?: number; color?: string }) {
@@ -43,12 +42,12 @@ const TAB_ITEMS = [
   {
     name: 'ExpenseTrackingTab',
     title: 'Home',
-    icon: 'mdi:home',
-    iconOutline: 'mdi:home-outline',
+    icon: 'home',
+    iconOutline: 'home-outline',
     customIcon: (size: number, color: string) => <HomeIcon size={size} color={color} />,
     component: ExpenseTrackingScreen,
   },
-  { name: 'PortfolioTab', title: 'Port', icon: 'mdi:briefcase', iconOutline: 'mdi:briefcase-outline', customIcon: null, component: PortfolioScreen },
+  { name: 'PortfolioTab', title: 'Port', icon: 'briefcase', iconOutline: 'briefcase-outline', customIcon: null, component: PortfolioScreen },
 ];
 
 function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPress: (name: string) => void }) {
@@ -68,7 +67,7 @@ function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPre
             >
               {item.customIcon
                 ? item.customIcon(16, isActive ? COLORS.primary : COLORS.textSecondary)
-                : <Iconify icon={isActive ? item.icon : item.iconOutline} size={16} color={isActive ? COLORS.primary : COLORS.textSecondary} />
+                : <MaterialCommunityIcons name={(isActive ? item.icon : item.iconOutline) as any} size={16} color={isActive ? COLORS.primary : COLORS.textSecondary} />
               }
               <Text style={[sidebarStyles.navText, isActive && sidebarStyles.navTextActive]}>
                 {item.title}
@@ -127,7 +126,7 @@ function MobileTabNavigator() {
             tabBarIcon: ({ color, size, focused }) =>
               item.customIcon
                 ? item.customIcon(size, color)
-                : <Iconify icon={focused ? item.icon : item.iconOutline} size={size} color={color} />,
+                : <MaterialCommunityIcons name={(focused ? item.icon : item.iconOutline) as any} size={size} color={color} />,
           }}
         />
       ))}

@@ -10,7 +10,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -24,7 +24,6 @@ import {
 import { formatCurrency, formatCurrencyWithType, convertToTHB, COLORS } from '../utils/constants';
 import { updateInvestmentPrice } from '../services/priceApi';
 import { useResponsive } from '../utils/responsive';
-import { Iconify } from 'react-native-iconify';
 
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
@@ -224,7 +223,7 @@ export default function PortfolioScreen() {
           isDesktop && styles.headerDesktop,
         ]}>
           <View style={styles.headerTitleContainer}>
-            <Iconify icon="mdi:briefcase" size={24} color="#ffffff" />
+            <MaterialCommunityIcons name="briefcase" size={24} color="#ffffff" />
             <Text style={styles.headerTitle}> พอร์ตการลงทุน</Text>
           </View>
           <View style={styles.summaryContainer}>
