@@ -50,7 +50,7 @@ return (
           {loading ? (
             <ActivityIndicator color={COLORS.text} size="small" />
           ) : (
-            <Text style={styles.googleButtonText}>🔑  Continue with Google</Text>
+            <Text style={styles.googleButtonText}>Continue with Google</Text>
           )}
         </TouchableOpacity>
       </View>
