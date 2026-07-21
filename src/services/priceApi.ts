@@ -7,12 +7,11 @@ const BINANCE_API = 'https://api.binance.com/api/v3';
 // CoinGecko API สำหรับ Crypto (ฟรี ไม่ต้อง API key) — ใช้เป็น fallback ถ้า Binance ไม่มีคู่เทรดนั้น
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
 
-// Yahoo Finance API สำหรับหุ้นต่างประเทศ (ไม่ต้อง API key)
-const YAHOO_FINANCE_API = 'https://query1.finance.yahoo.com/v8/finance/chart';
-const YAHOO_FINANCE_API_2 = 'https://query2.finance.yahoo.com/v8/finance/chart';
-
-// Frankfurter API สำหรับอัตราแลกเปลี่ยน (ฟรี ไม่ต้อง API key)
-const FRANKFURTER_API = 'https://api.frankfurter.app/latest';
+// open.er-api.com สำหรับอัตราแลกเปลี่ยน (ฟรี ไม่ต้อง API key)
+// หมายเหตุ: Frankfurter (ที่เคยใช้) กับ Yahoo Finance ไม่ส่ง CORS header ให้ —
+// เรียกจาก browser จริงไม่ได้เลย (fetch throw "Failed to fetch" เงียบๆ แม้ตัว API จะทำงานปกติ)
+// เจอตอนทดสอบผ่าน headless browser จริง ไม่ใช่แค่ curl/Node
+const EXCHANGE_RATE_API = 'https://open.er-api.com/v6/latest/USD';
 
 // ========================
 // Exchange Rate Cache
@@ -36,7 +35,7 @@ async function getExchangeRates(): Promise<{ [key: string]: number }> {
     return exchangeRateCache.rates;
   }
   try {
-    const response = await fetchWithTimeout(`${FRANKFURTER_API}?from=USD`);
+    const response = await fetchWithTimeout(EXCHANGE_RATE_API);
     if (!response.ok) throw new Error('Exchange rate fetch failed');
     const data = await response.json();
     const rates = data.rates as { [key: string]: number };
@@ -211,41 +210,14 @@ export async function getCryptoPrices(
 }
 
 // ========================
-// Stock (Twelve Data, fallback: Yahoo Finance)
+// Stock (Twelve Data)
 // ========================
+// หมายเหตุ: เดิมมี fallback ไป Yahoo Finance แต่ Yahoo ไม่ส่ง CORS header
+// เรียกจาก browser จริงไม่ได้เลย (แม้ endpoint จะทำงานปกติเวลาเรียกผ่าน curl/Node)
+// เอา fallback ที่ใช้งานจริงไม่ได้ออก เหลือ Twelve Data เป็นแหล่งเดียว
 
 const TWELVE_DATA_API = 'https://api.twelvedata.com';
 const TWELVE_DATA_API_KEY = '1d533ad623aa46eea821c919e473d051';
-
-async function getStockPriceFromYahoo(symbol: string, targetCurrency: string): Promise<number | null> {
-  try {
-    // ลอง query1 ก่อน ถ้าล้มเหลวลอง query2
-    let response = await fetchWithTimeout(
-      `${YAHOO_FINANCE_API}/${encodeURIComponent(symbol)}`
-    ).catch(() => null);
-
-    if (!response || !response.ok) {
-      response = await fetchWithTimeout(
-        `${YAHOO_FINANCE_API_2}/${encodeURIComponent(symbol)}`
-      );
-    }
-
-    if (!response.ok) throw new Error(`Yahoo Finance returned ${response.status}`);
-
-    const data = await response.json();
-    const meta = data?.chart?.result?.[0]?.meta;
-
-    if (!meta?.regularMarketPrice) return null;
-
-    const priceInOriginalCurrency: number = meta.regularMarketPrice;
-    const currency: string = meta.currency || 'USD';
-
-    return await convertCurrency(priceInOriginalCurrency, currency, targetCurrency);
-  } catch (error) {
-    console.error('Error fetching stock price from Yahoo Finance:', error);
-    return null;
-  }
-}
 
 export async function getStockPrice(symbol: string, targetCurrency: string = 'THB'): Promise<number | null> {
   try {
@@ -262,8 +234,7 @@ export async function getStockPrice(symbol: string, targetCurrency: string = 'TH
   } catch (error) {
     console.error('Error fetching stock price from Twelve Data:', error);
   }
-  // Twelve Data ล้มเหลว (rate limit / ไม่รองรับ symbol นี้) — fallback ไป Yahoo Finance
-  return getStockPriceFromYahoo(symbol, targetCurrency);
+  return null;
 }
 
 // ========================
@@ -331,25 +302,24 @@ export async function searchStockList(query: string): Promise<StockSearchResult[
   try {
     if (!query || query.trim().length < 1) return [];
 
-    // Yahoo Finance search endpoint
+    // Twelve Data symbol search — Yahoo Finance's search endpoint doesn't send
+    // CORS headers, so it can't be called from a browser at all (tested)
     const response = await fetchWithTimeout(
-      `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(
-        query.trim()
-      )}&lang=en-US&region=US&quotesCount=10&newsCount=0`
+      `${TWELVE_DATA_API}/symbol_search?symbol=${encodeURIComponent(query.trim())}&apikey=${TWELVE_DATA_API_KEY}`
     );
-    if (!response.ok) throw new Error('Yahoo Finance search failed');
+    if (!response.ok) throw new Error('Twelve Data symbol search failed');
 
     const data = await response.json();
-    const quotes: any[] = data?.quotes || [];
+    const results: any[] = data?.data || [];
 
-    return quotes
-      .filter((q) => q.quoteType === 'EQUITY' || q.quoteType === 'ETF')
+    return results
+      .filter((r) => r.instrument_type === 'Common Stock' || r.instrument_type === 'ETF')
       .slice(0, 10)
-      .map((q) => ({
-        symbol: q.symbol,
-        name: q.longname || q.shortname || q.symbol,
-        region: q.exchange || '',
-        currency: q.currency || 'USD',
+      .map((r) => ({
+        symbol: r.symbol,
+        name: r.instrument_name || r.symbol,
+        region: r.exchange || r.country || '',
+        currency: r.currency || 'USD',
       }));
   } catch (error) {
     console.error('Error searching stock:', error);
