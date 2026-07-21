@@ -132,10 +132,11 @@ export const getPortfolioSummary = async (): Promise<PortfolioSummary> => {
     const byType: PortfolioSummary['byType'] = {};
 
     investments.forEach((inv) => {
+      // currentPrice เก็บเป็นสกุลเงินเดียวกับ inv.currency ต้องแปลงเป็น THB ก่อนรวมพอร์ต
       const buyPriceInTHB = convertToTHB(inv.buyPrice, inv.currency);
+      const currentPriceInTHB = convertToTHB(inv.currentPrice ?? inv.buyPrice, inv.currency);
       const cost = buyPriceInTHB * inv.quantity + (inv.fees || 0);
-      const currentPrice = inv.currentPrice || buyPriceInTHB;
-      const value = currentPrice * inv.quantity;
+      const value = currentPriceInTHB * inv.quantity;
       const profit = value - cost;
 
       totalCost += cost;

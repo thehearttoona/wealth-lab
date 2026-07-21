@@ -90,7 +90,7 @@ export default function PortfolioScreen() {
       for (const investment of investments) {
         // อัปเดตเฉพาะ crypto, stock, gold
         if (['crypto', 'stock', 'gold'].includes(investment.type)) {
-          const newPrice = await updateInvestmentPrice(investment.type, investment.symbol);
+          const newPrice = await updateInvestmentPrice(investment.type, investment.symbol, investment.currency || 'THB');
 
           if (newPrice !== null && newPrice > 0) {
             const updatedInvestment = {
@@ -127,11 +127,13 @@ export default function PortfolioScreen() {
   };
 
   const renderInvestmentItem = ({ item }: { item: Investment }) => {
-    // แปลง buyPrice เป็น THB สำหรับการคำนวณ
+    // ราคาปัจจุบัน (currentPrice) เก็บเป็นสกุลเงินเดียวกับ item.currency (สกุลที่เลือกตอนเพิ่มการลงทุน)
+    // ต้องแปลงเป็น THB ก่อนคำนวณ cost/value/profit เพื่อรวมพอร์ตข้ามสกุลเงินได้
     const buyPriceInTHB = convertToTHB(item.buyPrice, item.currency);
+    const currentPriceNative = item.currentPrice ?? item.buyPrice;
+    const currentPriceInTHB = convertToTHB(currentPriceNative, item.currency);
     const cost = buyPriceInTHB * item.quantity + (item.fees || 0);
-    const currentPrice = item.currentPrice || buyPriceInTHB;
-    const value = currentPrice * item.quantity;
+    const value = currentPriceInTHB * item.quantity;
     const profit = value - cost;
     const profitPercent = cost > 0 ? (profit / cost) * 100 : 0;
     const isProfit = profit >= 0;
@@ -158,7 +160,7 @@ export default function PortfolioScreen() {
                 {item.quantity} หน่วย @ {formatCurrencyWithType(item.buyPrice, item.currency)}
               </Text>
               <Text style={styles.investmentCurrent}>
-                ราคาปัจจุบัน: {formatCurrency(currentPrice)} (${(currentPrice / 35).toFixed(2)})
+                ราคาปัจจุบัน: {formatCurrencyWithType(currentPriceNative, item.currency)}
               </Text>
             </View>
           </View>

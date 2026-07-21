@@ -53,16 +53,13 @@ export async function getUsdToThbRate(): Promise<number> {
   return rates['THB'] ?? 35;
 }
 
-// แปลงราคาจากสกุลเงินใดก็ได้ → THB
-async function convertToThb(amount: number, fromCurrency: string): Promise<number> {
-  if (fromCurrency === 'THB') return amount;
+// แปลงราคาจากสกุลเงินใดก็ได้ → สกุลเงินปลายทางที่ระบุ (ผ่าน USD เป็นตัวกลาง)
+async function convertCurrency(amount: number, fromCurrency: string, toCurrency: string): Promise<number> {
+  if (fromCurrency === toCurrency) return amount;
   const rates = await getExchangeRates();
-  if (fromCurrency === 'USD') {
-    return amount * (rates['THB'] ?? 35);
-  }
-  // fromCurrency → USD → THB
-  const rateToUSD = 1 / (rates[fromCurrency] ?? 1);
-  return amount * rateToUSD * (rates['THB'] ?? 35);
+  const amountInUsd = fromCurrency === 'USD' ? amount : amount / (rates[fromCurrency] ?? 1);
+  if (toCurrency === 'USD') return amountInUsd;
+  return amountInUsd * (rates[toCurrency] ?? 35);
 }
 
 // ========================
@@ -127,40 +124,48 @@ const CRYPTO_ID_MAP: { [key: string]: string } = {
   'DASH': 'dash',
 };
 
-async function getCryptoPriceFromCoinGecko(upperSymbol: string): Promise<number | null> {
+// CoinGecko รองรับ vs_currencies พวกนี้ตรงตัว (lowercase) — currency อื่นที่ไม่รองรับจะ fallback ไป usd แล้วแปลงเอง
+const COINGECKO_SUPPORTED_CURRENCIES = new Set(['usd', 'thb', 'eur', 'jpy', 'cny']);
+
+async function getCryptoPriceFromCoinGecko(upperSymbol: string, targetCurrency: string): Promise<number | null> {
   try {
     const coinId = CRYPTO_ID_MAP[upperSymbol] || upperSymbol.toLowerCase();
+    const vsCurrency = targetCurrency.toLowerCase();
+    const fetchCurrency = COINGECKO_SUPPORTED_CURRENCIES.has(vsCurrency) ? vsCurrency : 'usd';
     const response = await fetchWithTimeout(
-      `${COINGECKO_API}/simple/price?ids=${coinId}&vs_currencies=thb`
+      `${COINGECKO_API}/simple/price?ids=${coinId}&vs_currencies=${fetchCurrency}`
     );
     if (!response.ok) throw new Error('CoinGecko fetch failed');
     const data = await response.json();
-    return data[coinId]?.thb ?? null;
+    const price = data[coinId]?.[fetchCurrency];
+    if (price === undefined || price === null) return null;
+    return fetchCurrency === vsCurrency ? price : await convertCurrency(price, fetchCurrency.toUpperCase(), targetCurrency);
   } catch (error) {
     console.error('Error fetching crypto price from CoinGecko:', error);
     return null;
   }
 }
 
-export async function getCryptoPrice(symbol: string): Promise<number | null> {
+export async function getCryptoPrice(symbol: string, targetCurrency: string = 'THB'): Promise<number | null> {
   const upperSymbol = symbol.toUpperCase();
   try {
     const response = await fetchWithTimeout(`${BINANCE_API}/ticker/price?symbol=${upperSymbol}USDT`);
     if (response.ok) {
       const data = await response.json();
       const priceUsdt = parseFloat(data.price);
-      if (!isNaN(priceUsdt)) return await convertToThb(priceUsdt, 'USD');
+      if (!isNaN(priceUsdt)) return await convertCurrency(priceUsdt, 'USD', targetCurrency);
     }
   } catch (error) {
     console.error('Error fetching crypto price from Binance:', error);
   }
   // Binance ไม่มีคู่เทรดนี้ (เหรียญเล็ก/ไม่ได้ list) — fallback ไป CoinGecko
-  return getCryptoPriceFromCoinGecko(upperSymbol);
+  return getCryptoPriceFromCoinGecko(upperSymbol, targetCurrency);
 }
 
 // ดึงราคา crypto หลายตัวในครั้งเดียว (ประหยัด request)
 export async function getCryptoPrices(
-  symbols: string[]
+  symbols: string[],
+  targetCurrency: string = 'THB'
 ): Promise<{ [symbol: string]: number | null }> {
   if (symbols.length === 0) return {};
   const upperSymbols = [...new Set(symbols.map((s) => s.toUpperCase()))];
@@ -174,17 +179,16 @@ export async function getCryptoPrices(
     );
     if (response.ok) {
       const data: { symbol: string; price: string }[] = await response.json();
-      const usdtToThb = await getUsdToThbRate();
       const priceByPair: { [pair: string]: number } = {};
       data.forEach((d) => { priceByPair[d.symbol] = parseFloat(d.price); });
-      upperSymbols.forEach((sym) => {
+      await Promise.all(upperSymbols.map(async (sym) => {
         const pair = `${sym}USDT`;
         if (priceByPair[pair] !== undefined && !isNaN(priceByPair[pair])) {
-          result[sym] = priceByPair[pair] * usdtToThb;
+          result[sym] = await convertCurrency(priceByPair[pair], 'USD', targetCurrency);
         } else {
           unresolved.push(sym);
         }
-      });
+      }));
     } else {
       unresolved.push(...upperSymbols);
     }
@@ -198,7 +202,7 @@ export async function getCryptoPrices(
     // เพราะ batch endpoint คืน 400 ทั้งก้อนถ้ามีแค่ 1 symbol ที่ไม่มีคู่เทรด USDT
     await Promise.all(
       unresolved.map(async (sym) => {
-        result[sym] = await getCryptoPrice(sym);
+        result[sym] = await getCryptoPrice(sym, targetCurrency);
       })
     );
   }
@@ -213,7 +217,7 @@ export async function getCryptoPrices(
 const TWELVE_DATA_API = 'https://api.twelvedata.com';
 const TWELVE_DATA_API_KEY = '1d533ad623aa46eea821c919e473d051';
 
-async function getStockPriceFromYahoo(symbol: string): Promise<number | null> {
+async function getStockPriceFromYahoo(symbol: string, targetCurrency: string): Promise<number | null> {
   try {
     // ลอง query1 ก่อน ถ้าล้มเหลวลอง query2
     let response = await fetchWithTimeout(
@@ -236,14 +240,14 @@ async function getStockPriceFromYahoo(symbol: string): Promise<number | null> {
     const priceInOriginalCurrency: number = meta.regularMarketPrice;
     const currency: string = meta.currency || 'USD';
 
-    return await convertToThb(priceInOriginalCurrency, currency);
+    return await convertCurrency(priceInOriginalCurrency, currency, targetCurrency);
   } catch (error) {
     console.error('Error fetching stock price from Yahoo Finance:', error);
     return null;
   }
 }
 
-export async function getStockPrice(symbol: string): Promise<number | null> {
+export async function getStockPrice(symbol: string, targetCurrency: string = 'THB'): Promise<number | null> {
   try {
     const response = await fetchWithTimeout(
       `${TWELVE_DATA_API}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${TWELVE_DATA_API_KEY}`
@@ -252,36 +256,36 @@ export async function getStockPrice(symbol: string): Promise<number | null> {
       const data = await response.json();
       if (data.status !== 'error' && data.close) {
         const price = parseFloat(data.close);
-        if (!isNaN(price)) return await convertToThb(price, data.currency || 'USD');
+        if (!isNaN(price)) return await convertCurrency(price, data.currency || 'USD', targetCurrency);
       }
     }
   } catch (error) {
     console.error('Error fetching stock price from Twelve Data:', error);
   }
   // Twelve Data ล้มเหลว (rate limit / ไม่รองรับ symbol นี้) — fallback ไป Yahoo Finance
-  return getStockPriceFromYahoo(symbol);
+  return getStockPriceFromYahoo(symbol, targetCurrency);
 }
 
 // ========================
 // Gold (metals.live)
 // ========================
 
-export async function getGoldPrice(): Promise<number | null> {
+export async function getGoldPrice(targetCurrency: string = 'THB'): Promise<number | null> {
   try {
     const response = await fetchWithTimeout('https://api.metals.live/v1/spot/gold');
     if (!response.ok) throw new Error('metals.live fetch failed');
 
     const data = await response.json();
     const pricePerOzUSD: number = data[0]?.price || 0;
-    // USD/oz → THB/กรัม → THB/บาททอง (15.244 กรัม = 1 บาททอง)
+    // USD/oz → USD/กรัม → USD/บาททอง (15.244 กรัม = 1 บาททอง)
     const pricePerGramUSD = pricePerOzUSD / 31.1;
     const pricePerBahtTongUSD = pricePerGramUSD * 15.244;
 
-    const usdToThb = await getUsdToThbRate();
-    return pricePerBahtTongUSD * usdToThb;
+    return await convertCurrency(pricePerBahtTongUSD, 'USD', targetCurrency);
   } catch (error) {
     console.error('Error fetching gold price:', error);
-    return 30000; // fallback ราคาประมาณ
+    // fallback ราคาประมาณ (คำนวณจาก THB คงที่ ~30000 แปลงเป็นสกุลเงินปลายทาง)
+    return targetCurrency === 'THB' ? 30000 : await convertCurrency(30000, 'THB', targetCurrency);
   }
 }
 
@@ -359,15 +363,16 @@ export async function searchStockList(query: string): Promise<StockSearchResult[
 
 export async function updateInvestmentPrice(
   type: string,
-  symbol: string
+  symbol: string,
+  targetCurrency: string = 'THB'
 ): Promise<number | null> {
   switch (type) {
     case 'crypto':
-      return getCryptoPrice(symbol);
+      return getCryptoPrice(symbol, targetCurrency);
     case 'stock':
-      return getStockPrice(symbol);
+      return getStockPrice(symbol, targetCurrency);
     case 'gold':
-      return getGoldPrice();
+      return getGoldPrice(targetCurrency);
     default:
       return null;
   }

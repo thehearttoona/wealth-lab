@@ -129,13 +129,13 @@ export default function AddInvestmentScreen() {
 
     setIsFetchingPrice(true);
     try {
-      const price = await updateInvestmentPrice(type, symbol.trim().toUpperCase());
+      const price = await updateInvestmentPrice(type, symbol.trim().toUpperCase(), currency);
       if (price !== null && price > 0) {
         setCurrentPrice(price.toString());
         if (Platform.OS === 'web') {
-          window.alert(`อัปเดตราคาสำเร็จ: ${price.toLocaleString()} THB`);
+          window.alert(`อัปเดตราคาสำเร็จ: ${price.toLocaleString()} ${currency}`);
         } else {
-          Alert.alert('สำเร็จ', `อัปเดตราคาสำเร็จ: ${price.toLocaleString()} THB`);
+          Alert.alert('สำเร็จ', `อัปเดตราคาสำเร็จ: ${price.toLocaleString()} ${currency}`);
         }
       } else {
         if (Platform.OS === 'web') {
@@ -472,7 +472,7 @@ export default function AddInvestmentScreen() {
 
         <View style={styles.row}>
           <View style={styles.halfWidth}>
-            <Text style={styles.label}>ราคาปัจจุบัน (บาท)</Text>
+            <Text style={styles.label}>ราคาปัจจุบัน ({currency})</Text>
             <TextInput
               style={styles.input}
               value={currentPrice}
