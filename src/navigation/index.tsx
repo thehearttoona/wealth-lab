@@ -31,6 +31,8 @@ import ExpenseTrackingScreen from '../screens/ExpenseTrackingScreen';
 import AddMonthlySummaryScreen from '../screens/AddMonthlySummaryScreen';
 import AddIncomeScreen from '../screens/AddIncomeScreen';
 import IncomeScreen from '../screens/IncomeScreen';
+import InstallmentsScreen from '../screens/InstallmentsScreen';
+import AddInstallmentScreen from '../screens/AddInstallmentScreen';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 import AIAssistant from '../components/AIAssistant';
@@ -209,6 +211,16 @@ export default function Navigation() {
           name="IncomeScreen"
           component={IncomeScreen}
           options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Installments"
+          component={InstallmentsScreen}
+          options={{ title: 'ค่าใช้จ่ายผ่อนชำระ' }}
+        />
+        <Stack.Screen
+          name="AddInstallment"
+          component={AddInstallmentScreen}
+          options={{ title: 'เพิ่มรายการผ่อน' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

@@ -876,6 +876,14 @@ export default function HomeScreen() {
           <FontAwesome name="plus-circle" size={16} color={COLORS.primary} />
           <Text style={styles.buttonSecondaryText}> Add Recurring Bill</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.button, styles.buttonSecondary]}
+          onPress={() => navigation.navigate('Installments')}
+        >
+          <FontAwesome name="calendar-check-o" size={16} color={COLORS.accent} />
+          <Text style={styles.buttonSecondaryText}> ค่าใช้จ่ายผ่อนชำระ / ประมาณการเดือนหน้า</Text>
+        </TouchableOpacity>
       </View>
     );
   };

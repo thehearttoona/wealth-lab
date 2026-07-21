@@ -18,6 +18,17 @@ export interface RecurringBill {
   isActive?: boolean;
 }
 
+export interface InstallmentPlan {
+  id: string;
+  name: string;
+  category: string;
+  totalAmount: number;
+  totalMonths: number; // 1 = จ่ายเต็มจำนวนเดือนเดียว, N = ผ่อน N เดือน
+  monthlyAmount: number; // ยอดต่อเดือน (ปกติ = totalAmount / totalMonths แต่แก้เองได้)
+  startMonth: string; // YYYY-MM ของงวดแรก
+  createdAt: string;
+}
+
 export interface Income {
   id: string;
   amount: number;
@@ -82,6 +93,8 @@ export type RootStackParamList = {
   AddMonthlySummary: { summary?: MonthlySummary; month?: string };
   AddIncome: { income?: Income; date?: string };
   IncomeScreen: undefined;
+  Installments: undefined;
+  AddInstallment: { plan?: InstallmentPlan };
 };
 
 export interface AIMessage {

@@ -1,7 +1,10 @@
 // Price API Service
 // ดึงราคาล่าสุดจาก API ต่างๆ
 
-// CoinGecko API สำหรับ Crypto (ฟรี ไม่ต้อง API key)
+// Binance API สำหรับ Crypto (ฟรี ไม่ต้อง API key, ราคาจาก exchange จริงแบบ real-time)
+const BINANCE_API = 'https://api.binance.com/api/v3';
+
+// CoinGecko API สำหรับ Crypto (ฟรี ไม่ต้อง API key) — ใช้เป็น fallback ถ้า Binance ไม่มีคู่เทรดนั้น
 const COINGECKO_API = 'https://api.coingecko.com/api/v3';
 
 // Yahoo Finance API สำหรับหุ้นต่างประเทศ (ไม่ต้อง API key)
@@ -124,22 +127,35 @@ const CRYPTO_ID_MAP: { [key: string]: string } = {
   'DASH': 'dash',
 };
 
-export async function getCryptoPrice(symbol: string): Promise<number | null> {
+async function getCryptoPriceFromCoinGecko(upperSymbol: string): Promise<number | null> {
   try {
-    const upperSymbol = symbol.toUpperCase();
     const coinId = CRYPTO_ID_MAP[upperSymbol] || upperSymbol.toLowerCase();
-
     const response = await fetchWithTimeout(
       `${COINGECKO_API}/simple/price?ids=${coinId}&vs_currencies=thb`
     );
     if (!response.ok) throw new Error('CoinGecko fetch failed');
-
     const data = await response.json();
     return data[coinId]?.thb ?? null;
   } catch (error) {
-    console.error('Error fetching crypto price:', error);
+    console.error('Error fetching crypto price from CoinGecko:', error);
     return null;
   }
+}
+
+export async function getCryptoPrice(symbol: string): Promise<number | null> {
+  const upperSymbol = symbol.toUpperCase();
+  try {
+    const response = await fetchWithTimeout(`${BINANCE_API}/ticker/price?symbol=${upperSymbol}USDT`);
+    if (response.ok) {
+      const data = await response.json();
+      const priceUsdt = parseFloat(data.price);
+      if (!isNaN(priceUsdt)) return await convertToThb(priceUsdt, 'USD');
+    }
+  } catch (error) {
+    console.error('Error fetching crypto price from Binance:', error);
+  }
+  // Binance ไม่มีคู่เทรดนี้ (เหรียญเล็ก/ไม่ได้ list) — fallback ไป CoinGecko
+  return getCryptoPriceFromCoinGecko(upperSymbol);
 }
 
 // ดึงราคา crypto หลายตัวในครั้งเดียว (ประหยัด request)
@@ -147,34 +163,57 @@ export async function getCryptoPrices(
   symbols: string[]
 ): Promise<{ [symbol: string]: number | null }> {
   if (symbols.length === 0) return {};
+  const upperSymbols = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const result: { [symbol: string]: number | null } = {};
+  const unresolved: string[] = [];
+
   try {
-    const upperSymbols = symbols.map((s) => s.toUpperCase());
-    const coinIds = upperSymbols.map((s) => CRYPTO_ID_MAP[s] || s.toLowerCase());
-    const uniqueIds = [...new Set(coinIds)];
-
+    const pairsParam = JSON.stringify(upperSymbols.map((s) => `${s}USDT`));
     const response = await fetchWithTimeout(
-      `${COINGECKO_API}/simple/price?ids=${uniqueIds.join(',')}&vs_currencies=thb`
+      `${BINANCE_API}/ticker/price?symbols=${encodeURIComponent(pairsParam)}`
     );
-    if (!response.ok) throw new Error('CoinGecko batch fetch failed');
-
-    const data = await response.json();
-    const result: { [symbol: string]: number | null } = {};
-    upperSymbols.forEach((sym, i) => {
-      const coinId = coinIds[i];
-      result[sym] = data[coinId]?.thb ?? null;
-    });
-    return result;
+    if (response.ok) {
+      const data: { symbol: string; price: string }[] = await response.json();
+      const usdtToThb = await getUsdToThbRate();
+      const priceByPair: { [pair: string]: number } = {};
+      data.forEach((d) => { priceByPair[d.symbol] = parseFloat(d.price); });
+      upperSymbols.forEach((sym) => {
+        const pair = `${sym}USDT`;
+        if (priceByPair[pair] !== undefined && !isNaN(priceByPair[pair])) {
+          result[sym] = priceByPair[pair] * usdtToThb;
+        } else {
+          unresolved.push(sym);
+        }
+      });
+    } else {
+      unresolved.push(...upperSymbols);
+    }
   } catch (error) {
-    console.error('Error fetching crypto prices batch:', error);
-    return {};
+    console.error('Error fetching crypto prices batch from Binance:', error);
+    unresolved.push(...upperSymbols);
   }
+
+  if (unresolved.length > 0) {
+    // ยิงทีละเหรียญแทน (Binance เดี่ยว แล้ว fallback CoinGecko) แทนที่จะข้าม Binance ไปเลยทั้งชุด
+    // เพราะ batch endpoint คืน 400 ทั้งก้อนถ้ามีแค่ 1 symbol ที่ไม่มีคู่เทรด USDT
+    await Promise.all(
+      unresolved.map(async (sym) => {
+        result[sym] = await getCryptoPrice(sym);
+      })
+    );
+  }
+
+  return result;
 }
 
 // ========================
-// Stock (Yahoo Finance)
+// Stock (Twelve Data, fallback: Yahoo Finance)
 // ========================
 
-export async function getStockPrice(symbol: string): Promise<number | null> {
+const TWELVE_DATA_API = 'https://api.twelvedata.com';
+const TWELVE_DATA_API_KEY = '1d533ad623aa46eea821c919e473d051';
+
+async function getStockPriceFromYahoo(symbol: string): Promise<number | null> {
   try {
     // ลอง query1 ก่อน ถ้าล้มเหลวลอง query2
     let response = await fetchWithTimeout(
@@ -199,9 +238,28 @@ export async function getStockPrice(symbol: string): Promise<number | null> {
 
     return await convertToThb(priceInOriginalCurrency, currency);
   } catch (error) {
-    console.error('Error fetching stock price:', error);
+    console.error('Error fetching stock price from Yahoo Finance:', error);
     return null;
   }
+}
+
+export async function getStockPrice(symbol: string): Promise<number | null> {
+  try {
+    const response = await fetchWithTimeout(
+      `${TWELVE_DATA_API}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${TWELVE_DATA_API_KEY}`
+    );
+    if (response.ok) {
+      const data = await response.json();
+      if (data.status !== 'error' && data.close) {
+        const price = parseFloat(data.close);
+        if (!isNaN(price)) return await convertToThb(price, data.currency || 'USD');
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching stock price from Twelve Data:', error);
+  }
+  // Twelve Data ล้มเหลว (rate limit / ไม่รองรับ symbol นี้) — fallback ไป Yahoo Finance
+  return getStockPriceFromYahoo(symbol);
 }
 
 // ========================
