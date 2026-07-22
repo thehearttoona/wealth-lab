@@ -341,8 +341,8 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: COLORS.primary,
     padding: 20,
-    paddingTop: 60,
-    paddingBottom: 30,
+    paddingTop: 20,
+    paddingBottom: 20,
   },
   headerDesktop: {
     paddingTop: 20,
