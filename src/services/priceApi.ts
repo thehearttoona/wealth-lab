@@ -228,8 +228,8 @@ async function fetchYahooChart(symbol: string): Promise<{ price: number; currenc
     if (!response.ok) return null;
     const data = await response.json();
     const meta = data?.chart?.result?.[0]?.meta;
-    if (!meta?.regularMarketPrice) return null;
-    return { price: meta.regularMarketPrice, currency: meta.currency || 'USD' };
+    if (!meta?.regularMarketPrice || !meta?.currency) return null;
+    return { price: meta.regularMarketPrice, currency: meta.currency };
   } catch (error) {
     console.error(`Error fetching Yahoo quote for ${symbol}:`, error);
     return null;
@@ -237,9 +237,10 @@ async function fetchYahooChart(symbol: string): Promise<{ price: number; currenc
 }
 
 async function getStockPriceFromYahoo(symbol: string, targetCurrency: string): Promise<number | null> {
-  // ลองตามที่กรอกมาก่อน แล้วถ้าไม่มี "." (ไม่ได้ระบุตลาด) ลองต่อท้าย .BK
-  // เผื่อเป็นหุ้นไทย (ตลาด SET ใช้ suffix นี้บน Yahoo Finance)
-  const attempts = symbol.includes('.') ? [symbol] : [symbol, `${symbol}.BK`];
+  // ลอง .BK (ตลาด SET) ก่อนถ้าไม่ได้ระบุตลาดมา เพราะแอปนี้เน้นผู้ใช้ไทย และ Yahoo
+  // มี symbol ซ้ำกันข้ามตลาดได้ (เช่น "PTT" เพียวๆ ดันไปแมตช์กองทุนสหรัฐฯ คนละตัวเลย
+  // ไม่ใช่หุ้น PTT ไทย) — ลองแบบเดิมท้ายสุดไว้เป็น fallback
+  const attempts = symbol.includes('.') ? [symbol] : [`${symbol}.BK`, symbol];
   for (const attempt of attempts) {
     const result = await fetchYahooChart(attempt);
     if (result) return await convertCurrency(result.price, result.currency, targetCurrency);
