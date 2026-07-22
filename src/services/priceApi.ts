@@ -210,14 +210,42 @@ export async function getCryptoPrices(
 }
 
 // ========================
-// Stock (Twelve Data)
+// Stock (Twelve Data, fallback: Yahoo Finance via our own /api proxy)
 // ========================
-// หมายเหตุ: เดิมมี fallback ไป Yahoo Finance แต่ Yahoo ไม่ส่ง CORS header
-// เรียกจาก browser จริงไม่ได้เลย (แม้ endpoint จะทำงานปกติเวลาเรียกผ่าน curl/Node)
-// เอา fallback ที่ใช้งานจริงไม่ได้ออก เหลือ Twelve Data เป็นแหล่งเดียว
+// Twelve Data's free tier 404s on several exchanges (e.g. Thai SET stocks
+// like PTT — "available starting with the Grow or Venture plan"). Yahoo
+// Finance covers them fine but sends no CORS header, so it can't be called
+// directly from a browser — routed through our /api/yahoo-quote serverless
+// function instead, which fetches server-side (no CORS restriction there)
+// and adds its own CORS header for us to read.
 
 const TWELVE_DATA_API = 'https://api.twelvedata.com';
 const TWELVE_DATA_API_KEY = '1d533ad623aa46eea821c919e473d051';
+
+async function fetchYahooChart(symbol: string): Promise<{ price: number; currency: string } | null> {
+  try {
+    const response = await fetchWithTimeout(`/api/yahoo-quote?symbol=${encodeURIComponent(symbol)}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const meta = data?.chart?.result?.[0]?.meta;
+    if (!meta?.regularMarketPrice) return null;
+    return { price: meta.regularMarketPrice, currency: meta.currency || 'USD' };
+  } catch (error) {
+    console.error(`Error fetching Yahoo quote for ${symbol}:`, error);
+    return null;
+  }
+}
+
+async function getStockPriceFromYahoo(symbol: string, targetCurrency: string): Promise<number | null> {
+  // ลองตามที่กรอกมาก่อน แล้วถ้าไม่มี "." (ไม่ได้ระบุตลาด) ลองต่อท้าย .BK
+  // เผื่อเป็นหุ้นไทย (ตลาด SET ใช้ suffix นี้บน Yahoo Finance)
+  const attempts = symbol.includes('.') ? [symbol] : [symbol, `${symbol}.BK`];
+  for (const attempt of attempts) {
+    const result = await fetchYahooChart(attempt);
+    if (result) return await convertCurrency(result.price, result.currency, targetCurrency);
+  }
+  return null;
+}
 
 export async function getStockPrice(symbol: string, targetCurrency: string = 'THB'): Promise<number | null> {
   try {
@@ -234,7 +262,8 @@ export async function getStockPrice(symbol: string, targetCurrency: string = 'TH
   } catch (error) {
     console.error('Error fetching stock price from Twelve Data:', error);
   }
-  return null;
+  // Twelve Data ล้มเหลว (rate limit / ไม่รองรับ symbol นี้ในแผนฟรี) — fallback ไป Yahoo Finance ผ่าน proxy
+  return getStockPriceFromYahoo(symbol, targetCurrency);
 }
 
 // ========================
