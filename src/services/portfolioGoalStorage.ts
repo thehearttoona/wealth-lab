@@ -13,10 +13,9 @@ export const getPortfolioGoal = async (): Promise<PortfolioGoal | null> => {
     .select('*')
     .maybeSingle();
   if (error) throw error;
-  if (!data) return null;
+  if (!data || data.target_amount == null) return null;
   return {
-    targetReturnPercent: data.target_return_percent,
-    targetDate: data.target_date,
+    targetAmount: data.target_amount,
   };
 };
 
@@ -24,8 +23,7 @@ export const savePortfolioGoal = async (goal: PortfolioGoal): Promise<void> => {
   const userId = await getUserId();
   const { error } = await supabase.from('portfolio_goals').upsert({
     user_id: userId,
-    target_return_percent: goal.targetReturnPercent,
-    target_date: goal.targetDate,
+    target_amount: goal.targetAmount,
   });
   if (error) throw error;
 };

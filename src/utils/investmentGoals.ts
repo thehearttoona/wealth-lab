@@ -1,35 +1,31 @@
-// เป้าหมายการลงทุน "ระดับพอร์ตรวม" — ตั้งเป้าครั้งเดียว แล้วระบบวิเคราะห์ให้
-// แยกชัดระหว่าง "ข้อเท็จจริงตอนนี้" กับ "ประมาณการ/คำวินิจฉัย" (ไม่มีการเดา % ความน่าจะเป็น)
+// เป้าหมายพอร์ตรวม — ผู้ใช้ปักแค่ "ยอดที่อยากได้" (บาท) ระบบสรุปให้อัตโนมัติ
+// ทุกตัวเลขเป็นเลขคณิตทบต้นตรงไปตรงมา ไม่มีการเดา % ความน่าจะเป็น
 
 const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
-// พอร์ตต้องมีอายุอย่างน้อยเท่านี้ ถึงจะประเมิน "อัตราโตจริงต่อปี" ได้อย่างมีความหมาย
-const MIN_YEARS_FOR_ANNUALIZED = 0.25; // ~3 เดือน
+const MIN_YEARS_FOR_ANNUALIZED = 0.25; // พอร์ตต้องมีอายุ ~3 เดือนขึ้นไปถึงจะประเมินอัตราโตจริงได้
+export const GOAL_HORIZONS = [1, 3, 5, 10]; // ปีที่ระบบสรุปให้
 
 export interface PortfolioGoal {
-  targetReturnPercent: number; // เป้ากำไรรวม % (เช่น 15 = +15%)
-  targetDate: string;          // วันที่ต้องการให้ถึงเป้า (ISO)
+  targetAmount: number; // ยอดพอร์ตรวมที่อยากได้ (บาท)
 }
 
-export type GoalVerdict =
-  | 'reached'         // ถึงเป้าแล้ว
-  | 'on_track'        // อัตราโตจริง ≥ อัตราที่ต้องการ → มีแนวโน้มทัน
-  | 'behind'          // อัตราโตจริง < อัตราที่ต้องการ → อาจไม่ทัน
-  | 'deadline_passed' // เลยกรอบเวลาแล้ว ยังไม่ถึงเป้า
-  | 'too_new';        // พอร์ตยังใหม่เกินไป ประเมินแนวโน้มไม่ได้
+export interface HorizonRequirement {
+  years: number;
+  annualReturnPercent: number; // ต้องโตเฉลี่ยปีละกี่ % ถึงจะถึงเป้าในกรอบเวลานี้
+}
 
 export interface PortfolioGoalAnalysis {
-  currentReturnPercent: number;              // กำไร/ขาดทุนรวมตอนนี้ (%) — ข้อเท็จจริง
-  targetReturnPercent: number;
-  progressRatio: number;                     // 0..1 (เกิน 1 = ถึงเป้า) — clamp ตอนวาด bar
+  targetAmount: number;
+  currentValue: number;                 // ถ้าขายตอนนี้ (ประมาณ)
+  remaining: number;                    // ยังขาดอีกเท่าไหร่ (< 0 = เกินเป้าแล้ว)
+  progressRatio: number;                // currentValue / targetAmount
   reached: boolean;
-  yearsLeft: number;
-  deadlinePassed: boolean;
-  requiredAnnualReturnPercent: number | null; // ต้องโตปีละกี่ % จากนี้ (ประมาณการ)
-  actualAnnualReturnPercent: number | null;   // พอร์ตโตจริงเฉลี่ยปีละกี่ % ที่ผ่านมา
-  verdict: GoalVerdict;
+  requiredByHorizon: HorizonRequirement[];   // สรุป 1/3/5/10 ปี
+  actualAnnualReturnPercent: number | null;  // พอร์ตโตจริงเฉลี่ยปีละกี่ % ที่ผ่านมา
+  projectedYearsToReach: number | null;      // ถ้าโตในพาซเดิมจะถึงเป้าในอีกกี่ปี
+  projectedDate: string | null;              // ≈ วันที่ถึงเป้า (ISO)
 }
 
-// totalValue / totalCost เป็น THB (จาก PortfolioSummary), portfolioStartDate = วันซื้อแรกสุดในพอร์ต
 export function analyzePortfolioGoal(
   goal: PortfolioGoal,
   totalValue: number,
@@ -37,49 +33,47 @@ export function analyzePortfolioGoal(
   portfolioStartDate: string | null,
   now: Date = new Date()
 ): PortfolioGoalAnalysis | null {
-  if (totalCost <= 0) return null;
+  if (goal.targetAmount <= 0) return null;
 
-  const currentReturnPercent = ((totalValue - totalCost) / totalCost) * 100;
-  const target = goal.targetReturnPercent;
-  const targetValue = totalCost * (1 + target / 100);
-  const reached = currentReturnPercent >= target;
+  const currentValue = totalValue;
+  const reached = currentValue >= goal.targetAmount;
+  const progressRatio = currentValue / goal.targetAmount;
 
-  const progressRatio = target !== 0 ? currentReturnPercent / target : (currentReturnPercent >= 0 ? 1 : 0);
+  // สรุปอัตราที่ต้องการต่อปี ในแต่ละกรอบเวลา (คงที่ 1/3/5/10 ปี)
+  const requiredByHorizon: HorizonRequirement[] = currentValue > 0 && !reached
+    ? GOAL_HORIZONS.map((years) => ({
+        years,
+        annualReturnPercent: (Math.pow(goal.targetAmount / currentValue, 1 / years) - 1) * 100,
+      }))
+    : [];
 
-  const yearsLeft = (new Date(goal.targetDate).getTime() - now.getTime()) / MS_PER_YEAR;
-  const deadlinePassed = yearsLeft <= 0;
-
-  // ต้องโตปีละกี่ % จากราคาปัจจุบัน ถึงจะถึงเป้าทันกำหนด (ทบต้น)
-  let requiredAnnualReturnPercent: number | null = null;
-  if (!reached && !deadlinePassed && totalValue > 0) {
-    requiredAnnualReturnPercent = (Math.pow(targetValue / totalValue, 1 / yearsLeft) - 1) * 100;
-  }
-
-  // อัตราโตจริงเฉลี่ยต่อปีของพอร์ต (อิงผลงานจริงตั้งแต่วันซื้อแรก) — ฐานของคำวินิจฉัย
+  // อัตราโตจริงเฉลี่ยต่อปีของพอร์ต (จากวันซื้อแรก) — ฐานของการประมาณวันถึงเป้า
   let actualAnnualReturnPercent: number | null = null;
-  if (portfolioStartDate && totalValue > 0) {
+  if (portfolioStartDate && totalCost > 0 && totalValue > 0) {
     const yearsElapsed = (now.getTime() - new Date(portfolioStartDate).getTime()) / MS_PER_YEAR;
     if (yearsElapsed >= MIN_YEARS_FOR_ANNUALIZED) {
       actualAnnualReturnPercent = (Math.pow(totalValue / totalCost, 1 / yearsElapsed) - 1) * 100;
     }
   }
 
-  let verdict: GoalVerdict;
-  if (reached) verdict = 'reached';
-  else if (deadlinePassed) verdict = 'deadline_passed';
-  else if (actualAnnualReturnPercent == null) verdict = 'too_new';
-  else if (requiredAnnualReturnPercent != null && actualAnnualReturnPercent >= requiredAnnualReturnPercent) verdict = 'on_track';
-  else verdict = 'behind';
+  // ถ้าโตในพาซเดิมต่อไป จะถึงเป้าในอีกกี่ปี (ต้องโตจริงเป็นบวกถึงคำนวณได้)
+  let projectedYearsToReach: number | null = null;
+  let projectedDate: string | null = null;
+  if (!reached && actualAnnualReturnPercent != null && actualAnnualReturnPercent > 0 && currentValue > 0) {
+    const years = Math.log(goal.targetAmount / currentValue) / Math.log(1 + actualAnnualReturnPercent / 100);
+    projectedYearsToReach = years;
+    projectedDate = new Date(now.getTime() + years * MS_PER_YEAR).toISOString();
+  }
 
   return {
-    currentReturnPercent,
-    targetReturnPercent: target,
+    targetAmount: goal.targetAmount,
+    currentValue,
+    remaining: goal.targetAmount - currentValue,
     progressRatio,
     reached,
-    yearsLeft,
-    deadlinePassed,
-    requiredAnnualReturnPercent,
+    requiredByHorizon,
     actualAnnualReturnPercent,
-    verdict,
+    projectedYearsToReach,
+    projectedDate,
   };
 }

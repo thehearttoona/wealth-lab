@@ -50,7 +50,6 @@ export default function PortfolioScreen() {
   const [goal, setGoal] = useState<PortfolioGoal | null>(null);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [goalTargetInput, setGoalTargetInput] = useState('');
-  const [goalYearsInput, setGoalYearsInput] = useState('');
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
@@ -70,26 +69,15 @@ export default function PortfolioScreen() {
   };
 
   const openGoalModal = () => {
-    setGoalTargetInput(goal?.targetReturnPercent?.toString() || '');
-    if (goal?.targetDate) {
-      const years = (new Date(goal.targetDate).getTime() - Date.now()) / (365.25 * 24 * 60 * 60 * 1000);
-      setGoalYearsInput(years > 0 ? (Math.round(years * 10) / 10).toString() : '');
-    } else {
-      setGoalYearsInput('');
-    }
+    setGoalTargetInput(goal?.targetAmount?.toString() || '');
     setGoalModalVisible(true);
   };
 
   const handleSaveGoal = async () => {
-    const target = parseFloat(goalTargetInput);
-    const years = parseFloat(goalYearsInput);
-    if (!target || target <= 0) { showMsg('กรุณากรอกเป้ากำไร % ที่ถูกต้อง'); return; }
-    if (!years || years <= 0) { showMsg('กรุณากรอกกรอบเวลา (ปี) ที่ถูกต้อง'); return; }
+    const amount = parseFloat(goalTargetInput.replace(/,/g, ''));
+    if (!amount || amount <= 0) { showMsg('กรุณากรอกยอดเป้าหมายที่ถูกต้อง'); return; }
     try {
-      const newGoal: PortfolioGoal = {
-        targetReturnPercent: target,
-        targetDate: new Date(Date.now() + years * 365.25 * 24 * 60 * 60 * 1000).toISOString(),
-      };
+      const newGoal: PortfolioGoal = { targetAmount: amount };
       await savePortfolioGoal(newGoal);
       setGoal(newGoal);
       setGoalModalVisible(false);
@@ -345,16 +333,16 @@ export default function PortfolioScreen() {
 
           {!goalAnalysis ? (
             <Text style={styles.goalCardEmpty}>
-              ตั้งเป้ากำไรรวม + กรอบเวลา แล้วระบบจะวิเคราะห์ให้ว่าคุณมีแนวโน้มถึงเป้าไหม
+              ปักยอดพอร์ตที่อยากได้ แล้วระบบจะสรุปให้ว่าต้องโตปีละกี่ % (1/3/5/10 ปี) และคาดว่าจะถึงเป้าเมื่อไหร่
             </Text>
           ) : (
             <>
               <View style={styles.goalCardTopRow}>
                 <Text style={styles.goalCardSub}>
-                  เป้า +{goalAnalysis.targetReturnPercent}% • ตอนนี้ {goalAnalysis.currentReturnPercent >= 0 ? '+' : ''}{goalAnalysis.currentReturnPercent.toFixed(2)}%
+                  ถ้าขายตอนนี้ {formatCurrency(goalAnalysis.currentValue)}
                 </Text>
                 <Text style={styles.goalCardSub}>
-                  {goalAnalysis.reached ? 'ถึงเป้าแล้ว' : `ไปได้ ${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}%`}
+                  {goalAnalysis.reached ? 'ถึงเป้าแล้ว 🎉' : `ไปได้ ${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}%`}
                 </Text>
               </View>
               <View style={styles.goalTrack}>
@@ -368,26 +356,33 @@ export default function PortfolioScreen() {
                   ]}
                 />
               </View>
-              {/* คำวินิจฉัยจากระบบ */}
-              <Text
-                style={[
-                  styles.goalVerdict,
-                  goalAnalysis.verdict === 'reached' || goalAnalysis.verdict === 'on_track'
-                    ? { color: COLORS.success }
-                    : goalAnalysis.verdict === 'behind' || goalAnalysis.verdict === 'deadline_passed'
-                      ? { color: COLORS.error }
-                      : { color: COLORS.textSecondary },
-                ]}
-              >
-                {goalAnalysis.verdict === 'reached' && '🎉 ถึงเป้าแล้ว!'}
-                {goalAnalysis.verdict === 'on_track' &&
-                  `✅ มีแนวโน้มทันเป้า — พอร์ตโตจริงเฉลี่ยปีละ ~${goalAnalysis.actualAnnualReturnPercent!.toFixed(1)}% (ต้องการ ~${goalAnalysis.requiredAnnualReturnPercent!.toFixed(1)}%)`}
-                {goalAnalysis.verdict === 'behind' &&
-                  `⚠️ อาจไม่ทันเป้า — พอร์ตโตจริงเฉลี่ยปีละ ~${goalAnalysis.actualAnnualReturnPercent!.toFixed(1)}% แต่ต้องการ ~${goalAnalysis.requiredAnnualReturnPercent!.toFixed(1)}%`}
-                {goalAnalysis.verdict === 'deadline_passed' && '⏱ เลยกรอบเวลาแล้ว — ยังไม่ถึงเป้า'}
-                {goalAnalysis.verdict === 'too_new' &&
-                  `พอร์ตยังใหม่เกินไป ประเมินแนวโน้มยังไม่ได้ — จากนี้ต้องโตปีละ ~${goalAnalysis.requiredAnnualReturnPercent?.toFixed(1) ?? '-'}% (เหลือ ${goalAnalysis.yearsLeft.toFixed(1)} ปี)`}
+              <Text style={styles.goalCardSub}>
+                เป้า {formatCurrency(goalAnalysis.targetAmount)}
+                {!goalAnalysis.reached && ` • ขาดอีก ${formatCurrency(goalAnalysis.remaining)}`}
               </Text>
+
+              {!goalAnalysis.reached && goalAnalysis.requiredByHorizon.length > 0 && (
+                <View style={styles.horizonBox}>
+                  <Text style={styles.horizonHeader}>ต้องโตเฉลี่ยปีละ</Text>
+                  {goalAnalysis.requiredByHorizon.map((h) => (
+                    <View key={h.years} style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>ภายใน {h.years} ปี</Text>
+                      <Text style={styles.horizonRate}>~{h.annualReturnPercent.toFixed(1)}% / ปี</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* ประมาณการจากพาซจริงของพอร์ต */}
+              {!goalAnalysis.reached && (
+                <Text style={styles.goalVerdict}>
+                  {goalAnalysis.actualAnnualReturnPercent == null
+                    ? 'พอร์ตยังใหม่เกินไป ยังประเมินวันถึงเป้าไม่ได้'
+                    : goalAnalysis.projectedYearsToReach != null
+                      ? `📈 พาซปัจจุบันโตเฉลี่ยปีละ ~${goalAnalysis.actualAnnualReturnPercent.toFixed(1)}% → คาดถึงเป้าในอีก ~${goalAnalysis.projectedYearsToReach.toFixed(1)} ปี (≈ ${new Date(goalAnalysis.projectedDate!).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })})`
+                      : `⚠️ พอร์ตยังไม่โต (เฉลี่ยปีละ ~${goalAnalysis.actualAnnualReturnPercent.toFixed(1)}%) ยังคาดวันถึงเป้าไม่ได้`}
+                </Text>
+              )}
             </>
           )}
         </View>
@@ -456,22 +451,13 @@ export default function PortfolioScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>🎯 เป้าหมายพอร์ตรวม</Text>
-            <Text style={styles.modalLabel}>เป้ากำไรรวม (%)</Text>
+            <Text style={styles.modalLabel}>ยอดพอร์ตที่อยากได้ (บาท)</Text>
             <TextInput
               style={styles.modalInput}
               value={goalTargetInput}
               onChangeText={setGoalTargetInput}
               keyboardType="numeric"
-              placeholder="เช่น 15"
-              placeholderTextColor={COLORS.textSecondary}
-            />
-            <Text style={styles.modalLabel}>ภายในกี่ปี</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={goalYearsInput}
-              onChangeText={setGoalYearsInput}
-              keyboardType="numeric"
-              placeholder="เช่น 3"
+              placeholder="เช่น 1000000"
               placeholderTextColor={COLORS.textSecondary}
             />
             <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSaveGoal}>
@@ -622,8 +608,39 @@ const styles = StyleSheet.create({
   goalVerdict: {
     fontSize: 12,
     fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
     marginTop: 12,
     lineHeight: 18,
+  },
+  horizonBox: {
+    marginTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingTop: 10,
+  },
+  horizonHeader: {
+    fontSize: 10,
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: COLORS.textSecondary,
+    marginBottom: 6,
+  },
+  horizonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 3,
+  },
+  horizonYears: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  horizonRate: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
   },
   modalOverlay: {
     flex: 1,
