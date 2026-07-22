@@ -51,6 +51,7 @@ export default function PortfolioScreen() {
   const [goal, setGoal] = useState<PortfolioGoal | null>(null);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [goalTargetInput, setGoalTargetInput] = useState('');
+  const [goalExpectedInput, setGoalExpectedInput] = useState('');
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
@@ -71,14 +72,19 @@ export default function PortfolioScreen() {
 
   const openGoalModal = () => {
     setGoalTargetInput(goal?.targetAmount?.toString() || '');
+    setGoalExpectedInput(goal?.expectedAnnualReturnPercent?.toString() || '');
     setGoalModalVisible(true);
   };
 
   const handleSaveGoal = async () => {
     const amount = parseFloat(goalTargetInput.replace(/,/g, ''));
     if (!amount || amount <= 0) { showMsg('กรุณากรอกยอดเป้าหมายที่ถูกต้อง'); return; }
+    const expected = parseFloat(goalExpectedInput.replace(/,/g, ''));
     try {
-      const newGoal: PortfolioGoal = { targetAmount: amount };
+      const newGoal: PortfolioGoal = {
+        targetAmount: amount,
+        expectedAnnualReturnPercent: !isNaN(expected) && expected > 0 ? expected : undefined,
+      };
       await savePortfolioGoal(newGoal);
       setGoal(newGoal);
       setGoalModalVisible(false);
@@ -281,12 +287,8 @@ export default function PortfolioScreen() {
     ? analyzePortfolioGoal(goal, summary.totalValue, summary.totalCost, portfolioStartDate)
     : null;
 
-  return (
-    <View style={styles.container}>
-      <View style={[
-        styles.innerContainer,
-        isDesktop && styles.innerContainerDesktop,
-      ]}>
+  const listHeaderElement = (
+      <View>
         <View style={[
           styles.header,
           isDesktop && styles.headerDesktop,
@@ -387,14 +389,12 @@ export default function PortfolioScreen() {
                 </View>
               )}
 
-              {/* ประมาณการจากพาซจริงของพอร์ต */}
+              {/* ประมาณวันถึงเป้า — จาก % ที่ตั้งเอง หรือพาซจริง */}
               {!goalAnalysis.reached && (
                 <Text style={styles.goalVerdict}>
-                  {goalAnalysis.actualAnnualReturnPercent == null
-                    ? 'พอร์ตยังใหม่เกินไป ยังประเมินวันถึงเป้าไม่ได้'
-                    : goalAnalysis.projectedYearsToReach != null
-                      ? `📈 พาซปัจจุบันโตเฉลี่ยปีละ ~${goalAnalysis.actualAnnualReturnPercent.toFixed(1)}% → คาดถึงเป้าในอีก ~${goalAnalysis.projectedYearsToReach.toFixed(1)} ปี (≈ ${new Date(goalAnalysis.projectedDate!).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })})`
-                      : `⚠️ พอร์ตยังไม่โต (เฉลี่ยปีละ ~${goalAnalysis.actualAnnualReturnPercent.toFixed(1)}%) ยังคาดวันถึงเป้าไม่ได้`}
+                  {goalAnalysis.projectedYearsToReach != null
+                    ? `📈 ${goalAnalysis.projectionSource === 'user' ? 'ที่คาดโตปีละ' : 'พาซปัจจุบันโตเฉลี่ยปีละ'} ~${goalAnalysis.projectionRatePercent!.toFixed(1)}% → คาดถึงเป้าในอีก ~${goalAnalysis.projectedYearsToReach.toFixed(1)} ปี (≈ ${new Date(goalAnalysis.projectedDate!).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })})`
+                    : 'ใส่ "คาดโตปีละกี่ %" ในปุ่มแก้ไข เพื่อให้ระบบคำนวณว่าจะถึงเป้าในกี่ปี'}
                 </Text>
               )}
             </>
@@ -426,7 +426,15 @@ export default function PortfolioScreen() {
           <Text style={styles.listTitle}>รายการลงทุน</Text>
           <Text style={styles.tpNote}>* เป้าขายทำกำไรเป็นแนวทางทั่วไปตามประเภทสินทรัพย์</Text>
         </View>
+      </View>
+  );
 
+  return (
+    <View style={styles.container}>
+      <View style={[
+        styles.innerContainer,
+        isDesktop && styles.innerContainerDesktop,
+      ]}>
         {isDesktop ? (
           <FlatList
             data={investments}
@@ -437,6 +445,7 @@ export default function PortfolioScreen() {
             columnWrapperStyle={styles.flatListRow}
             style={styles.list}
             contentContainerStyle={styles.listContent}
+            ListHeaderComponent={listHeaderElement}
             ListEmptyComponent={
               <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
             }
@@ -449,6 +458,7 @@ export default function PortfolioScreen() {
             key="mobile-1col"
             style={styles.list}
             contentContainerStyle={styles.listContent}
+            ListHeaderComponent={listHeaderElement}
             ListEmptyComponent={
               <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
             }
@@ -473,6 +483,15 @@ export default function PortfolioScreen() {
               onChangeText={setGoalTargetInput}
               keyboardType="numeric"
               placeholder="เช่น 1000000"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+            <Text style={styles.modalLabel}>คาดว่าจะโตปีละกี่ % (ไม่บังคับ)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={goalExpectedInput}
+              onChangeText={setGoalExpectedInput}
+              keyboardType="numeric"
+              placeholder="เช่น 10 — เว้นว่างได้ ระบบจะใช้พาซจริงของพอร์ต"
               placeholderTextColor={COLORS.textSecondary}
             />
             <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSaveGoal}>

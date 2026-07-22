@@ -16,6 +16,7 @@ export const getPortfolioGoal = async (): Promise<PortfolioGoal | null> => {
   if (!data || data.target_amount == null) return null;
   return {
     targetAmount: data.target_amount,
+    expectedAnnualReturnPercent: data.expected_annual_return ?? undefined,
   };
 };
 
@@ -24,6 +25,7 @@ export const savePortfolioGoal = async (goal: PortfolioGoal): Promise<void> => {
   const { error } = await supabase.from('portfolio_goals').upsert({
     user_id: userId,
     target_amount: goal.targetAmount,
+    expected_annual_return: goal.expectedAnnualReturnPercent ?? null,
   });
   if (error) throw error;
 };
