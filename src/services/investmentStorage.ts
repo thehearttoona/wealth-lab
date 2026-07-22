@@ -20,6 +20,8 @@ const mapInvestmentFromDb = (row: any): Investment => ({
   buyDate: row.buy_date,
   notes: row.notes,
   fees: row.fees,
+  targetReturnPercent: row.target_return_percent ?? undefined,
+  targetDate: row.target_date ?? undefined,
 });
 
 const mapInvestmentToDb = (inv: Investment, userId: string) => ({
@@ -34,6 +36,8 @@ const mapInvestmentToDb = (inv: Investment, userId: string) => ({
   buy_date: inv.buyDate,
   notes: inv.notes,
   fees: inv.fees,
+  target_return_percent: inv.targetReturnPercent ?? null,
+  target_date: inv.targetDate ?? null,
   user_id: userId,
 });
 

@@ -23,6 +23,7 @@ import {
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, COLORS } from '../utils/constants';
 import { updateInvestmentPrice } from '../services/priceApi';
+import { getGoalProgress, getGoalProjection } from '../utils/investmentGoals';
 import { useResponsive } from '../utils/responsive';
 
 
@@ -138,6 +139,10 @@ export default function PortfolioScreen() {
     const profitPercent = cost > 0 ? (profit / cost) * 100 : 0;
     const isProfit = profit >= 0;
 
+    // เป้าหมายการลงทุน (ถ้าตั้งไว้)
+    const goalProgress = getGoalProgress(item, value, cost);
+    const goalProjection = getGoalProjection(item, value, cost);
+
     return (
       <View style={[
         styles.investmentItem,
@@ -174,6 +179,46 @@ export default function PortfolioScreen() {
             </Text>
           </View>
         </TouchableOpacity>
+
+        {goalProgress && (
+          <View style={styles.goalBox}>
+            <View style={styles.goalHeaderRow}>
+              <Text style={styles.goalTitle}>
+                🎯 เป้า +{goalProgress.targetReturnPercent}%
+              </Text>
+              {goalProgress.reached ? (
+                <Text style={[styles.goalStatus, { color: COLORS.success }]}>ถึงเป้าแล้ว 🎉</Text>
+              ) : (
+                <Text style={styles.goalStatus}>
+                  ไปได้ {Math.max(0, Math.min(100, goalProgress.progressRatio * 100)).toFixed(0)}%
+                </Text>
+              )}
+            </View>
+            {/* progress bar */}
+            <View style={styles.goalTrack}>
+              <View
+                style={[
+                  styles.goalFill,
+                  {
+                    width: `${Math.max(0, Math.min(100, goalProgress.progressRatio * 100))}%`,
+                    backgroundColor: goalProgress.reached ? COLORS.success : COLORS.primary,
+                  },
+                ]}
+              />
+            </View>
+            {/* ประมาณการ (ต้องโตปีละกี่ %) — แยกชัดว่าเป็นการคาดการณ์ */}
+            {goalProjection && !goalProgress.reached && (
+              <Text style={styles.goalProjection}>
+                {goalProjection.deadlinePassed
+                  ? '⏱ เลยกรอบเวลาที่ตั้งไว้แล้ว — ยังไม่ถึงเป้า'
+                  : goalProjection.requiredAnnualReturnPercent != null
+                    ? `ต้องโตเฉลี่ยปีละ ~${goalProjection.requiredAnnualReturnPercent.toFixed(1)}% จากราคาปัจจุบัน (เหลือ ${goalProjection.yearsLeft.toFixed(1)} ปี)`
+                    : ''}
+              </Text>
+            )}
+          </View>
+        )}
+
         <TouchableOpacity
           style={styles.deleteButton}
           onPress={() => handleDelete(item.id, item.name)}
@@ -398,6 +443,44 @@ const styles = StyleSheet.create({
   },
   profitNegative: {
     color: COLORS.error,
+  },
+  goalBox: {
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    paddingTop: 4,
+  },
+  goalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  goalTitle: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+  },
+  goalStatus: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.textSecondary,
+  },
+  goalTrack: {
+    height: 6,
+    backgroundColor: COLORS.border,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  goalFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  goalProjection: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 8,
+    lineHeight: 16,
   },
   actionButtons: {
     flexDirection: 'row',

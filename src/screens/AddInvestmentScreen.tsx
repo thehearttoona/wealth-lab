@@ -40,6 +40,8 @@ export default function AddInvestmentScreen() {
   const [currentPrice, setCurrentPrice] = useState('');
   const [fees, setFees] = useState('');
   const [notes, setNotes] = useState('');
+  const [targetReturn, setTargetReturn] = useState(''); // เป้ากำไร %
+  const [targetYears, setTargetYears] = useState('');    // ภายในกี่ปี
   const [isFetchingPrice, setIsFetchingPrice] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<CryptoSearchResult[]>([]);
@@ -58,6 +60,12 @@ export default function AddInvestmentScreen() {
       setCurrentPrice(investment.currentPrice?.toString() || '');
       setFees(investment.fees?.toString() || '');
       setNotes(investment.notes || '');
+      setTargetReturn(investment.targetReturnPercent?.toString() || '');
+      if (investment.targetDate) {
+        // แปลง targetDate กลับเป็น "เหลือกี่ปีจากวันนี้" (ปัดเป็นทศนิยม 1 ตำแหน่ง) เพื่อแสดงในฟอร์ม
+        const years = (new Date(investment.targetDate).getTime() - Date.now()) / (365.25 * 24 * 60 * 60 * 1000);
+        setTargetYears(years > 0 ? (Math.round(years * 10) / 10).toString() : '');
+      }
     }
   }, [investment]);
 
@@ -204,6 +212,11 @@ export default function AddInvestmentScreen() {
         buyDate: investment?.buyDate || new Date().toISOString(),
         fees: fees ? parseFloat(fees) : undefined,
         notes: notes.trim() || undefined,
+        targetReturnPercent: targetReturn.trim() ? parseFloat(targetReturn) : undefined,
+        targetDate:
+          targetReturn.trim() && targetYears.trim() && parseFloat(targetYears) > 0
+            ? new Date(Date.now() + parseFloat(targetYears) * 365.25 * 24 * 60 * 60 * 1000).toISOString()
+            : undefined,
       };
 
       if (isEditing) {
@@ -497,6 +510,37 @@ export default function AddInvestmentScreen() {
           </View>
         </View>
 
+        <Text style={styles.sectionHeader}>🎯 เป้าหมายการลงทุน (ไม่บังคับ)</Text>
+        <View style={styles.row}>
+          <View style={styles.halfWidth}>
+            <Text style={styles.label}>เป้ากำไร (%)</Text>
+            <TextInput
+              style={styles.input}
+              value={targetReturn}
+              onChangeText={setTargetReturn}
+              keyboardType="numeric"
+              placeholder="เช่น 10"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+          </View>
+          <View style={styles.halfWidth}>
+            <Text style={styles.label}>ภายในกี่ปี</Text>
+            <TextInput
+              style={styles.input}
+              value={targetYears}
+              onChangeText={setTargetYears}
+              keyboardType="numeric"
+              placeholder="เช่น 5"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+          </View>
+        </View>
+        {targetReturn.trim() !== '' && targetYears.trim() !== '' && parseFloat(targetYears) > 0 && (
+          <Text style={styles.goalHint}>
+            ตั้งเป้ากำไร {targetReturn}% ภายใน {targetYears} ปี — ระบบจะคำนวณให้ว่าต้องโตเฉลี่ยปีละกี่ % ถึงจะทันเป้า
+          </Text>
+        )}
+
         <Text style={styles.label}>บันทึกเพิ่มเติม</Text>
         <TextInput
           style={[styles.input, styles.textArea]}
@@ -556,6 +600,20 @@ const styles = StyleSheet.create({
   textArea: {
     minHeight: 100,
     paddingTop: 12,
+  },
+  sectionHeader: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+    marginTop: 32,
+    marginBottom: 4,
+  },
+  goalHint: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 12,
+    lineHeight: 18,
   },
   typeContainer: {
     flexGrow: 0,

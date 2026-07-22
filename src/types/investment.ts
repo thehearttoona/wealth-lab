@@ -14,6 +14,8 @@ export interface Investment {
   buyDate: string;       // วันที่ซื้อ
   notes?: string;        // บันทึกเพิ่มเติม
   fees?: number;         // ค่าธรรมเนียม
+  targetReturnPercent?: number; // เป้าหมายกำไร % (เช่น 10 = +10%)
+  targetDate?: string;   // วันที่ต้องการให้ถึงเป้า (ISO) — ใช้คำนวณ "ต้องโตปีละกี่ %"
 }
 
 export interface Transaction {
