@@ -310,6 +310,7 @@ const styles = StyleSheet.create({
   yearTextTop: {
     fontSize: 24,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
     minWidth: 140,
     textAlign: 'center',
@@ -339,6 +340,7 @@ const styles = StyleSheet.create({
   monthName: {
     fontSize: 16,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
     marginBottom: 8,
   },
@@ -349,6 +351,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#ffffff',
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     textAlign: 'center',
   },
   calendarContainer: {
@@ -426,6 +429,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   listContainer: {},
   monthItem: {
@@ -449,11 +453,13 @@ const styles = StyleSheet.create({
   monthItemName: {
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
     marginBottom: 4,
   },
   monthNotes: {
     fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     marginBottom: 8,
   },
@@ -465,6 +471,7 @@ const styles = StyleSheet.create({
   changeText: {
     fontSize: 12,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   monthRight: {
     alignItems: 'flex-end',
@@ -474,6 +481,7 @@ const styles = StyleSheet.create({
   monthAmount: {
     fontSize: 20,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
   },
   deleteButton: {
@@ -492,11 +500,13 @@ const styles = StyleSheet.create({
     color: '#d32f2f',
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   emptyText: {
     textAlign: 'center',
     color: COLORS.textSecondary,
     fontSize: 16,
+    fontFamily: 'NotoSansThai_300Light',
     marginTop: 32,
   },
   infoBox: {

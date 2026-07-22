@@ -177,6 +177,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#ffffff',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   content: {
     padding: 20,
@@ -189,6 +190,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.text,
     marginBottom: 8,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   input: {
     backgroundColor: COLORS.surface,
@@ -208,6 +210,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.primary,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   monthSelector: {
     flexDirection: 'row',
@@ -228,6 +231,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     minWidth: 180,
     textAlign: 'center',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   saveButton: {
     backgroundColor: COLORS.primary,
@@ -242,5 +246,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 18,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_400Regular',
   },
 });

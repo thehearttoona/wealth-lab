@@ -366,6 +366,7 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 14,
+    fontFamily: 'NotoSansThai_400Regular',
     color: '#ffffff',
     opacity: 0.9,
     marginBottom: 4,
@@ -373,6 +374,7 @@ const styles = StyleSheet.create({
   summaryValue: {
     fontSize: 32,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: '#ffffff',
     marginBottom: 8,
   },
@@ -384,10 +386,12 @@ const styles = StyleSheet.create({
   summaryProfit: {
     fontSize: 18,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   summaryPercent: {
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   profitPositive: {
     color: COLORS.success,
@@ -478,16 +482,19 @@ const styles = StyleSheet.create({
   typeName: {
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
     flex: 1,
   },
   typeCount: {
     fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
   },
   typeValue: {
     fontSize: 20,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
     marginBottom: 8,
   },
@@ -499,9 +506,11 @@ const styles = StyleSheet.create({
   typeProfit: {
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   typePercentage: {
     fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
   },
   listHeader: {
@@ -512,6 +521,7 @@ const styles = StyleSheet.create({
   listTitle: {
     fontSize: 18,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
   list: {
@@ -563,10 +573,12 @@ const styles = StyleSheet.create({
   investmentName: {
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
   investmentSymbol: {
     fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     marginTop: 2,
   },
@@ -575,11 +587,13 @@ const styles = StyleSheet.create({
   },
   investmentQuantity: {
     fontSize: 13,
+    fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     marginBottom: 2,
   },
   investmentCurrent: {
     fontSize: 13,
+    fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
   },
   investmentRight: {
@@ -590,17 +604,20 @@ const styles = StyleSheet.create({
   investmentValue: {
     fontSize: 18,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
     marginBottom: 4,
   },
   investmentProfit: {
     fontSize: 15,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     marginBottom: 2,
   },
   investmentPercent: {
     fontSize: 13,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   deleteButton: {
     padding: 12,
@@ -626,6 +643,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: COLORS.textSecondary,
     fontSize: 16,
+    fontFamily: 'NotoSansThai_300Light',
     marginTop: 32,
     lineHeight: 24,
   },

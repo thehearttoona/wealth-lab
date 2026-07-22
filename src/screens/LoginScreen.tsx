@@ -79,6 +79,7 @@ const styles = StyleSheet.create({
   logo: {
     fontSize: 28,
     fontWeight: '700',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
     textAlign: 'center',
     letterSpacing: 4,
@@ -86,6 +87,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 13,
+    fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     textAlign: 'center',
     marginBottom: 24,
@@ -192,5 +194,6 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: 'NotoSansThai_400Regular',
   },
 });

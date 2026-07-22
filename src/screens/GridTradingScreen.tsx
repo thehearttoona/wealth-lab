@@ -1016,6 +1016,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: COLORS.text,
     marginBottom: 12,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   statusRow: {
     flexDirection: 'row',
@@ -1033,6 +1034,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.success,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   accountInfo: {
     backgroundColor: COLORS.background,
@@ -1044,6 +1046,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text,
     marginBottom: 4,
+    fontFamily: 'NotoSansThai_300Light',
   },
   label: {
     fontSize: 14,
@@ -1051,6 +1054,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 6,
     marginTop: 4,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   input: {
     borderWidth: 1,
@@ -1118,6 +1122,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.primary,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   activeDirectionText: {
     color: '#fff',
@@ -1158,6 +1163,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     letterSpacing: 0.5,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   disabledButton: {
     opacity: 0.5,
@@ -1166,6 +1172,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   positionsHeader: {
     flexDirection: 'column',
@@ -1195,6 +1202,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   closeAllButton: {
     backgroundColor: COLORS.error,
@@ -1206,6 +1214,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   totalProfitCard: {
     flexDirection: 'row',
@@ -1220,16 +1229,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   totalProfitValue: {
     fontSize: 20,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   emptyText: {
     textAlign: 'center',
     color: COLORS.textSecondary,
     fontSize: 14,
     paddingVertical: 20,
+    fontFamily: 'NotoSansThai_300Light',
   },
   positionCard: {
     backgroundColor: COLORS.background,
@@ -1247,15 +1259,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   positionProfit: {
     fontSize: 16,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   positionDetail: {
     fontSize: 13,
     color: COLORS.textSecondary,
     marginBottom: 2,
+    fontFamily: 'NotoSansThai_300Light',
   },
   subSectionTitle: {
     fontSize: 15,
@@ -1263,6 +1278,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 8,
     marginTop: 4,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   pendingCard: {
     backgroundColor: '#2A2210',
@@ -1273,6 +1289,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#FFB74D',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   warningCard: {
     backgroundColor: '#2A1F0E',
@@ -1294,6 +1311,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#42A5F5',
     lineHeight: 18,
+    fontFamily: 'NotoSansThai_300Light',
   },
   lotPreview: {
     backgroundColor: COLORS.background,
@@ -1306,10 +1324,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.text,
     marginBottom: 4,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   lotPreviewText: {
     fontSize: 12,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_300Light',
   },
   dropdownButton: {
     flexDirection: 'row',
@@ -1326,10 +1346,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text,
     fontWeight: '500',
+    fontFamily: 'NotoSansThai_300Light',
   },
   dropdownArrow: {
     fontSize: 12,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   modalOverlay: {
     flex: 1,
@@ -1355,11 +1377,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   modalClose: {
     fontSize: 24,
     color: COLORS.textSecondary,
     fontWeight: '300',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   searchInput: {
     margin: 16,
@@ -1391,6 +1415,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '500',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_300Light',
   },
   symbolListTextActive: {
     color: '#fff',
@@ -1400,12 +1425,14 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#fff',
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   symbolCount: {
     textAlign: 'center',
     padding: 12,
     color: COLORS.textSecondary,
     fontSize: 13,
+    fontFamily: 'NotoSansThai_300Light',
   },
   autoOpenContainer: {
     flexDirection: 'row',
@@ -1430,6 +1457,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     textAlign: 'center',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   // Trade History Styles
   historyHeader: {
@@ -1441,6 +1469,7 @@ const styles = StyleSheet.create({
   expandIcon: {
     fontSize: 14,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   statsContainer: {
     marginBottom: 12,
@@ -1462,11 +1491,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.textSecondary,
     marginBottom: 4,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   statValue: {
     fontSize: 14,
     fontWeight: 'bold',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   historyCard: {
     backgroundColor: COLORS.background,
@@ -1491,19 +1522,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   historyProfit: {
     fontSize: 15,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   historyDetail: {
     fontSize: 12,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_300Light',
   },
   historyDate: {
     fontSize: 11,
     color: COLORS.textSecondary,
     marginTop: 4,
+    fontFamily: 'NotoSansThai_300Light',
   },
   clearHistoryButton: {
     backgroundColor: '#3A2020',
@@ -1516,5 +1551,6 @@ const styles = StyleSheet.create({
     color: COLORS.error,
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: 'NotoSansThai_400Regular',
   },
 });

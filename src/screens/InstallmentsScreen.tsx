@@ -158,14 +158,14 @@ const styles = StyleSheet.create({
     fontSize: 10, letterSpacing: 1, textTransform: 'uppercase',
     fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary, marginBottom: 8,
   },
-  estimateValue: { fontSize: 22, fontWeight: 'bold', color: COLORS.text },
-  estimateSub: { fontSize: 11, color: COLORS.textSecondary, marginTop: 4 },
+  estimateValue: { fontSize: 22, fontWeight: 'bold', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  estimateSub: { fontSize: 11, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary, marginTop: 4 },
 
   addButton: {
     backgroundColor: COLORS.primary, borderRadius: 0, padding: 16,
     alignItems: 'center', flexDirection: 'row', justifyContent: 'center', marginBottom: 20,
   },
-  addButtonText: { color: '#ffffff', fontSize: 16, fontWeight: '600' },
+  addButtonText: { color: '#ffffff', fontSize: 16, fontWeight: '600', fontFamily: 'NotoSansThai_600SemiBold' },
 
   sectionTitle: {
     fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase',
@@ -179,16 +179,16 @@ const styles = StyleSheet.create({
   },
   planContent: { flex: 1, padding: 16, flexDirection: 'row', justifyContent: 'space-between' },
   planLeft: { flex: 1 },
-  planName: { fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 4 },
-  planCategory: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 4 },
-  planProgress: { fontSize: 12, color: COLORS.accent },
+  planName: { fontSize: 16, fontWeight: '600', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, marginBottom: 4 },
+  planCategory: { fontSize: 12, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary, marginBottom: 4 },
+  planProgress: { fontSize: 12, fontFamily: 'NotoSansThai_300Light', color: COLORS.accent },
   planRight: { alignItems: 'flex-end', justifyContent: 'center' },
-  planAmount: { fontSize: 18, fontWeight: 'bold', color: COLORS.primary },
-  planAmountSub: { fontSize: 11, color: COLORS.textSecondary },
+  planAmount: { fontSize: 18, fontWeight: 'bold', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.primary },
+  planAmountSub: { fontSize: 11, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary },
   deleteButton: {
     padding: 16, justifyContent: 'center', alignItems: 'center',
     borderLeftWidth: 1, borderLeftColor: COLORS.border,
   },
 
-  emptyText: { textAlign: 'center', color: COLORS.textSecondary, fontSize: 14, marginTop: 24, marginBottom: 8 },
+  emptyText: { textAlign: 'center', color: COLORS.textSecondary, fontSize: 14, fontFamily: 'NotoSansThai_300Light', marginTop: 24, marginBottom: 8 },
 });

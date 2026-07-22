@@ -559,6 +559,7 @@ const styles = StyleSheet.create({
   typeText: {
     fontSize: 16,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
   typeTextSelected: {
@@ -623,6 +624,7 @@ const styles = StyleSheet.create({
   pnlValue: {
     fontSize: 20,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   profitPositive: {
     color: COLORS.success,
@@ -652,6 +654,7 @@ const styles = StyleSheet.create({
   assetTypeText: {
     fontSize: 12,
     fontWeight: '400',
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.text,
   },
   assetTypeTextActive: {
@@ -716,6 +719,7 @@ const styles = StyleSheet.create({
   pipsValue: {
     fontSize: 18,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   saveButton: {
     backgroundColor: COLORS.primary,

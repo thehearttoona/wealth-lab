@@ -322,6 +322,7 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#ffffff',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   statsContainer: {
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
@@ -349,11 +350,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   statValue: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#ffffff',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   filterContainer: {
     flexDirection: 'row',
@@ -381,6 +384,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   filterButtonTextActive: {
     color: '#ffffff',
@@ -399,6 +403,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   listContent: {
     padding: 16,
@@ -435,6 +440,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   typeBadge: {
     paddingHorizontal: 8,
@@ -451,6 +457,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
     color: '#ffffff',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   statusBadge: {
     paddingHorizontal: 8,
@@ -470,10 +477,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
     color: '#ffffff',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   orderName: {
     fontSize: 14,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_300Light',
   },
   orderDetails: {
     gap: 4,
@@ -481,6 +490,7 @@ const styles = StyleSheet.create({
   orderInfo: {
     fontSize: 13,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_300Light',
   },
   orderRight: {
     alignItems: 'flex-end',
@@ -491,18 +501,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: COLORS.text,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   orderDate: {
     fontSize: 12,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_300Light',
   },
   orderPnL: {
     fontSize: 18,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   exitPrice: {
     fontSize: 12,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_300Light',
   },
   profitPositive: {
     color: COLORS.success,
@@ -520,11 +534,13 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
     color: '#ffffff',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   orderPips: {
     fontSize: 13,
     fontWeight: '600',
     marginTop: 2,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   deleteButton: {
     padding: 12,
@@ -542,11 +558,13 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   emptyText: {
     textAlign: 'center',
     color: COLORS.textSecondary,
     fontSize: 16,
     marginTop: 32,
+    fontFamily: 'NotoSansThai_300Light',
   },
 });

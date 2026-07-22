@@ -653,6 +653,7 @@ const styles = StyleSheet.create({
   directionBtnText: {
     fontSize: 14,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
   },
   directionBtnTextActive: {
@@ -672,6 +673,7 @@ const styles = StyleSheet.create({
   },
   inputHint: {
     fontSize: 10,
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
     opacity: 0.7,
   },
@@ -723,6 +725,7 @@ const styles = StyleSheet.create({
   },
   resultSubValue: {
     fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
     marginTop: 1,
   },
@@ -771,6 +774,7 @@ const styles = StyleSheet.create({
   orderBtnText: {
     fontSize: 16,
     fontWeight: '700',
+    fontFamily: 'NotoSansThai_400Regular',
     color: '#fff',
     letterSpacing: 1,
   },
@@ -792,6 +796,7 @@ const styles = StyleSheet.create({
   },
   dcaIndex: {
     fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
     width: 16,
     textAlign: 'center',

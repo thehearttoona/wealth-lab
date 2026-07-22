@@ -281,10 +281,12 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: '#ffffff',
   },
   headerSubtitle: {
     fontSize: 14,
+    fontFamily: 'NotoSansThai_300Light',
     color: 'rgba(255, 255, 255, 0.8)',
     marginLeft: 44,
   },
@@ -301,12 +303,14 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 14,
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
     marginBottom: 8,
   },
   summaryValue: {
     fontSize: 36,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     marginBottom: 16,
   },
   summaryRow: {
@@ -320,11 +324,13 @@ const styles = StyleSheet.create({
   },
   summaryItemLabel: {
     fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
   },
   summaryItemValue: {
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
   section: {
@@ -340,6 +346,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
   row: {
@@ -363,17 +370,20 @@ const styles = StyleSheet.create({
   },
   cardLabel: {
     fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
     marginBottom: 4,
   },
   cardValue: {
     fontSize: 18,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
   cardSubValue: {
     fontSize: 13,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     marginTop: 4,
   },
   investmentCard: {
@@ -394,16 +404,19 @@ const styles = StyleSheet.create({
   },
   investmentLabel: {
     fontSize: 14,
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
   },
   investmentValue: {
     fontSize: 20,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
   investmentCount: {
     fontSize: 16,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
   investmentProfit: {
@@ -416,11 +429,13 @@ const styles = StyleSheet.create({
   },
   investmentProfitLabel: {
     fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
   },
   investmentProfitValue: {
     fontSize: 18,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   positive: {
     color: COLORS.success,

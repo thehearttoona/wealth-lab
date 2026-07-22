@@ -271,6 +271,7 @@ const sidebarStyles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.textSecondary,
     fontWeight: '400',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   navTextActive: {
     color: COLORS.primary,

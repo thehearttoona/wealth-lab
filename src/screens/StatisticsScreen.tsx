@@ -186,6 +186,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 16,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_300Light',
   },
   header: {
     backgroundColor: COLORS.primary,
@@ -200,12 +201,14 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#ffffff',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   headerSubtitle: {
     fontSize: 14,
     color: '#ffffff',
     opacity: 0.9,
     marginTop: 4,
+    fontFamily: 'NotoSansThai_300Light',
   },
   refreshButton: {
     margin: 16,
@@ -220,6 +223,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.primary,
     fontWeight: '600',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   content: {
     padding: 16,
@@ -235,10 +239,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#ffffff',
     textAlign: 'center',
+    fontFamily: 'NotoSansThai_300Light',
   },
   summaryCount: {
     fontSize: 20,
     fontWeight: 'bold',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   insightsGridDesktop: {
     flexDirection: 'row',
@@ -269,17 +275,20 @@ const styles = StyleSheet.create({
   },
   insightIcon: {
     fontSize: 24,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   insightTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     flex: 1,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   insightMessage: {
     fontSize: 15,
     color: COLORS.text,
     lineHeight: 22,
     marginBottom: 8,
+    fontFamily: 'NotoSansThai_300Light',
   },
   actionableContainer: {
     backgroundColor: 'rgba(30, 55, 80, 0.7)',
@@ -292,11 +301,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.text,
     marginBottom: 4,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   actionableText: {
     fontSize: 14,
     color: COLORS.text,
     lineHeight: 20,
+    fontFamily: 'NotoSansThai_300Light',
   },
   savingContainer: {
     backgroundColor: COLORS.success,
@@ -309,6 +320,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
     textAlign: 'center',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   emptyContainer: {
     alignItems: 'center',
@@ -317,18 +329,21 @@ const styles = StyleSheet.create({
   emptyIcon: {
     fontSize: 64,
     marginBottom: 16,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   emptyTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: COLORS.text,
     marginBottom: 8,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   emptyText: {
     fontSize: 16,
     color: COLORS.textSecondary,
     textAlign: 'center',
     lineHeight: 24,
+    fontFamily: 'NotoSansThai_300Light',
   },
   bottomRowDesktop: {
     flexDirection: 'row',
@@ -349,11 +364,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#7986CB',
     marginBottom: 8,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   infoText: {
     fontSize: 14,
     color: '#7986CB',
     lineHeight: 22,
+    fontFamily: 'NotoSansThai_300Light',
   },
   tipBox: {
     backgroundColor: '#2A2210',
@@ -366,10 +383,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFB74D',
     marginBottom: 8,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   tipText: {
     fontSize: 14,
     color: '#FFB74D',
     lineHeight: 20,
+    fontFamily: 'NotoSansThai_300Light',
   },
 });
