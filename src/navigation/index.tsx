@@ -5,7 +5,7 @@ import LoginScreen from '../screens/LoginScreen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import Svg, { G, Path } from 'react-native-svg';
 
 function HomeIcon({ size = 24, color = '#000' }: { size?: number; color?: string }) {
@@ -69,7 +69,7 @@ function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPre
             >
               {item.customIcon
                 ? item.customIcon(16, isActive ? COLORS.primary : COLORS.textSecondary)
-                : <MaterialCommunityIcons name={(isActive ? item.icon : item.iconOutline) as any} size={16} color={isActive ? COLORS.primary : COLORS.textSecondary} />
+                : <Ionicons name={(isActive ? item.icon : item.iconOutline) as any} size={16} color={isActive ? COLORS.primary : COLORS.textSecondary} />
               }
               <Text style={[sidebarStyles.navText, isActive && sidebarStyles.navTextActive]}>
                 {item.title}
@@ -128,7 +128,7 @@ function MobileTabNavigator() {
             tabBarIcon: ({ color, size, focused }) =>
               item.customIcon
                 ? item.customIcon(size, color)
-                : <MaterialCommunityIcons name={(focused ? item.icon : item.iconOutline) as any} size={size} color={color} />,
+                : <Ionicons name={(focused ? item.icon : item.iconOutline) as any} size={size} color={color} />,
           }}
         />
       ))}
@@ -182,7 +182,7 @@ export default function Navigation() {
             headerBackTitleVisible: false,
             headerLeft: () => (
               <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
-                <FontAwesome name="chevron-left" size={16} color="#ffffff" />
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
               </TouchableOpacity>
             ),
           })}

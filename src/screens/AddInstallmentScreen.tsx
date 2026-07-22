@@ -9,7 +9,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, InstallmentPlan } from '../types';
@@ -189,11 +189,11 @@ export default function AddInstallmentScreen() {
         <Text style={styles.label}>เริ่มงวดแรกเดือนไหน</Text>
         <View style={styles.monthNavigator}>
           <TouchableOpacity onPress={() => setStartMonth((m) => addMonths(m, -1))} style={styles.monthNavBtn}>
-            <FontAwesome name="chevron-left" size={16} color={COLORS.primary} />
+            <Ionicons name="chevron-back" size={16} color={COLORS.primary} />
           </TouchableOpacity>
           <Text style={styles.monthNavigatorLabel}>{formatMonthLabel(startMonth)}</Text>
           <TouchableOpacity onPress={() => setStartMonth((m) => addMonths(m, 1))} style={styles.monthNavBtn}>
-            <FontAwesome name="chevron-right" size={16} color={COLORS.primary} />
+            <Ionicons name="chevron-forward" size={16} color={COLORS.primary} />
           </TouchableOpacity>
         </View>
 

@@ -9,7 +9,7 @@ import {
   Platform,
   Modal,
 } from 'react-native';
-import { FontAwesome, Ionicons, AntDesign } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, DateData } from 'react-native-calendars';
@@ -410,8 +410,8 @@ export default function HomeScreen() {
       <TouchableOpacity key={item.id} style={[styles.expenseItem, isSelected && styles.itemSelected]} onPress={onPress} activeOpacity={0.7}>
         <View style={styles.expenseContent}>
           {expenseSelectMode && (
-            <FontAwesome
-              name={isSelected ? 'check-circle' : 'circle-o'}
+            <Ionicons
+              name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
               size={18}
               color={isSelected ? COLORS.error : COLORS.textSecondary}
               style={{ marginRight: 14 }}
@@ -449,8 +449,8 @@ export default function HomeScreen() {
       <TouchableOpacity key={item.id} style={[styles.expenseItem, isSelected && styles.itemSelected]} onPress={onPress} activeOpacity={0.7}>
         <View style={styles.expenseContent}>
           {incomeSelectMode && (
-            <FontAwesome
-              name={isSelected ? 'check-circle' : 'circle-o'}
+            <Ionicons
+              name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
               size={18}
               color={isSelected ? COLORS.error : COLORS.textSecondary}
               style={{ marginRight: 14 }}
@@ -494,15 +494,15 @@ export default function HomeScreen() {
         {/* header */}
         <View style={styles.weekHeader}>
           <TouchableOpacity onPress={() => navigateWeek(-1)} style={styles.weekNavBtn}>
-            <FontAwesome name="chevron-left" size={11} color={COLORS.text} />
+            <Ionicons name="chevron-back" size={11} color={COLORS.text} />
           </TouchableOpacity>
           <Text style={styles.weekMonthLabel}>{monthLabel}</Text>
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
             <TouchableOpacity onPress={() => navigateWeek(1)} style={styles.weekNavBtn}>
-              <FontAwesome name="chevron-right" size={11} color={COLORS.text} />
+              <Ionicons name="chevron-forward" size={11} color={COLORS.text} />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setViewMode('month')} style={styles.viewToggleBtn}>
-              <FontAwesome name="calendar" size={12} color={COLORS.textSecondary} />
+              <Ionicons name="calendar-outline" size={12} color={COLORS.textSecondary} />
               <Text style={styles.viewToggleText}>Month</Text>
             </TouchableOpacity>
           </View>
@@ -769,7 +769,7 @@ export default function HomeScreen() {
         {!isDesktop && (
           <TouchableOpacity style={styles.weekTableToggle} onPress={() => setShowWeekTable(v => !v)}>
             <Text style={styles.weekTableToggleText}>Weekly Summary</Text>
-            <FontAwesome name={showWeekTable ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
+            <Ionicons name={showWeekTable ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
           </TouchableOpacity>
         )}
         {(isDesktop || showWeekTable) ? <View style={styles.weekTableContainer}>
@@ -818,7 +818,7 @@ export default function HomeScreen() {
       <View style={[styles.recurringBillsSection, isDesktop && styles.recurringBillsSectionDesktop]}>
         <View style={styles.sectionHeader}>
           <View style={styles.sectionTitleContainer}>
-            <FontAwesome name="credit-card" size={16} color={COLORS.text} />
+            <Ionicons name="card-outline" size={16} color={COLORS.text} />
             <Text style={styles.sectionTitle}> Recurring Bills</Text>
           </View>
           <Text style={styles.monthlyTotal}>{formatCurrency(totalMonthlyBills)}</Text>
@@ -840,7 +840,7 @@ export default function HomeScreen() {
                     <View style={styles.billLeft}>
                       <Text style={styles.billName}>{bill.name}</Text>
                       <View style={styles.billInfoRow}>
-                        <FontAwesome name="calendar" size={10} color={COLORS.textSecondary} />
+                        <Ionicons name="calendar-outline" size={10} color={COLORS.textSecondary} />
                         <Text style={styles.billDueDate}>
                           {' '}{recordedCount} month{recordedCount !== 1 ? 's' : ''} recorded
                         </Text>
@@ -858,7 +858,7 @@ export default function HomeScreen() {
                     style={styles.billDeleteButton}
                     onPress={() => handleDeleteBill(bill.id)}
                   >
-                    <FontAwesome name="trash" size={12} color={COLORS.textSecondary} />
+                    <Ionicons name="trash-outline" size={12} color={COLORS.textSecondary} />
                     <Text style={styles.billDeleteText}> Delete</Text>
                   </TouchableOpacity>
                 </View>
@@ -873,7 +873,7 @@ export default function HomeScreen() {
           style={[styles.button, styles.buttonSecondary]}
           onPress={() => navigation.navigate('AddExpense', { type: 'recurring' })}
         >
-          <FontAwesome name="plus-circle" size={16} color={COLORS.primary} />
+          <Ionicons name="add-circle-outline" size={16} color={COLORS.primary} />
           <Text style={styles.buttonSecondaryText}> Add Recurring Bill</Text>
         </TouchableOpacity>
 
@@ -881,7 +881,7 @@ export default function HomeScreen() {
           style={[styles.button, styles.buttonSecondary]}
           onPress={() => navigation.navigate('Installments')}
         >
-          <FontAwesome name="calendar-check-o" size={16} color={COLORS.accent} />
+          <Ionicons name="calendar-outline" size={16} color={COLORS.accent} />
           <Text style={styles.buttonSecondaryText}> ค่าใช้จ่ายผ่อนชำระ / ประมาณการเดือนหน้า</Text>
         </TouchableOpacity>
       </View>
@@ -915,7 +915,7 @@ export default function HomeScreen() {
               </>
             )}
             <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.topBarLogout}>
-              <AntDesign name="logout" size={14} color={COLORS.textSecondary} />
+              <Ionicons name="log-out-outline" size={14} color={COLORS.textSecondary} />
               <Text style={{ color: COLORS.text, fontSize: 12, fontFamily: 'NotoSansThai_400Regular' }}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -1020,14 +1020,14 @@ export default function HomeScreen() {
             <View style={styles.listHeader}>
               <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => setShowIncomeList(v => !v)}>
                 <Text style={styles.listTitle}>Income ({filteredIncomes.length})</Text>
-                <FontAwesome name={showIncomeList ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
+                <Ionicons name={showIncomeList ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
               </TouchableOpacity>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 {incomeSelectMode ? (
                   <>
                     {selectedIncomeIds.size > 0 && (
                       <TouchableOpacity onPress={handleDeleteSelectedIncomes} style={styles.deleteSelectedBtn}>
-                        <FontAwesome name="trash" size={12} color={COLORS.error} />
+                        <Ionicons name="trash-outline" size={12} color={COLORS.error} />
                         <Text style={styles.deleteSelectedText}>Delete ({selectedIncomeIds.size})</Text>
                       </TouchableOpacity>
                     )}
@@ -1038,7 +1038,7 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <TouchableOpacity onPress={() => setIncomeSelectMode(true)} style={styles.selectModeBtn}>
-                      <FontAwesome name="check-square-o" size={13} color={COLORS.textSecondary} />
+                      <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
                       <Text style={styles.selectModeText}>Select</Text>
                     </TouchableOpacity>
                     <Text style={styles.incomeTotalText}>{formatCurrency(filteredIncomes.reduce((s, i) => s + i.amount, 0))}</Text>
@@ -1061,14 +1061,14 @@ export default function HomeScreen() {
                 ? `This Week · ${filteredExpenses.length} items`
                 : `Expenses (${filteredExpenses.length})`}
             </Text>
-            <FontAwesome name={showExpenseList ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
+            <Ionicons name={showExpenseList ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             {expenseSelectMode ? (
               <>
                 {selectedExpenseIds.size > 0 && (
                   <TouchableOpacity onPress={handleDeleteSelectedExpenses} style={styles.deleteSelectedBtn}>
-                    <FontAwesome name="trash" size={12} color={COLORS.error} />
+                    <Ionicons name="trash-outline" size={12} color={COLORS.error} />
                     <Text style={styles.deleteSelectedText}>Delete ({selectedExpenseIds.size})</Text>
                   </TouchableOpacity>
                 )}
@@ -1079,7 +1079,7 @@ export default function HomeScreen() {
             ) : (
               <>
                 <TouchableOpacity onPress={() => setExpenseSelectMode(true)} style={styles.selectModeBtn}>
-                  <FontAwesome name="check-square-o" size={13} color={COLORS.textSecondary} />
+                  <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
                   <Text style={styles.selectModeText}>Select</Text>
                 </TouchableOpacity>
                 <Text style={styles.expenseTotalText}>{formatCurrency(filteredExpenses.reduce((s, e) => s + e.amount, 0))}</Text>

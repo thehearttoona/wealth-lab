@@ -9,7 +9,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, DateData } from 'react-native-calendars';
@@ -133,7 +133,7 @@ export default function AddIncomeScreen() {
         {/* ── Header ── */}
         <View style={styles.header}>
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-            <FontAwesome name="chevron-left" size={16} color="#ffffff" />
+            <Ionicons name="chevron-back" size={16} color="#ffffff" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>
             {isEditing ? 'แก้ไขรายรับ' : 'เพิ่มรายรับ'}
@@ -196,7 +196,7 @@ export default function AddIncomeScreen() {
               onPress={() => setShowCalendar(!showCalendar)}
             >
               <Text style={styles.dateBtnText}> {formatDateLabel(date)}</Text>
-              <FontAwesome
+              <Ionicons
                 name={showCalendar ? 'chevron-up' : 'chevron-down'}
                 size={10}
                 color={COLORS.textSecondary}
@@ -222,7 +222,7 @@ export default function AddIncomeScreen() {
           <View style={styles.field}>
             <Text style={styles.label}>เวลา</Text>
             <View style={styles.timeRow}>
-              <FontAwesome name="clock-o" size={15} color={COLORS.accent} style={styles.timeIcon} />
+              <Ionicons name="time-outline" size={15} color={COLORS.accent} style={styles.timeIcon} />
               <TextInput
                 style={styles.timeInput}
                 value={time}
@@ -244,7 +244,7 @@ export default function AddIncomeScreen() {
 
           {isEditing && (
             <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
-              <FontAwesome name="trash" size={14} color={COLORS.error} />
+              <Ionicons name="trash-outline" size={14} color={COLORS.error} />
               <Text style={styles.deleteBtnText}> ลบรายรับ</Text>
             </TouchableOpacity>
           )}

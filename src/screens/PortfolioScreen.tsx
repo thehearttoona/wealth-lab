@@ -12,7 +12,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -294,7 +294,7 @@ export default function PortfolioScreen() {
           isDesktop && styles.headerDesktop,
         ]}>
           <View style={styles.headerTitleContainer}>
-            <MaterialCommunityIcons name="briefcase" size={24} color="#ffffff" />
+            <Ionicons name="briefcase-outline" size={24} color="#ffffff" />
             <Text style={styles.headerTitle}> พอร์ตการลงทุน</Text>
           </View>
           <View style={styles.summaryContainer}>

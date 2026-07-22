@@ -6,7 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
-import { Ionicons, FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -105,7 +105,7 @@ export default function OverviewScreen() {
         {isDesktop ? (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <FontAwesome name="credit-card" size={20} color={COLORS.primary} />
+              <Ionicons name="card-outline" size={20} color={COLORS.primary} />
               <Text style={styles.sectionTitle}>สรุปทั้งหมด</Text>
             </View>
             <View style={[styles.row, { gap: 24 }]}>
@@ -114,7 +114,7 @@ export default function OverviewScreen() {
                 onPress={() => navigation.navigate('ExpenseTracking')}
               >
                 <View style={styles.cardIcon}>
-                  <FontAwesome name="calendar" size={24} color={COLORS.primary} />
+                  <Ionicons name="calendar-outline" size={24} color={COLORS.primary} />
                 </View>
                 <Text style={styles.cardLabel}>รายจ่ายรายวัน</Text>
                 <Text style={styles.cardValue}>{formatCurrency(totalExpenses)}</Text>
@@ -124,7 +124,7 @@ export default function OverviewScreen() {
                 onPress={() => navigation.navigate('ExpenseTracking')}
               >
                 <View style={styles.cardIcon}>
-                  <FontAwesome name="repeat" size={24} color={COLORS.primary} />
+                  <Ionicons name="repeat" size={24} color={COLORS.primary} />
                 </View>
                 <Text style={styles.cardLabel}>รายจ่ายรายเดือน</Text>
                 <Text style={styles.cardValue}>{formatCurrency(monthlyBills)}</Text>
@@ -134,7 +134,7 @@ export default function OverviewScreen() {
                 onPress={() => navigation.navigate('Portfolio')}
               >
                 <View style={styles.cardIcon}>
-                  <FontAwesome name="briefcase" size={24} color={COLORS.primary} />
+                  <Ionicons name="briefcase-outline" size={24} color={COLORS.primary} />
                 </View>
                 <Text style={styles.cardLabel}>การลงทุน</Text>
                 <Text style={styles.cardValue}>{formatCurrency(portfolioValue)}</Text>
@@ -168,7 +168,7 @@ export default function OverviewScreen() {
             {/* รายจ่าย */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <FontAwesome name="credit-card" size={20} color={COLORS.primary} />
+                <Ionicons name="card-outline" size={20} color={COLORS.primary} />
                 <Text style={styles.sectionTitle}>รายจ่าย</Text>
               </View>
               <View style={styles.row}>
@@ -177,7 +177,7 @@ export default function OverviewScreen() {
                   onPress={() => navigation.navigate('ExpenseTracking')}
                 >
                   <View style={styles.cardIcon}>
-                    <FontAwesome name="calendar" size={24} color={COLORS.primary} />
+                    <Ionicons name="calendar-outline" size={24} color={COLORS.primary} />
                   </View>
                   <Text style={styles.cardLabel}>รายวัน</Text>
                   <Text style={styles.cardValue}>{formatCurrency(totalExpenses)}</Text>
@@ -187,7 +187,7 @@ export default function OverviewScreen() {
                   onPress={() => navigation.navigate('ExpenseTracking')}
                 >
                   <View style={styles.cardIcon}>
-                    <FontAwesome name="repeat" size={24} color={COLORS.primary} />
+                    <Ionicons name="repeat" size={24} color={COLORS.primary} />
                   </View>
                   <Text style={styles.cardLabel}>รายเดือน</Text>
                   <Text style={styles.cardValue}>{formatCurrency(monthlyBills)}</Text>
@@ -198,7 +198,7 @@ export default function OverviewScreen() {
             {/* การลงทุน */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <FontAwesome name="briefcase" size={20} color={COLORS.primary} />
+                <Ionicons name="briefcase-outline" size={20} color={COLORS.primary} />
                 <Text style={styles.sectionTitle}>การลงทุน</Text>
               </View>
               <TouchableOpacity

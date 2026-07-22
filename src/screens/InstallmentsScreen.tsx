@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, InstallmentPlan } from '../types';
@@ -97,7 +97,7 @@ export default function InstallmentsScreen() {
           </View>
         </TouchableOpacity>
         <TouchableOpacity style={styles.deleteButton} onPress={() => handleDelete(plan.id)}>
-          <FontAwesome name="trash" size={14} color="#d32f2f" />
+          <Ionicons name="trash-outline" size={14} color="#d32f2f" />
         </TouchableOpacity>
       </View>
     );
@@ -120,7 +120,7 @@ export default function InstallmentsScreen() {
         </View>
 
         <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('AddInstallment', {})}>
-          <FontAwesome name="plus-circle" size={18} color="#ffffff" />
+          <Ionicons name="add-circle-outline" size={18} color="#ffffff" />
           <Text style={styles.addButtonText}> เพิ่มรายการผ่อน/ค่าใช้จ่าย</Text>
         </TouchableOpacity>
 

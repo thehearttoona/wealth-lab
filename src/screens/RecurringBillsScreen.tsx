@@ -9,7 +9,7 @@ import {
   Alert,
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
-import { FontAwesome, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, MonthlySummary } from '../types';
@@ -209,11 +209,11 @@ export default function RecurringBillsScreen() {
       ]}>
         <View style={styles.yearSelectorTop}>
           <TouchableOpacity onPress={() => setSelectedYear(selectedYear - 1)} style={styles.yearButton}>
-            <FontAwesome name="chevron-left" size={24} color={COLORS.primary} />
+            <Ionicons name="chevron-back" size={24} color={COLORS.primary} />
           </TouchableOpacity>
           <Text style={styles.yearTextTop}>ปี {selectedYear + 543}</Text>
           <TouchableOpacity onPress={() => setSelectedYear(selectedYear + 1)} style={styles.yearButton}>
-            <FontAwesome name="chevron-right" size={24} color={COLORS.primary} />
+            <Ionicons name="chevron-forward" size={24} color={COLORS.primary} />
           </TouchableOpacity>
         </View>
 
@@ -225,7 +225,7 @@ export default function RecurringBillsScreen() {
           style={styles.addButton}
           onPress={() => navigation.navigate('AddMonthlySummary', {})}
         >
-          <FontAwesome name="plus-circle" size={18} color="#ffffff" />
+          <Ionicons name="add-circle-outline" size={18} color="#ffffff" />
           <Text style={styles.addButtonText}> บันทึกรายจ่ายรายเดือน</Text>
         </TouchableOpacity>
 
@@ -275,7 +275,7 @@ export default function RecurringBillsScreen() {
                     style={styles.deleteButton}
                     onPress={() => handleDelete(summary.month)}
                   >
-                    <FontAwesome name="trash" size={14} color="#d32f2f" />
+                    <Ionicons name="trash-outline" size={14} color="#d32f2f" />
                     <Text style={styles.deleteButtonText}> ลบ</Text>
                   </TouchableOpacity>
                 </View>

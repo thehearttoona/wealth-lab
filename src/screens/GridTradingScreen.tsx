@@ -12,7 +12,7 @@ import {
   Modal,
   Platform,
 } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 import { mt5Api } from '../services/mt5Api';
@@ -464,8 +464,8 @@ export default function GridTradingScreen() {
                   style={styles.eyeButton}
                   onPress={() => setShowPassword(!showPassword)}
                 >
-                  <FontAwesome
-                    name={showPassword ? 'eye' : 'eye-slash'}
+                  <Ionicons
+                    name={showPassword ? 'eye-outline' : 'eye-off-outline'}
                     size={20}
                     color={COLORS.text}
                   />

@@ -9,7 +9,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, MonthlySummary } from '../types';
@@ -94,7 +94,7 @@ export default function AddMonthlySummaryScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <FontAwesome name="arrow-left" size={24} color="#ffffff" />
+          <Ionicons name="arrow-back" size={24} color="#ffffff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>
           {isEditing ? 'แก้ไขรายจ่ายรายเดือน' : 'เพิ่มรายจ่ายรายเดือน'}
@@ -109,11 +109,11 @@ export default function AddMonthlySummaryScreen() {
           <Text style={styles.label}>เดือน</Text>
           <View style={styles.monthSelector}>
             <TouchableOpacity onPress={() => changeMonth(-1)} style={styles.monthButton}>
-              <FontAwesome name="chevron-left" size={20} color={COLORS.primary} />
+              <Ionicons name="chevron-back" size={20} color={COLORS.primary} />
             </TouchableOpacity>
             <Text style={styles.monthText}>{getMonthDisplay()}</Text>
             <TouchableOpacity onPress={() => changeMonth(1)} style={styles.monthButton}>
-              <FontAwesome name="chevron-right" size={20} color={COLORS.primary} />
+              <Ionicons name="chevron-forward" size={20} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -149,7 +149,7 @@ export default function AddMonthlySummaryScreen() {
         </View>
 
         <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-          <FontAwesome name="save" size={18} color="#ffffff" />
+          <Ionicons name="save-outline" size={18} color="#ffffff" />
           <Text style={styles.saveButtonText}> บันทึก</Text>
         </TouchableOpacity>
       </View>

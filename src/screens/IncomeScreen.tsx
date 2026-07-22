@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
 } from 'react-native';
-import { FontAwesome, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, Income } from '../types';
@@ -74,11 +74,11 @@ export default function IncomeScreen() {
         {/* ── Month Navigator ── */}
         <View style={styles.monthNav}>
           <TouchableOpacity style={styles.monthNavBtn} onPress={prevMonth}>
-            <FontAwesome name="chevron-left" size={14} color={COLORS.primary} />
+            <Ionicons name="chevron-back" size={14} color={COLORS.primary} />
           </TouchableOpacity>
           <Text style={styles.monthNavLabel}>{monthLabel}</Text>
           <TouchableOpacity style={styles.monthNavBtn} onPress={nextMonth}>
-            <FontAwesome name="chevron-right" size={14} color={COLORS.primary} />
+            <Ionicons name="chevron-forward" size={14} color={COLORS.primary} />
           </TouchableOpacity>
         </View>
 

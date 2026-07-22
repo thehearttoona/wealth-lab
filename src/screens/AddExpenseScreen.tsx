@@ -10,7 +10,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Calendar, DateData } from 'react-native-calendars';
@@ -341,7 +341,7 @@ export default function AddExpenseScreen() {
               {scanning ? (
                 <ActivityIndicator size="small" color={COLORS.primary} />
               ) : (
-                <FontAwesome name="camera" size={14} color={COLORS.primary} />
+                <Ionicons name="camera-outline" size={14} color={COLORS.primary} />
               )}
               <Text style={styles.scanButtonText}>
                 {scanning ? 'กำลังอ่านใบเสร็จ...' : 'สแกนใบเสร็จ'}
@@ -393,13 +393,13 @@ export default function AddExpenseScreen() {
               style={styles.datePickerButton}
               onPress={() => setShowCalendar((v) => !v)}
             >
-              <FontAwesome name="calendar" size={15} color={COLORS.primary} />
+              <Ionicons name="calendar-outline" size={15} color={COLORS.primary} />
               <Text style={styles.datePickerText}>
                 {new Date(toChristianYear(expenseDate)).toLocaleDateString('en-US', {
                   year: 'numeric', month: 'long', day: 'numeric',
                 })}
               </Text>
-              <FontAwesome name={showCalendar ? 'chevron-up' : 'chevron-down'} size={12} color={COLORS.textSecondary} />
+              <Ionicons name={showCalendar ? 'chevron-up' : 'chevron-down'} size={12} color={COLORS.textSecondary} />
             </TouchableOpacity>
             {showCalendar && (
               <View style={styles.calendarWrapper}>
@@ -421,7 +421,7 @@ export default function AddExpenseScreen() {
 
             <Text style={styles.label}>เวลา</Text>
             <View style={styles.timeRow}>
-              <FontAwesome name="clock-o" size={15} color={COLORS.primary} style={styles.timeIcon} />
+              <Ionicons name="time-outline" size={15} color={COLORS.primary} style={styles.timeIcon} />
               <TextInput
                 style={styles.timeInput}
                 value={expenseTime}
@@ -454,19 +454,19 @@ export default function AddExpenseScreen() {
 
             <View style={styles.monthNavigator}>
               <TouchableOpacity onPress={() => navigateViewMonth(-1)} style={styles.monthNavBtn}>
-                <FontAwesome name="chevron-left" size={16} color={COLORS.primary} />
+                <Ionicons name="chevron-back" size={16} color={COLORS.primary} />
               </TouchableOpacity>
               <View style={styles.monthNavCenter}>
                 <Text style={styles.monthNavigatorLabel}>{formatMonthLabel(viewMonth)}</Text>
                 {monthEntries[viewMonth] !== undefined && (
                   <View style={styles.monthSavedBadge}>
-                    <FontAwesome name="check" size={9} color="#fff" />
+                    <Ionicons name="checkmark" size={9} color="#fff" />
                     <Text style={styles.monthSavedBadgeText}> บันทึกแล้ว</Text>
                   </View>
                 )}
               </View>
               <TouchableOpacity onPress={() => navigateViewMonth(1)} style={styles.monthNavBtn}>
-                <FontAwesome name="chevron-right" size={16} color={COLORS.primary} />
+                <Ionicons name="chevron-forward" size={16} color={COLORS.primary} />
               </TouchableOpacity>
             </View>
 
@@ -485,7 +485,7 @@ export default function AddExpenseScreen() {
                 onPress={handleSaveMonthEntry}
                 disabled={!monthAmount}
               >
-                <FontAwesome name="check" size={14} color="#fff" />
+                <Ionicons name="checkmark" size={14} color="#fff" />
                 <Text style={styles.saveMonthBtnText}> บันทึก</Text>
               </TouchableOpacity>
             </View>
@@ -511,7 +511,7 @@ export default function AddExpenseScreen() {
                       <Text style={styles.savedMonthAmount}>{formatCurrency(parseFloat(amtStr))}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.removeMonthBtn} onPress={() => handleRemoveMonthEntry(month)}>
-                      <FontAwesome name="trash" size={13} color={COLORS.textSecondary} />
+                      <Ionicons name="trash-outline" size={13} color={COLORS.textSecondary} />
                     </TouchableOpacity>
                   </View>
                 ))}
