@@ -255,11 +255,11 @@ export default function RecurringBillsScreen() {
                           <Ionicons
                             name={momChange.change >= 0 ? 'arrow-up' : 'arrow-down'}
                             size={14}
-                            color={momChange.change >= 0 ? '#ef4444' : '#10b981'}
+                            color={momChange.change >= 0 ? COLORS.error : COLORS.success}
                           />
                           <Text style={[
                             styles.changeText,
-                            { color: momChange.change >= 0 ? '#ef4444' : '#10b981' }
+                            { color: momChange.change >= 0 ? COLORS.error : COLORS.success }
                           ]}>
                             {momChange.change >= 0 ? '+' : ''}{formatCurrency(momChange.change)}
                             {' '}({momChange.changePercent >= 0 ? '+' : ''}{momChange.changePercent.toFixed(2)}%)
