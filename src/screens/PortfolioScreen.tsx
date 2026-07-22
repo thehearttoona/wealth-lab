@@ -89,7 +89,7 @@ export default function PortfolioScreen() {
     try {
       for (const investment of investments) {
         // อัปเดตเฉพาะ crypto, stock, gold
-        if (['crypto', 'stock', 'gold'].includes(investment.type)) {
+        if (['crypto', 'stock_th', 'stock_foreign', 'gold'].includes(investment.type)) {
           const newPrice = await updateInvestmentPrice(investment.type, investment.symbol, investment.currency || 'THB');
 
           if (newPrice !== null && newPrice > 0) {

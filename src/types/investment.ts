@@ -1,4 +1,4 @@
-export type InvestmentType = 'stock' | 'fund' | 'crypto' | 'gold' | 'bond' | 'property' | 'other';
+export type InvestmentType = 'stock_th' | 'stock_foreign' | 'fund' | 'crypto' | 'gold' | 'other';
 
 export type Currency = 'THB' | 'USD' | 'EUR' | 'JPY' | 'CNY';
 
@@ -44,11 +44,10 @@ export interface PortfolioSummary {
 }
 
 export const INVESTMENT_TYPES: { value: InvestmentType; label: string; icon: any }[] = [
-  { value: 'stock', label: 'หุ้น', icon: 'trending-up-outline' },
+  { value: 'stock_th', label: 'หุ้นไทย', icon: 'trending-up-outline' },
+  { value: 'stock_foreign', label: 'หุ้นต่างประเทศ', icon: 'globe-outline' },
   { value: 'fund', label: 'กองทุน', icon: 'briefcase-outline' },
   { value: 'crypto', label: 'Crypto', icon: 'logo-bitcoin' },
   { value: 'gold', label: 'ทอง', icon: 'diamond-outline' },
-  { value: 'bond', label: 'พันธบัตร', icon: 'document-text-outline' },
-  { value: 'property', label: 'อสังหา', icon: 'home-outline' },
   { value: 'other', label: 'อื่นๆ', icon: 'cube-outline' },
 ];

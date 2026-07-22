@@ -248,7 +248,17 @@ async function getStockPriceFromYahoo(symbol: string, targetCurrency: string): P
   return null;
 }
 
-export async function getStockPrice(symbol: string, targetCurrency: string = 'THB'): Promise<number | null> {
+export async function getStockPrice(
+  symbol: string,
+  targetCurrency: string = 'THB',
+  isThaiStock: boolean = false
+): Promise<number | null> {
+  // หุ้นไทย (ตลาด SET) โดน Twelve Data free tier บล็อกเสมอ ("Grow/Venture plan only")
+  // ข้ามไป Yahoo Finance ตรงๆ เลย ไม่ต้องเสียรอบ request ที่รู้อยู่แล้วว่าจะ 404
+  if (isThaiStock) {
+    return getStockPriceFromYahoo(symbol, targetCurrency);
+  }
+
   try {
     const response = await fetchWithTimeout(
       `${TWELVE_DATA_API}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${TWELVE_DATA_API_KEY}`
@@ -328,7 +338,10 @@ export async function searchCryptoList(query: string): Promise<CryptoSearchResul
   }
 }
 
-export async function searchStockList(query: string): Promise<StockSearchResult[]> {
+export async function searchStockList(
+  query: string,
+  market: 'th' | 'foreign' | 'all' = 'all'
+): Promise<StockSearchResult[]> {
   try {
     if (!query || query.trim().length < 1) return [];
 
@@ -344,6 +357,11 @@ export async function searchStockList(query: string): Promise<StockSearchResult[
 
     return results
       .filter((r) => r.instrument_type === 'Common Stock' || r.instrument_type === 'ETF')
+      .filter((r) => {
+        if (market === 'th') return r.country === 'Thailand';
+        if (market === 'foreign') return r.country !== 'Thailand';
+        return true;
+      })
       .slice(0, 10)
       .map((r) => ({
         symbol: r.symbol,
@@ -369,8 +387,10 @@ export async function updateInvestmentPrice(
   switch (type) {
     case 'crypto':
       return getCryptoPrice(symbol, targetCurrency);
-    case 'stock':
-      return getStockPrice(symbol, targetCurrency);
+    case 'stock_th':
+      return getStockPrice(symbol, targetCurrency, true);
+    case 'stock_foreign':
+      return getStockPrice(symbol, targetCurrency, false);
     case 'gold':
       return getGoldPrice(targetCurrency);
     default:

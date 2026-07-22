@@ -31,7 +31,7 @@ export default function AddInvestmentScreen() {
 
   const isEditing = !!investment;
   
-  const [type, setType] = useState<InvestmentType>('stock');
+  const [type, setType] = useState<InvestmentType>('stock_th');
   const [symbol, setSymbol] = useState('');
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('');
@@ -90,7 +90,8 @@ export default function AddInvestmentScreen() {
 
     setIsSearching(true);
     try {
-      const results = await searchStockList(searchQuery);
+      const market = type === 'stock_th' ? 'th' : type === 'stock_foreign' ? 'foreign' : 'all';
+      const results = await searchStockList(searchQuery, market);
       setStockSearchResults(results);
       setShowSearchResults(true);
     } catch (error) {
@@ -325,9 +326,9 @@ export default function AddInvestmentScreen() {
           </View>
         )}
 
-        {type === 'stock' && (
+        {(type === 'stock_th' || type === 'stock_foreign') && (
           <View>
-            <Text style={styles.label}>ค้นหาหุ้นต่างประเทศ</Text>
+            <Text style={styles.label}>{type === 'stock_th' ? 'ค้นหาหุ้นไทย' : 'ค้นหาหุ้นต่างประเทศ'}</Text>
             <View style={styles.searchContainer}>
               <TextInput
                 style={[styles.input, styles.searchInput]}
@@ -339,7 +340,7 @@ export default function AddInvestmentScreen() {
                     setStockSearchResults([]);
                   }
                 }}
-                placeholder="ค้นหาชื่อบริษัทหรือสัญลักษณ์ เช่น Apple, AAPL"
+                placeholder={type === 'stock_th' ? 'ค้นหาชื่อบริษัทหรือสัญลักษณ์ เช่น ปตท., PTT' : 'ค้นหาชื่อบริษัทหรือสัญลักษณ์ เช่น Apple, AAPL'}
                 placeholderTextColor={COLORS.textSecondary}
               />
               <TouchableOpacity

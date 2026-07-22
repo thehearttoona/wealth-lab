@@ -179,30 +179,36 @@ export const analyzeInvestments = async (): Promise<Insight[]> => {
   }
 
   // Insight 2: การกระจายความเสี่ยง
-  const typeCount = Object.keys(summary.byType).length;
-  if (typeCount === 1) {
+  // รวม stock_th + stock_foreign เป็นกลุ่มเดียวกัน (หุ้นเหมือนกัน แค่คนละตลาด)
+  // ไม่งั้นพอร์ตที่ถือหุ้นไทย+ต่างประเทศแต่ไม่มีสินทรัพย์อื่นเลย จะไม่โดนเตือนเรื่องกระจายความเสี่ยง
+  const groupedTypes = new Set(
+    Object.keys(summary.byType).map((t) => (t === 'stock_th' || t === 'stock_foreign' ? 'stock' : t))
+  );
+  if (groupedTypes.size === 1) {
     insights.push({
       type: 'warning',
       icon: '⚖️',
       title: 'ควรกระจายความเสี่ยง',
       message: 'คุณลงทุนในประเภทเดียว ควรกระจายเพื่อลดความเสี่ยง',
-      actionable: 'ลองเพิ่มการลงทุนในประเภทอื่นๆ เช่น กองทุน, พันธบัตร',
+      actionable: 'ลองเพิ่มการลงทุนในประเภทอื่นๆ เช่น กองทุน, ทอง',
     });
   }
 
   // Insight 3: ตรวจสอบการลงทุนแต่ละประเภท
+  const stockValue = (summary.byType['stock_th']?.value || 0) + (summary.byType['stock_foreign']?.value || 0);
+  const stockPercentage = summary.totalValue > 0 ? (stockValue / summary.totalValue) * 100 : 0;
+  if (stockValue > 0 && stockPercentage > 70) {
+    insights.push({
+      type: 'warning',
+      icon: '📈',
+      title: 'หุ้นเยอะเกินไป',
+      message: `หุ้น (ไทย+ต่างประเทศ) คิดเป็น ${stockPercentage.toFixed(1)}% ของพอร์ต ความเสี่ยงสูง`,
+      actionable: 'ควรลดสัดส่วนหุ้นลงและเพิ่มสินทรัพย์ที่มั่นคง',
+    });
+  }
+
   Object.entries(summary.byType).forEach(([type, data]) => {
     const percentage = (data.value / summary.totalValue) * 100;
-    
-    if (type === 'stock' && percentage > 70) {
-      insights.push({
-        type: 'warning',
-        icon: '📈',
-        title: 'หุ้นเยอะเกินไป',
-        message: `หุ้นคิดเป็น ${percentage.toFixed(1)}% ของพอร์ต ความเสี่ยงสูง`,
-        actionable: 'ควรลดสัดส่วนหุ้นลงและเพิ่มสินทรัพย์ที่มั่นคง',
-      });
-    }
 
     if (type === 'crypto' && percentage > 20) {
       insights.push({
