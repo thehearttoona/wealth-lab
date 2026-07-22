@@ -451,18 +451,20 @@ export default function PortfolioScreen() {
             }
           />
         ) : (
-          <FlatList
-            data={investments}
-            renderItem={renderInvestmentItem}
-            keyExtractor={(item) => item.id}
-            key="mobile-1col"
+          <ScrollView
             style={styles.list}
             contentContainerStyle={styles.listContent}
-            ListHeaderComponent={listHeaderElement}
-            ListEmptyComponent={
+            showsVerticalScrollIndicator={false}
+          >
+            {listHeaderElement}
+            {investments.length === 0 ? (
               <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
-            }
-          />
+            ) : (
+              investments.map((item) => (
+                <View key={item.id}>{renderInvestmentItem({ item })}</View>
+              ))
+            )}
+          </ScrollView>
         )}
       </View>
 
