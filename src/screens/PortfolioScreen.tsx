@@ -27,6 +27,7 @@ import { formatCurrency, formatCurrencyWithType, convertToTHB, COLORS } from '..
 import { updateInvestmentPrice } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
+import { getTakeProfitSuggestion } from '../utils/takeProfit';
 import { useResponsive } from '../utils/responsive';
 
 
@@ -182,6 +183,7 @@ export default function PortfolioScreen() {
     const profit = value - cost;
     const profitPercent = cost > 0 ? (profit / cost) * 100 : 0;
     const isProfit = profit >= 0;
+    const tp = getTakeProfitSuggestion(item.type, profitPercent);
 
     return (
       <View style={[
@@ -219,6 +221,18 @@ export default function PortfolioScreen() {
             </Text>
           </View>
         </TouchableOpacity>
+        <View style={styles.tpRow}>
+          {tp.reached ? (
+            <Text style={[styles.tpText, { color: COLORS.success }]}>
+              🎯 ถึงจุดขายทำกำไรแล้ว (เป้า +{tp.suggestedPercent}%)
+            </Text>
+          ) : (
+            <Text style={styles.tpText}>
+              เป้าขายทำกำไร +{tp.suggestedPercent}%
+              {profitPercent > 0 ? ` • อีก ${tp.gapPercent.toFixed(1)}%` : ''}
+            </Text>
+          )}
+        </View>
         <TouchableOpacity
           style={styles.deleteButton}
           onPress={() => handleDelete(item.id, item.name)}
@@ -410,6 +424,7 @@ export default function PortfolioScreen() {
 
         <View style={styles.listHeader}>
           <Text style={styles.listTitle}>รายการลงทุน</Text>
+          <Text style={styles.tpNote}>* เป้าขายทำกำไรเป็นแนวทางทั่วไปตามประเภทสินทรัพย์</Text>
         </View>
 
         {isDesktop ? (
@@ -611,6 +626,22 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginTop: 12,
     lineHeight: 18,
+  },
+  tpRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    marginTop: -4,
+  },
+  tpText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+  },
+  tpNote: {
+    fontSize: 10,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 2,
   },
   horizonBox: {
     marginTop: 14,
