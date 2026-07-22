@@ -9,6 +9,8 @@ import {
   ScrollView,
   Platform,
   ActivityIndicator,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -23,7 +25,8 @@ import {
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, COLORS } from '../utils/constants';
 import { updateInvestmentPrice } from '../services/priceApi';
-import { getGoalProgress, getGoalProjection } from '../utils/investmentGoals';
+import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
+import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import { useResponsive } from '../utils/responsive';
 
 
@@ -44,12 +47,65 @@ export default function PortfolioScreen() {
     byType: {},
   });
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+  const [goal, setGoal] = useState<PortfolioGoal | null>(null);
+  const [goalModalVisible, setGoalModalVisible] = useState(false);
+  const [goalTargetInput, setGoalTargetInput] = useState('');
+  const [goalYearsInput, setGoalYearsInput] = useState('');
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
     setInvestments(allInvestments);
     const portfolioSummary = await getPortfolioSummary();
     setSummary(portfolioSummary);
+    try {
+      setGoal(await getPortfolioGoal());
+    } catch {
+      // ยังไม่มีตาราง/ยังไม่ตั้งเป้า — ปล่อยเป็น null
+    }
+  };
+
+  const showMsg = (msg: string) => {
+    if (Platform.OS === 'web') window.alert(msg);
+    else Alert.alert('', msg);
+  };
+
+  const openGoalModal = () => {
+    setGoalTargetInput(goal?.targetReturnPercent?.toString() || '');
+    if (goal?.targetDate) {
+      const years = (new Date(goal.targetDate).getTime() - Date.now()) / (365.25 * 24 * 60 * 60 * 1000);
+      setGoalYearsInput(years > 0 ? (Math.round(years * 10) / 10).toString() : '');
+    } else {
+      setGoalYearsInput('');
+    }
+    setGoalModalVisible(true);
+  };
+
+  const handleSaveGoal = async () => {
+    const target = parseFloat(goalTargetInput);
+    const years = parseFloat(goalYearsInput);
+    if (!target || target <= 0) { showMsg('กรุณากรอกเป้ากำไร % ที่ถูกต้อง'); return; }
+    if (!years || years <= 0) { showMsg('กรุณากรอกกรอบเวลา (ปี) ที่ถูกต้อง'); return; }
+    try {
+      const newGoal: PortfolioGoal = {
+        targetReturnPercent: target,
+        targetDate: new Date(Date.now() + years * 365.25 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+      await savePortfolioGoal(newGoal);
+      setGoal(newGoal);
+      setGoalModalVisible(false);
+    } catch {
+      showMsg('บันทึกเป้าหมายไม่สำเร็จ');
+    }
+  };
+
+  const handleDeleteGoal = async () => {
+    try {
+      await deletePortfolioGoal();
+      setGoal(null);
+      setGoalModalVisible(false);
+    } catch {
+      showMsg('ลบเป้าหมายไม่สำเร็จ');
+    }
   };
 
   useFocusEffect(
@@ -139,10 +195,6 @@ export default function PortfolioScreen() {
     const profitPercent = cost > 0 ? (profit / cost) * 100 : 0;
     const isProfit = profit >= 0;
 
-    // เป้าหมายการลงทุน (ถ้าตั้งไว้)
-    const goalProgress = getGoalProgress(item, value, cost);
-    const goalProjection = getGoalProjection(item, value, cost);
-
     return (
       <View style={[
         styles.investmentItem,
@@ -179,46 +231,6 @@ export default function PortfolioScreen() {
             </Text>
           </View>
         </TouchableOpacity>
-
-        {goalProgress && (
-          <View style={styles.goalBox}>
-            <View style={styles.goalHeaderRow}>
-              <Text style={styles.goalTitle}>
-                🎯 เป้า +{goalProgress.targetReturnPercent}%
-              </Text>
-              {goalProgress.reached ? (
-                <Text style={[styles.goalStatus, { color: COLORS.success }]}>ถึงเป้าแล้ว 🎉</Text>
-              ) : (
-                <Text style={styles.goalStatus}>
-                  ไปได้ {Math.max(0, Math.min(100, goalProgress.progressRatio * 100)).toFixed(0)}%
-                </Text>
-              )}
-            </View>
-            {/* progress bar */}
-            <View style={styles.goalTrack}>
-              <View
-                style={[
-                  styles.goalFill,
-                  {
-                    width: `${Math.max(0, Math.min(100, goalProgress.progressRatio * 100))}%`,
-                    backgroundColor: goalProgress.reached ? COLORS.success : COLORS.primary,
-                  },
-                ]}
-              />
-            </View>
-            {/* ประมาณการ (ต้องโตปีละกี่ %) — แยกชัดว่าเป็นการคาดการณ์ */}
-            {goalProjection && !goalProgress.reached && (
-              <Text style={styles.goalProjection}>
-                {goalProjection.deadlinePassed
-                  ? '⏱ เลยกรอบเวลาที่ตั้งไว้แล้ว — ยังไม่ถึงเป้า'
-                  : goalProjection.requiredAnnualReturnPercent != null
-                    ? `ต้องโตเฉลี่ยปีละ ~${goalProjection.requiredAnnualReturnPercent.toFixed(1)}% จากราคาปัจจุบัน (เหลือ ${goalProjection.yearsLeft.toFixed(1)} ปี)`
-                    : ''}
-              </Text>
-            )}
-          </View>
-        )}
-
         <TouchableOpacity
           style={styles.deleteButton}
           onPress={() => handleDelete(item.id, item.name)}
@@ -258,6 +270,14 @@ export default function PortfolioScreen() {
   };
 
   const isProfit = summary.totalProfit >= 0;
+
+  // วิเคราะห์เป้าหมายพอร์ตรวม — วันเริ่มพอร์ต = วันซื้อแรกสุด
+  const portfolioStartDate = investments.length > 0
+    ? investments.reduce((earliest, inv) => (inv.buyDate < earliest ? inv.buyDate : earliest), investments[0].buyDate)
+    : null;
+  const goalAnalysis: PortfolioGoalAnalysis | null = goal
+    ? analyzePortfolioGoal(goal, summary.totalValue, summary.totalCost, portfolioStartDate)
+    : null;
 
   return (
     <View style={styles.container}>
@@ -314,6 +334,64 @@ export default function PortfolioScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* ── การ์ดเป้าหมายพอร์ตรวม ── */}
+        <View style={styles.goalCard}>
+          <View style={styles.goalCardHeader}>
+            <Text style={styles.goalCardTitle}>🎯 เป้าหมายพอร์ตรวม</Text>
+            <TouchableOpacity onPress={openGoalModal}>
+              <Text style={styles.goalCardEdit}>{goal ? 'แก้ไข' : 'ตั้งเป้า'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {!goalAnalysis ? (
+            <Text style={styles.goalCardEmpty}>
+              ตั้งเป้ากำไรรวม + กรอบเวลา แล้วระบบจะวิเคราะห์ให้ว่าคุณมีแนวโน้มถึงเป้าไหม
+            </Text>
+          ) : (
+            <>
+              <View style={styles.goalCardTopRow}>
+                <Text style={styles.goalCardSub}>
+                  เป้า +{goalAnalysis.targetReturnPercent}% • ตอนนี้ {goalAnalysis.currentReturnPercent >= 0 ? '+' : ''}{goalAnalysis.currentReturnPercent.toFixed(2)}%
+                </Text>
+                <Text style={styles.goalCardSub}>
+                  {goalAnalysis.reached ? 'ถึงเป้าแล้ว' : `ไปได้ ${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}%`}
+                </Text>
+              </View>
+              <View style={styles.goalTrack}>
+                <View
+                  style={[
+                    styles.goalFill,
+                    {
+                      width: `${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100))}%`,
+                      backgroundColor: goalAnalysis.reached ? COLORS.success : COLORS.primary,
+                    },
+                  ]}
+                />
+              </View>
+              {/* คำวินิจฉัยจากระบบ */}
+              <Text
+                style={[
+                  styles.goalVerdict,
+                  goalAnalysis.verdict === 'reached' || goalAnalysis.verdict === 'on_track'
+                    ? { color: COLORS.success }
+                    : goalAnalysis.verdict === 'behind' || goalAnalysis.verdict === 'deadline_passed'
+                      ? { color: COLORS.error }
+                      : { color: COLORS.textSecondary },
+                ]}
+              >
+                {goalAnalysis.verdict === 'reached' && '🎉 ถึงเป้าแล้ว!'}
+                {goalAnalysis.verdict === 'on_track' &&
+                  `✅ มีแนวโน้มทันเป้า — พอร์ตโตจริงเฉลี่ยปีละ ~${goalAnalysis.actualAnnualReturnPercent!.toFixed(1)}% (ต้องการ ~${goalAnalysis.requiredAnnualReturnPercent!.toFixed(1)}%)`}
+                {goalAnalysis.verdict === 'behind' &&
+                  `⚠️ อาจไม่ทันเป้า — พอร์ตโตจริงเฉลี่ยปีละ ~${goalAnalysis.actualAnnualReturnPercent!.toFixed(1)}% แต่ต้องการ ~${goalAnalysis.requiredAnnualReturnPercent!.toFixed(1)}%`}
+                {goalAnalysis.verdict === 'deadline_passed' && '⏱ เลยกรอบเวลาแล้ว — ยังไม่ถึงเป้า'}
+                {goalAnalysis.verdict === 'too_new' &&
+                  `พอร์ตยังใหม่เกินไป ประเมินแนวโน้มยังไม่ได้ — จากนี้ต้องโตปีละ ~${goalAnalysis.requiredAnnualReturnPercent?.toFixed(1) ?? '-'}% (เหลือ ${goalAnalysis.yearsLeft.toFixed(1)} ปี)`}
+              </Text>
+            </>
+          )}
+        </View>
+
         {Object.keys(summary.byType).length > 0 && (
           isDesktop ? (
             <View style={styles.typeWrapContainer}>
@@ -367,6 +445,51 @@ export default function PortfolioScreen() {
           />
         )}
       </View>
+
+      {/* ── Modal ตั้ง/แก้เป้าหมายพอร์ตรวม ── */}
+      <Modal
+        visible={goalModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setGoalModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>🎯 เป้าหมายพอร์ตรวม</Text>
+            <Text style={styles.modalLabel}>เป้ากำไรรวม (%)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={goalTargetInput}
+              onChangeText={setGoalTargetInput}
+              keyboardType="numeric"
+              placeholder="เช่น 15"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+            <Text style={styles.modalLabel}>ภายในกี่ปี</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={goalYearsInput}
+              onChangeText={setGoalYearsInput}
+              keyboardType="numeric"
+              placeholder="เช่น 3"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+            <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSaveGoal}>
+              <Text style={styles.modalSaveBtnText}>บันทึกเป้าหมาย</Text>
+            </TouchableOpacity>
+            <View style={styles.modalBottomRow}>
+              {goal && (
+                <TouchableOpacity onPress={handleDeleteGoal}>
+                  <Text style={styles.modalDeleteText}>ลบเป้าหมาย</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => setGoalModalVisible(false)}>
+                <Text style={styles.modalCancelText}>ยกเลิก</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -444,43 +567,132 @@ const styles = StyleSheet.create({
   profitNegative: {
     color: COLORS.error,
   },
-  goalBox: {
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-    paddingTop: 4,
+  goalCard: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 0,
+    padding: 16,
   },
-  goalHeaderRow: {
+  goalCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 10,
   },
-  goalTitle: {
+  goalCardTitle: {
+    fontSize: 14,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  goalCardEdit: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.primary,
+  },
+  goalCardEmpty: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    lineHeight: 18,
+  },
+  goalCardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  goalCardSub: {
     fontSize: 12,
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
   },
-  goalStatus: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.textSecondary,
-  },
   goalTrack: {
-    height: 6,
+    height: 8,
     backgroundColor: COLORS.border,
-    borderRadius: 3,
+    borderRadius: 4,
     overflow: 'hidden',
   },
   goalFill: {
-    height: 6,
-    borderRadius: 3,
+    height: 8,
+    borderRadius: 4,
   },
-  goalProjection: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
+  goalVerdict: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    marginTop: 12,
+    lineHeight: 18,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+    marginBottom: 16,
+  },
+  modalLabel: {
+    fontSize: 10,
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
     color: COLORS.textSecondary,
-    marginTop: 8,
-    lineHeight: 16,
+    marginBottom: 8,
+    marginTop: 12,
+  },
+  modalInput: {
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    fontSize: 16,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.text,
+  },
+  modalSaveBtn: {
+    backgroundColor: COLORS.primary,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  modalSaveBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  modalBottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  modalDeleteText: {
+    color: COLORS.error,
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
+  },
+  modalCancelText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
+    marginLeft: 'auto',
   },
   actionButtons: {
     flexDirection: 'row',
