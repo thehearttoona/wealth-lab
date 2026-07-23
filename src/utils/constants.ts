@@ -11,16 +11,20 @@ export const EXPENSE_CATEGORIES = [
 ];
 
 export const COLORS = {
-  primary: '#d17a00',
-  accent: '#5BB8D4',
-  background: '#081522',
-  surface: '#041933',
-  error: '#E8836B',
-  text: '#E0E7EF',
-  textSecondary: '#8899AA',
-  border: '#2A3F55',
-  divider: '#243548',
-  success: '#227e48',
+  primary: '#294E80',
+  accent: '#D6B35A',
+  background: '#F6F8FB',
+  surface: '#FFFFFF',
+
+  success: '#22A06B',
+  error: '#D64545',
+  warning: '#D97706',
+
+  text: '#172033',
+  textSecondary: '#64748B',
+
+  border: '#E2E8F0',
+  divider: '#F1F5F9',
 };
 
 export const getCurrencySymbol = (currency?: string): string => {

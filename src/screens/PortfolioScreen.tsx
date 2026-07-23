@@ -230,7 +230,7 @@ export default function PortfolioScreen() {
         <View style={styles.tpRow}>
           {tp.reached ? (
             <Text style={[styles.tpText, { color: COLORS.success }]}>
-              🎯 ถึงจุดขายทำกำไรแล้ว (เป้า +{tp.suggestedPercent}%)
+              ถึงจุดขายทำกำไรแล้ว (เป้า +{tp.suggestedPercent}%)
             </Text>
           ) : (
             <Text style={styles.tpText}>
@@ -341,7 +341,9 @@ export default function PortfolioScreen() {
         {/* ── การ์ดเป้าหมายพอร์ตรวม ── */}
         <View style={styles.goalCard}>
           <View style={styles.goalCardHeader}>
-            <Text style={styles.goalCardTitle}>🎯 เป้าหมายพอร์ตรวม</Text>
+            <Text style={styles.goalCardTitle}>
+              <Ionicons name="disc-outline" size={18} color={COLORS.primary} /> เป้าหมายพอร์ตรวม
+            </Text>
             <TouchableOpacity onPress={openGoalModal}>
               <Text style={styles.goalCardEdit}>{goal ? 'แก้ไข' : 'ตั้งเป้า'}</Text>
             </TouchableOpacity>
@@ -393,7 +395,7 @@ export default function PortfolioScreen() {
               {!goalAnalysis.reached && (
                 <Text style={styles.goalVerdict}>
                   {goalAnalysis.projectedYearsToReach != null
-                    ? `📈 ${goalAnalysis.projectionSource === 'user' ? 'ที่คาดโตปีละ' : 'พาซปัจจุบันโตเฉลี่ยปีละ'} ~${goalAnalysis.projectionRatePercent!.toFixed(1)}% → คาดถึงเป้าในอีก ~${goalAnalysis.projectedYearsToReach.toFixed(1)} ปี (≈ ${new Date(goalAnalysis.projectedDate!).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })})`
+                    ? ` ${goalAnalysis.projectionSource === 'user' ? 'ที่คาดโตปีละ' : 'พาซปัจจุบันโตเฉลี่ยปีละ'} ~${goalAnalysis.projectionRatePercent!.toFixed(1)}% → คาดถึงเป้าในอีก ~${goalAnalysis.projectedYearsToReach.toFixed(1)} ปี (≈ ${new Date(goalAnalysis.projectedDate!).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })})`
                     : 'ใส่ "คาดโตปีละกี่ %" ในปุ่มแก้ไข เพื่อให้ระบบคำนวณว่าจะถึงเป้าในกี่ปี'}
                 </Text>
               )}
@@ -457,6 +459,7 @@ export default function PortfolioScreen() {
             showsVerticalScrollIndicator={false}
           >
             {listHeaderElement}
+            <View style={styles.listcontainer}>
             {investments.length === 0 ? (
               <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
             ) : (
@@ -464,6 +467,7 @@ export default function PortfolioScreen() {
                 <View key={item.id}>{renderInvestmentItem({ item })}</View>
               ))
             )}
+            </View>
           </ScrollView>
         )}
       </View>
@@ -590,13 +594,13 @@ const styles = StyleSheet.create({
     color: COLORS.error,
   },
   goalCard: {
-    marginHorizontal: 16,
-    marginBottom: 8,
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 0,
     padding: 16,
+    marginBottom: 16,
+    marginHorizontal:16
   },
   goalCardHeader: {
     flexDirection: 'row',
@@ -765,7 +769,8 @@ const styles = StyleSheet.create({
   },
   actionButtons: {
     flexDirection: 'row',
-    margin: 16,
+    marginVertical: 16,
+    paddingHorizontal:16,
     gap: 12,
   },
   actionButtonsDesktop: {
@@ -804,18 +809,17 @@ const styles = StyleSheet.create({
   },
   typeScroll: {
     maxHeight: 140,
-    marginHorizontal: 16,
   },
   typeScrollContent: {
     gap: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
   },
   typeWrapContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
-    marginHorizontal: 16,
-    paddingBottom: 8,
+    marginVertical: 16,
   },
   typeCard: {
     backgroundColor: COLORS.surface,
@@ -878,9 +882,7 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   listHeader: {
-    padding: 16,
-    paddingBottom: 8,
-    paddingTop: 16,
+    padding:16
   },
   listTitle: {
     fontSize: 18,
@@ -892,8 +894,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    padding: 16,
     paddingTop: 0,
+  },
+  listcontainer:{
+    paddingHorizontal:16
   },
   flatListRow: {
     gap: 12,
