@@ -308,6 +308,7 @@ export default function PortfolioScreen() {
                 ({isProfit ? '+' : ''}{summary.totalProfitPercent.toFixed(2)}%)
               </Text>
             </View>
+            <Text style={styles.summaryCost}>ลงทุนไปแล้ว {formatCurrency(summary.totalCost)}</Text>
           </View>
         </View>
 
@@ -587,6 +588,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
   },
+  summaryCost: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: '#ffffff',
+    opacity: 0.9,
+    marginTop: 8,
+  },
   profitPositive: {
     color: COLORS.success,
   },
@@ -819,7 +827,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
-    marginVertical: 16,
+    padding:16
   },
   typeCard: {
     backgroundColor: COLORS.surface,
@@ -901,10 +909,10 @@ const styles = StyleSheet.create({
   },
   flatListRow: {
     gap: 12,
+    marginHorizontal:16
   },
   investmentItem: {
     backgroundColor: COLORS.surface,
-    borderRadius: 0,
     marginBottom: 12,
     elevation: 2,
     ...(Platform.OS === 'web' ? {
