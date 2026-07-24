@@ -352,13 +352,31 @@ export async function searchStockList(
     const data = await response.json();
     const results: any[] = data?.data || [];
 
+    // รับหุ้นสามัญ, ETF และ ADR/DR (เช่น TSMC ซื้อได้จริงในรูป ADR "TSM" บน NYSE)
+    // ตัด warrant/futures ฯลฯ ออก
+    const allowedTypes = new Set([
+      'Common Stock', 'ETF',
+      'American Depositary Receipt', 'Depositary Receipt',
+      'GDR', 'Global Depositary Receipt',
+    ]);
+    // คะแนนยิ่งน้อยยิ่งขึ้นก่อน — ดัน USD + หุ้นสามัญ + ตลาดใหญ่ให้อยู่บน (ลด noise พวก CEDEAR/ตลาดรอง)
+    const majorExchanges = new Set(['NASDAQ', 'NYSE', 'NYSE American', 'LSE', 'HKEX', 'TSE', 'TWSE', 'SGX', 'Euronext']);
+    const scoreOf = (r: any) => {
+      let s = 0;
+      if (r.currency !== 'USD') s += 2;
+      if (r.instrument_type !== 'Common Stock') s += 1;
+      if (!majorExchanges.has(r.exchange)) s += 1;
+      return s;
+    };
+
     return results
-      .filter((r) => r.instrument_type === 'Common Stock' || r.instrument_type === 'ETF')
+      .filter((r) => allowedTypes.has(r.instrument_type))
       .filter((r) => {
         if (market === 'th') return r.country === 'Thailand';
         if (market === 'foreign') return r.country !== 'Thailand';
         return true;
       })
+      .sort((a, b) => scoreOf(a) - scoreOf(b))
       .slice(0, 10)
       .map((r) => ({
         symbol: r.symbol,
