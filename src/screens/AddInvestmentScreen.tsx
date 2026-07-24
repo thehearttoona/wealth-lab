@@ -236,6 +236,9 @@ export default function AddInvestmentScreen() {
     }
   };
 
+  // ประเภทที่ดึงราคาอัตโนมัติได้ (กองทุน/อื่นๆ ยังไม่รองรับ → กรอกเอง)
+  const canFetchPrice = ['crypto', 'stock_th', 'stock_foreign', 'gold'].includes(type);
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
@@ -452,24 +455,31 @@ export default function AddInvestmentScreen() {
             </View>
           </View>
 
-          <View style={styles.halfWidth}>
-            <Text style={styles.label}>ราคา Realtime</Text>
-            <TouchableOpacity
-              style={styles.realtimeButton}
-              onPress={handleFetchRealtime}
-              disabled={isFetchingPrice}
-            >
-              <Ionicons
-                name={isFetchingPrice ? 'sync' : 'refresh-outline'}
-                size={16}
-                color="#ffffff"
-              />
-              <Text style={styles.realtimeButtonText}>
-                {isFetchingPrice ? 'กำลังดึงข้อมูล...' : 'ดึงราคาล่าสุด'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          {canFetchPrice && (
+            <View style={styles.halfWidth}>
+              <Text style={styles.label}>ราคา Realtime</Text>
+              <TouchableOpacity
+                style={styles.realtimeButton}
+                onPress={handleFetchRealtime}
+                disabled={isFetchingPrice}
+              >
+                <Ionicons
+                  name={isFetchingPrice ? 'sync' : 'refresh-outline'}
+                  size={16}
+                  color="#ffffff"
+                />
+                <Text style={styles.realtimeButtonText}>
+                  {isFetchingPrice ? 'กำลังดึงข้อมูล...' : 'ดึงราคาล่าสุด'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
+        {type === 'fund' && (
+          <Text style={styles.fundHint}>
+            * กองทุนยังไม่รองรับดึง NAV อัตโนมัติ — กรอก NAV ที่ซื้อ (ต้นทุน) และ NAV ปัจจุบันเองจากใบยืนยัน/แอป บลจ.
+          </Text>
+        )}
 
         <View style={styles.row}>
           <View style={styles.halfWidth}>
@@ -641,6 +651,13 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
+  },
+  fundHint: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 8,
+    lineHeight: 18,
   },
   infoBox: {
     backgroundColor: COLORS.background,
