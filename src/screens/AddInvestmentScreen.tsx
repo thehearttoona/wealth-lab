@@ -717,7 +717,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: 0,
     marginTop: 8,
-    maxHeight: 300,
   },
   searchResultItem: {
     flexDirection: 'row',
