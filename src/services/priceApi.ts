@@ -283,21 +283,18 @@ export async function getStockPrice(
 
 export async function getGoldPrice(targetCurrency: string = 'THB'): Promise<number | null> {
   try {
-    const response = await fetchWithTimeout('https://api.metals.live/v1/spot/gold');
-    if (!response.ok) throw new Error('metals.live fetch failed');
-
-    const data = await response.json();
-    const pricePerOzUSD: number = data[0]?.price || 0;
-    // USD/oz → USD/กรัม → USD/บาททอง (15.244 กรัม = 1 บาททอง)
-    const pricePerGramUSD = pricePerOzUSD / 31.1;
-    const pricePerBahtTongUSD = pricePerGramUSD * 15.244;
-
-    return await convertCurrency(pricePerBahtTongUSD, 'USD', targetCurrency);
+    // ทองคำ (GC=F, USD/troy ounce) ผ่าน Yahoo proxy — metals.live โดน CORS เรียกจาก browser ไม่ได้
+    const gold = await fetchYahooChart('GC=F');
+    if (gold && gold.price > 0) {
+      // USD/oz → USD/กรัม → USD/บาททอง (1 บาททอง = 15.244 กรัม, 1 troy oz = 31.1035 กรัม)
+      const pricePerGramUSD = gold.price / 31.1035;
+      const pricePerBahtTongUSD = pricePerGramUSD * 15.244;
+      return await convertCurrency(pricePerBahtTongUSD, 'USD', targetCurrency);
+    }
   } catch (error) {
     console.error('Error fetching gold price:', error);
-    // fallback ราคาประมาณ (คำนวณจาก THB คงที่ ~30000 แปลงเป็นสกุลเงินปลายทาง)
-    return targetCurrency === 'THB' ? 30000 : await convertCurrency(30000, 'THB', targetCurrency);
   }
+  return null;
 }
 
 // ========================
