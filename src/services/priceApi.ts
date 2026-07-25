@@ -301,32 +301,35 @@ export async function getGoldPrice(targetCurrency: string = 'THB'): Promise<numb
 // แท่งเทียนรายวัน — เช็ค 2 วันแดงติด (close < open) สำหรับ crypto/หุ้น
 // ========================
 
-// ถ้า 2 แท่งสุดท้ายแดงติดกัน คืน % ที่ลง (open แท่งแรก → close แท่งสุดท้าย, ค่าติดลบ)
-// ไม่ใช่ 2 แดงติด → คืน null
-function lastTwoRedDropPercent(opens: any[], closes: any[]): number | null {
+// หา "2 แท่งแดงติดกัน" คู่ล่าสุดในช่วงที่ดึงมา (แท่งแดง = close < open)
+// คืน % ที่ลง (open แท่งแรกของคู่ → close แท่งหลัง, ค่าติดลบ) — ไม่พบคู่แดงติด → null
+function recentTwoRedDrop(opens: any[], closes: any[]): number | null {
   const pairs: [number, number][] = [];
   for (let i = 0; i < opens.length; i++) {
     const o = parseFloat(opens[i]);
     const c = parseFloat(closes[i]);
     if (!isNaN(o) && !isNaN(c)) pairs.push([o, c]);
   }
-  if (pairs.length < 2) return null;
-  const [d1, d2] = pairs.slice(-2);
-  if (d1[1] < d1[0] && d2[1] < d2[0]) {
-    return ((d2[1] - d1[0]) / d1[0]) * 100; // จาก open วันแรก → close วันสุดท้าย
+  // ไล่จากท้าย หา 2 แท่งแดงติดกันคู่ที่ใหม่ที่สุด
+  for (let i = pairs.length - 1; i >= 1; i--) {
+    const [o2, c2] = pairs[i];
+    const [o1, c1] = pairs[i - 1];
+    if (c1 < o1 && c2 < o2) {
+      return ((c2 - o1) / o1) * 100;
+    }
   }
   return null;
 }
 
-// คืน % ที่ลง (ค่าลบ) ถ้า 2 วันแดงติด, null = ไม่ใช่/เช็คไม่ได้
+// คืน % ที่ลง (ค่าลบ) ถ้ามี 2 วันแดงติดในช่วงล่าสุด, null = ไม่มี/เช็คไม่ได้
 export async function getTwoRedDays(type: string, symbol: string): Promise<number | null> {
   try {
     if (type === 'crypto') {
       const up = symbol.toUpperCase();
-      const res = await fetchWithTimeout(`${BINANCE_API}/klines?symbol=${up}USDT&interval=1d&limit=3`);
+      const res = await fetchWithTimeout(`${BINANCE_API}/klines?symbol=${up}USDT&interval=1d&limit=5`);
       if (!res.ok) return null; // เหรียญไม่มีคู่เทรดบน Binance
       const data: any[] = await res.json(); // [[openTime, open, high, low, close, ...], ...]
-      return lastTwoRedDropPercent(data.map((k) => k[1]), data.map((k) => k[4]));
+      return recentTwoRedDrop(data.map((k) => k[1]), data.map((k) => k[4]));
     }
     if (type === 'stock_th' || type === 'stock_foreign') {
       const attempts = symbol.includes('.')
@@ -339,7 +342,7 @@ export async function getTwoRedDays(type: string, symbol: string): Promise<numbe
         if (!res.ok) continue;
         const data = await res.json();
         const q = data?.chart?.result?.[0]?.indicators?.quote?.[0];
-        if (q?.open && q?.close) return lastTwoRedDropPercent(q.open, q.close);
+        if (q?.open && q?.close) return recentTwoRedDrop(q.open, q.close);
       }
       return null;
     }
