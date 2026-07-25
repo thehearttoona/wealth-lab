@@ -14,6 +14,7 @@ export interface Investment {
   buyDate: string;       // วันที่ซื้อ
   notes?: string;        // บันทึกเพิ่มเติม
   fees?: number;         // ค่าธรรมเนียม
+  platform?: string;     // แพลตฟอร์มที่ลงทุน เช่น Bitkub, Streaming, Dime
   targetReturnPercent?: number; // เป้าหมายกำไร % (เช่น 10 = +10%)
   targetDate?: string;   // วันที่ต้องการให้ถึงเป้า (ISO) — ใช้คำนวณ "ต้องโตปีละกี่ %"
 }
@@ -44,6 +45,14 @@ export interface PortfolioSummary {
     };
   };
 }
+
+// แพลตฟอร์มยอดนิยม (เป็นแค่ตัวเลือกช่วยกรอก — พิมพ์เองได้)
+export const INVESTMENT_PLATFORMS = [
+  'Bitkub', 'Binance', 'Bitazza',
+  'Streaming', 'InnovestX', 'Dime!', 'Webull', 'IBKR',
+  'FINNOMENA', 'K-My Funds', 'SCB EASY',
+  'ฮั่วเซ่งเฮง', 'YLG',
+];
 
 export const INVESTMENT_TYPES: { value: InvestmentType; label: string; icon: any }[] = [
   { value: 'stock_th', label: 'หุ้นไทย', icon: 'trending-up-outline' },

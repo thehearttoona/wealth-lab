@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
-import { Investment, InvestmentType, INVESTMENT_TYPES, Currency } from '../types/investment';
+import { Investment, InvestmentType, INVESTMENT_TYPES, INVESTMENT_PLATFORMS, Currency } from '../types/investment';
 import { saveInvestment, updateInvestment } from '../services/investmentStorage';
 import { updateInvestmentPrice, searchCryptoList, CryptoSearchResult, searchStockList, StockSearchResult } from '../services/priceApi';
 import { searchFundList, FundCatalogItem } from '../services/fundCatalog';
@@ -41,6 +41,7 @@ export default function AddInvestmentScreen() {
   const [currentPrice, setCurrentPrice] = useState('');
   const [fees, setFees] = useState('');
   const [notes, setNotes] = useState('');
+  const [platform, setPlatform] = useState('');
   const [isFetchingPrice, setIsFetchingPrice] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<CryptoSearchResult[]>([]);
@@ -60,6 +61,7 @@ export default function AddInvestmentScreen() {
       setCurrentPrice(investment.currentPrice?.toString() || '');
       setFees(investment.fees?.toString() || '');
       setNotes(investment.notes || '');
+      setPlatform(investment.platform || '');
     }
   }, [investment]);
 
@@ -233,6 +235,7 @@ export default function AddInvestmentScreen() {
         buyDate: investment?.buyDate || new Date().toISOString(),
         fees: fees ? parseFloat(fees) : undefined,
         notes: notes.trim() || undefined,
+        platform: platform.trim() || undefined,
       };
 
       if (isEditing) {
@@ -586,6 +589,28 @@ export default function AddInvestmentScreen() {
           </View>
         </View>
 
+        <Text style={styles.label}>แพลตฟอร์มที่ลงทุน</Text>
+        <View style={styles.platformChips}>
+          {INVESTMENT_PLATFORMS.map((p) => (
+            <TouchableOpacity
+              key={p}
+              style={[styles.platformChip, platform === p && styles.platformChipActive]}
+              onPress={() => setPlatform(platform === p ? '' : p)}
+            >
+              <Text style={[styles.platformChipText, platform === p && styles.platformChipTextActive]}>
+                {p}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TextInput
+          style={styles.input}
+          value={platform}
+          onChangeText={setPlatform}
+          placeholder="หรือพิมพ์ชื่อแพลตฟอร์มเอง"
+          placeholderTextColor={COLORS.textSecondary}
+        />
+
         <Text style={styles.label}>บันทึกเพิ่มเติม</Text>
         <TextInput
           style={[styles.input, styles.textArea]}
@@ -711,6 +736,32 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   currencyButtonTextActive: {
+    color: '#ffffff',
+  },
+  platformChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  platformChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 0,
+    backgroundColor: COLORS.surface,
+  },
+  platformChipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  platformChipText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
+  },
+  platformChipTextActive: {
     color: '#ffffff',
   },
   realtimeButton: {

@@ -275,7 +275,10 @@ export default function PortfolioScreen() {
               <Ionicons name={getTypeIcon(item.type) as any} size={24} color={COLORS.primary} />
               <View style={styles.investmentInfo}>
                 <Text style={styles.investmentName}>{item.name}</Text>
-                <Text style={styles.investmentSymbol}>{item.symbol}</Text>
+                <Text style={styles.investmentSymbol}>
+                  {item.symbol}
+                  {item.platform ? ` • ${item.platform}` : ''}
+                </Text>
               </View>
             </View>
             <View style={styles.investmentDetails}>
