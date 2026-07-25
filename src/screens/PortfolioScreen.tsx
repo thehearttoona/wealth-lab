@@ -28,6 +28,7 @@ import { updateInvestmentPrice } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import { getTakeProfitSuggestion } from '../utils/takeProfit';
+import { getHoldingAnnualGrowth, getYearsToTarget } from '../utils/holdingAnalysis';
 import { useResponsive } from '../utils/responsive';
 
 
@@ -190,6 +191,9 @@ export default function PortfolioScreen() {
     const profitPercent = cost > 0 ? (profit / cost) * 100 : 0;
     const isProfit = profit >= 0;
     const tp = getTakeProfitSuggestion(item.type, profitPercent);
+    // วิเคราะห์รายตัว: โตเฉลี่ย/ปี (จากวันซื้อ) + คาดอีกกี่ปีถึงจุดขายทำกำไร
+    const growth = getHoldingAnnualGrowth(item.buyDate, item.buyPrice, currentPriceNative);
+    const yearsToTarget = getYearsToTarget(profitPercent, tp.suggestedPercent, growth.annualReturnPercent);
 
     return (
       <View style={[
@@ -238,6 +242,18 @@ export default function PortfolioScreen() {
               {profitPercent > 0 ? ` • อีก ${tp.gapPercent.toFixed(1)}%` : ''}
             </Text>
           )}
+          {growth.tooNew ? (
+            <Text style={styles.tpSubText}>ถือ &lt; 3 เดือน ยังประเมินโต/ปีไม่ได้</Text>
+          ) : growth.annualReturnPercent != null ? (
+            <Text style={styles.tpSubText}>
+              โตเฉลี่ย ~{growth.annualReturnPercent >= 0 ? '+' : ''}{growth.annualReturnPercent.toFixed(1)}%/ปี
+              {!tp.reached && yearsToTarget != null && yearsToTarget > 0
+                ? ` • คาดถึงจุดขายในอีก ~${yearsToTarget.toFixed(1)} ปี`
+                : !tp.reached && growth.annualReturnPercent <= 0
+                  ? ' • ราคายังไม่โต ยังคาดวันถึงจุดขายไม่ได้'
+                  : ''}
+            </Text>
+          ) : null}
         </View>
         <TouchableOpacity
           style={styles.deleteButton}
@@ -286,6 +302,19 @@ export default function PortfolioScreen() {
   const goalAnalysis: PortfolioGoalAnalysis | null = goal
     ? analyzePortfolioGoal(goal, summary.totalValue, summary.totalCost, portfolioStartDate)
     : null;
+
+  // รายการที่ติดลบ เรียงจากลบมากสุด
+  const losers = investments
+    .map((inv) => {
+      const buyTHB = convertToTHB(inv.buyPrice, inv.currency);
+      const curTHB = convertToTHB(inv.currentPrice ?? inv.buyPrice, inv.currency);
+      const cost = buyTHB * inv.quantity + (inv.fees || 0);
+      const value = curTHB * inv.quantity;
+      const pct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
+      return { inv, pct };
+    })
+    .filter((h) => h.pct < 0)
+    .sort((a, b) => a.pct - b.pct);
 
   const listHeaderElement = (
       <View>
@@ -425,6 +454,18 @@ export default function PortfolioScreen() {
           )
         )}
 
+        {losers.length > 0 && (
+          <View style={styles.losersCard}>
+            <Text style={styles.losersTitle}>🔻 ติดลบมากสุด</Text>
+            {losers.slice(0, 5).map(({ inv, pct }) => (
+              <View key={inv.id} style={styles.loserRow}>
+                <Text style={styles.loserName} numberOfLines={1}>{inv.symbol || inv.name}</Text>
+                <Text style={styles.loserPct}>{pct.toFixed(2)}%</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         <View style={styles.listHeader}>
           <Text style={styles.listTitle}>รายการลงทุน</Text>
           <Text style={styles.tpNote}>* เป้าขายทำกำไรเป็นแนวทางทั่วไปตามประเภทสินทรัพย์</Text>
@@ -555,7 +596,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   summaryContainer: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 0,
     padding: 16,
   },
@@ -563,15 +604,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'NotoSansThai_400Regular',
     color: '#ffffff',
-    opacity: 0.9,
-    marginBottom: 4,
   },
   summaryValue: {
     fontSize: 32,
     fontWeight: 'bold',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: '#ffffff',
-    marginBottom: 8,
   },
   profitContainer: {
     flexDirection: 'row',
@@ -636,7 +674,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
   },
   goalCardSub: {
     fontSize: 12,
@@ -669,6 +706,44 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
+  },
+  tpSubText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.accent,
+    marginTop: 3,
+  },
+  losersCard: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+  },
+  losersTitle: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  loserRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  loserName: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.text,
+    marginRight: 12,
+  },
+  loserPct: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.error,
   },
   tpNote: {
     fontSize: 10,
