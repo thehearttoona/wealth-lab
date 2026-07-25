@@ -24,9 +24,10 @@ import {
   updateInvestment,
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, COLORS } from '../utils/constants';
-import { updateInvestmentPrice } from '../services/priceApi';
+import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
+import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
 import { getTakeProfitSuggestion } from '../utils/takeProfit';
 import { getHoldingAnnualGrowth, getYearsToTarget } from '../utils/holdingAnalysis';
 import { useResponsive } from '../utils/responsive';
@@ -53,6 +54,11 @@ export default function PortfolioScreen() {
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [goalTargetInput, setGoalTargetInput] = useState('');
   const [goalExpectedInput, setGoalExpectedInput] = useState('');
+  const [plan, setPlan] = useState<InvestmentPlan | null>(null);
+  const [planModalVisible, setPlanModalVisible] = useState(false);
+  const [planReserveInput, setPlanReserveInput] = useState('');
+  const [planRoundsInput, setPlanRoundsInput] = useState('');
+  const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string }[]>([]);
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
@@ -64,6 +70,27 @@ export default function PortfolioScreen() {
     } catch {
       // ยังไม่มีตาราง/ยังไม่ตั้งเป้า — ปล่อยเป็น null
     }
+    try {
+      setPlan(await getInvestmentPlan());
+    } catch {
+      // ยังไม่มีตาราง/ยังไม่ตั้งแผน — ปล่อยเป็น null
+    }
+
+    // เช็ค 2 วันแดงติด (เฉพาะ crypto/หุ้น) — ทำแบบ background ไม่บล็อกการโหลด
+    const candleTargets = allInvestments.filter((i) =>
+      ['crypto', 'stock_th', 'stock_foreign'].includes(i.type)
+    );
+    Promise.all(
+      candleTargets.map(async (i) => ({ inv: i, red: await getTwoRedDays(i.type, i.symbol) }))
+    )
+      .then((results) =>
+        setRedAlerts(
+          results
+            .filter((r) => r.red === true)
+            .map((r) => ({ symbol: r.inv.symbol, name: r.inv.name }))
+        )
+      )
+      .catch(() => {});
   };
 
   const showMsg = (msg: string) => {
@@ -101,6 +128,37 @@ export default function PortfolioScreen() {
       setGoalModalVisible(false);
     } catch {
       showMsg('ลบเป้าหมายไม่สำเร็จ');
+    }
+  };
+
+  const openPlanModal = () => {
+    setPlanReserveInput(plan?.cashReserve?.toString() || '');
+    setPlanRoundsInput(plan?.dcaRounds?.toString() || '');
+    setPlanModalVisible(true);
+  };
+
+  const handleSavePlan = async () => {
+    const reserve = parseFloat(planReserveInput.replace(/,/g, ''));
+    const rounds = parseInt(planRoundsInput, 10);
+    if (!reserve || reserve <= 0) { showMsg('กรุณากรอกเงินสำรองที่ถูกต้อง'); return; }
+    if (!rounds || rounds <= 0) { showMsg('กรุณากรอกจำนวนรอบที่ถูกต้อง'); return; }
+    try {
+      const newPlan: InvestmentPlan = { cashReserve: reserve, dcaRounds: rounds };
+      await saveInvestmentPlan(newPlan);
+      setPlan(newPlan);
+      setPlanModalVisible(false);
+    } catch {
+      showMsg('บันทึกแผนไม่สำเร็จ');
+    }
+  };
+
+  const handleDeletePlan = async () => {
+    try {
+      await deleteInvestmentPlan();
+      setPlan(null);
+      setPlanModalVisible(false);
+    } catch {
+      showMsg('ลบแผนไม่สำเร็จ');
     }
   };
 
@@ -433,6 +491,44 @@ export default function PortfolioScreen() {
           )}
         </View>
 
+        {/* ── การ์ดแผนเติมเงิน (เงินสำรอง ÷ รอบ) ── */}
+        <View style={styles.goalCard}>
+          <View style={styles.goalCardHeader}>
+            <Text style={styles.goalCardTitle}>💰 แผนเติมเงินต่อรอบ</Text>
+            <TouchableOpacity onPress={openPlanModal}>
+              <Text style={styles.goalCardEdit}>{plan ? 'แก้ไข' : 'ตั้งแผน'}</Text>
+            </TouchableOpacity>
+          </View>
+          {!plan ? (
+            <Text style={styles.goalCardEmpty}>
+              ตั้งเงินสำรองที่รอลงทุน + จำนวนรอบ แล้วระบบจะบอกว่าควรลงต่อรอบ/ต่อหุ้นเท่าไหร่
+            </Text>
+          ) : (
+            (() => {
+              const perRound = plan.cashReserve / plan.dcaRounds;
+              const n = Math.max(1, investments.length);
+              const perHolding = perRound / n;
+              return (
+                <>
+                  <Text style={styles.goalCardSub}>
+                    เงินสำรอง {formatCurrency(plan.cashReserve)} • {plan.dcaRounds} รอบ
+                  </Text>
+                  <View style={styles.horizonBox}>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>ลงได้ต่อรอบ</Text>
+                      <Text style={styles.horizonRate}>{formatCurrency(perRound)}</Text>
+                    </View>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>ต่อหุ้น/รอบ ({n} ตัว)</Text>
+                      <Text style={styles.horizonRate}>{formatCurrency(perHolding)}</Text>
+                    </View>
+                  </View>
+                </>
+              );
+            })()
+          )}
+        </View>
+
         {Object.keys(summary.byType).length > 0 && (
           isDesktop ? (
             <View style={styles.typeWrapContainer}>
@@ -452,6 +548,18 @@ export default function PortfolioScreen() {
               )}
             </ScrollView>
           )
+        )}
+
+        {redAlerts.length > 0 && (
+          <View style={styles.losersCard}>
+            <Text style={styles.losersTitle}>⚠️ ราคาลง 2 วันติด</Text>
+            {redAlerts.map((a) => (
+              <View key={a.symbol} style={styles.loserRow}>
+                <Text style={styles.loserName} numberOfLines={1}>{a.symbol || a.name}</Text>
+                <Text style={styles.loserPct}>แดง 2 วัน</Text>
+              </View>
+            ))}
+          </View>
         )}
 
         {losers.length > 0 && (
@@ -552,6 +660,51 @@ export default function PortfolioScreen() {
                 </TouchableOpacity>
               )}
               <TouchableOpacity onPress={() => setGoalModalVisible(false)}>
+                <Text style={styles.modalCancelText}>ยกเลิก</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Modal ตั้ง/แก้แผนเติมเงิน ── */}
+      <Modal
+        visible={planModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPlanModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>💰 แผนเติมเงินต่อรอบ</Text>
+            <Text style={styles.modalLabel}>เงินสำรองรอลงทุน (บาท)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={planReserveInput}
+              onChangeText={setPlanReserveInput}
+              keyboardType="numeric"
+              placeholder="เช่น 100000"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+            <Text style={styles.modalLabel}>วางแผนทยอยลงกี่รอบ</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={planRoundsInput}
+              onChangeText={setPlanRoundsInput}
+              keyboardType="numeric"
+              placeholder="เช่น 10"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+            <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePlan}>
+              <Text style={styles.modalSaveBtnText}>บันทึกแผน</Text>
+            </TouchableOpacity>
+            <View style={styles.modalBottomRow}>
+              {plan && (
+                <TouchableOpacity onPress={handleDeletePlan}>
+                  <Text style={styles.modalDeleteText}>ลบแผน</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => setPlanModalVisible(false)}>
                 <Text style={styles.modalCancelText}>ยกเลิก</Text>
               </TouchableOpacity>
             </View>
