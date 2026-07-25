@@ -369,19 +369,22 @@ export default function PortfolioScreen() {
     ? analyzePortfolioGoal(goal, summary.totalValue, summary.totalCost, portfolioStartDate)
     : null;
 
-  // รายการที่กำไรถึงจุดขายทำกำไรแล้ว (currentReturn >= เป้าตามประเภทสินทรัพย์) เรียงกำไรมากสุดก่อน
+  // ตัวที่กำไร (ทั้งที่ถึงเป้าและยังไม่ถึง) — โชว์ % + คาดกี่ปีถึงเป้าขายทำกำไร เรียงใกล้/เกินเป้าก่อน
   const shouldSell = investments
     .map((inv) => {
+      const curNative = inv.currentPrice ?? inv.buyPrice;
       const buyTHB = convertToTHB(inv.buyPrice, inv.currency);
-      const curTHB = convertToTHB(inv.currentPrice ?? inv.buyPrice, inv.currency);
+      const curTHB = convertToTHB(curNative, inv.currency);
       const cost = buyTHB * inv.quantity + (inv.fees || 0);
       const value = curTHB * inv.quantity;
       const pct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
       const target = getTakeProfitSuggestion(inv.type, pct).suggestedPercent;
-      return { inv, pct, target };
+      const growth = getHoldingAnnualGrowth(inv.buyDate, inv.buyPrice, curNative);
+      const yearsToTarget = getYearsToTarget(pct, target, growth.annualReturnPercent);
+      return { inv, pct, target, reached: pct >= target, yearsToTarget };
     })
-    .filter((h) => h.pct >= h.target)
-    .sort((a, b) => b.pct - a.pct);
+    .filter((h) => h.pct > 0)
+    .sort((a, b) => b.pct / b.target - a.pct / a.target);
 
   const listHeaderElement = (
       <View>
@@ -503,7 +506,9 @@ export default function PortfolioScreen() {
         {/* ── การ์ดแผนเติมเงิน: กันเงินเดือน % → สะสม − ลงทุนไปแล้ว = เหลือรอลงทุน ── */}
         <View style={styles.goalCard}>
           <View style={styles.goalCardHeader}>
-            <Text style={styles.goalCardTitle}>💰 แผนเติมเงินต่อรอบ</Text>
+            <Text style={styles.goalCardTitle}>
+              <Ionicons name="wallet-outline" size={18} color={COLORS.primary} /> แผนเติมเงินต่อรอบ
+            </Text>
             <TouchableOpacity onPress={openPlanModal}>
               <Text style={styles.goalCardEdit}>{plan ? 'แก้ไข' : 'ตั้งแผน'}</Text>
             </TouchableOpacity>
@@ -581,7 +586,10 @@ export default function PortfolioScreen() {
 
         {redAlerts.length > 0 && (
           <View style={styles.losersCard}>
-            <Text style={styles.losersTitle}>⚠️ ราคาลง 2 วันติด</Text>
+            <View style={styles.cardTitleRow}>
+              <Ionicons name="warning" size={16} color={COLORS.error} />
+              <Text style={styles.losersTitle}>ราคาลง 2 วันติด</Text>
+            </View>
             {redAlerts.map((a) => (
               <View key={a.symbol} style={styles.loserRow}>
                 <Text style={styles.loserName} numberOfLines={1}>{a.symbol || a.name}</Text>
@@ -593,12 +601,22 @@ export default function PortfolioScreen() {
 
         {shouldSell.length > 0 && (
           <View style={styles.losersCard}>
-            <Text style={styles.losersTitle}>✅ ควรขายทำกำไร</Text>
-            {shouldSell.slice(0, 5).map(({ inv, pct, target }) => (
-              <View key={inv.id} style={styles.loserRow}>
-                <Text style={styles.loserName} numberOfLines={1}>{inv.symbol || inv.name}</Text>
-                <Text style={[styles.loserPct, { color: COLORS.success }]}>
-                  +{pct.toFixed(1)}% (เป้า +{target}%)
+            <View style={styles.cardTitleRow}>
+              <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
+              <Text style={styles.losersTitle}>ควรขายทำกำไร</Text>
+            </View>
+            {shouldSell.map(({ inv, pct, target, reached, yearsToTarget }) => (
+              <View key={inv.id} style={styles.sellItem}>
+                <View style={styles.loserRow}>
+                  <Text style={styles.loserName} numberOfLines={1}>{inv.symbol || inv.name}</Text>
+                  <Text style={[styles.loserPct, { color: COLORS.success }]}>+{pct.toFixed(1)}%</Text>
+                </View>
+                <Text style={styles.tpSubText}>
+                  เป้า +{target}% • {reached
+                    ? 'ถึงเป้าแล้ว'
+                    : yearsToTarget != null
+                      ? `คาดถึงเป้าในอีก ~${yearsToTarget.toFixed(1)} ปี`
+                      : 'ยังประเมินไม่ได้'}
                 </Text>
               </View>
             ))}
@@ -662,7 +680,9 @@ export default function PortfolioScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>🎯 เป้าหมายพอร์ตรวม</Text>
+            <Text style={styles.modalTitle}>
+              <Ionicons name="disc-outline" size={18} color={COLORS.primary} /> เป้าหมายพอร์ตรวม
+            </Text>
             <Text style={styles.modalLabel}>ยอดพอร์ตที่อยากได้ (บาท)</Text>
             <TextInput
               style={styles.modalInput}
@@ -707,7 +727,9 @@ export default function PortfolioScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>💰 แผนเติมเงินต่อรอบ</Text>
+            <Text style={styles.modalTitle}>
+              <Ionicons name="wallet-outline" size={18} color={COLORS.primary} /> แผนเติมเงินต่อรอบ
+            </Text>
             <Text style={styles.modalLabel}>กันเงินเดือนไปลงทุนกี่ % </Text>
             <TextInput
               style={styles.modalInput}
@@ -909,6 +931,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  sellItem: {
     marginBottom: 8,
   },
   loserRow: {
