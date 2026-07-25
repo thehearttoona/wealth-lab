@@ -49,7 +49,8 @@
       "Bash(npx tsc *)",
       "Bash(rm -rf dist-234)",
       "Bash(rm -rf dist-red)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(vercel deploy *)"
     ]
   }
 }

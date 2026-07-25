@@ -1125,7 +1125,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRadius: 0,
     padding: 16,
-    width: 160,
+    width: 200,
     elevation: 2,
     ...(Platform.OS === 'web' ? {
       boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
