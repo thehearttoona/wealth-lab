@@ -16,6 +16,7 @@ import { RootStackParamList } from '../types';
 import { Investment, InvestmentType, INVESTMENT_TYPES, Currency } from '../types/investment';
 import { saveInvestment, updateInvestment } from '../services/investmentStorage';
 import { updateInvestmentPrice, searchCryptoList, CryptoSearchResult, searchStockList, StockSearchResult } from '../services/priceApi';
+import { searchFundList, FundCatalogItem } from '../services/fundCatalog';
 import { COLORS } from '../utils/constants';
 
 type AddInvestmentScreenNavigationProp = NativeStackNavigationProp<
@@ -44,6 +45,7 @@ export default function AddInvestmentScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<CryptoSearchResult[]>([]);
   const [stockSearchResults, setStockSearchResults] = useState<StockSearchResult[]>([]);
+  const [fundSearchResults, setFundSearchResults] = useState<FundCatalogItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
 
@@ -116,6 +118,33 @@ export default function AddInvestmentScreen() {
     setSearchQuery('');
     setShowSearchResults(false);
     setStockSearchResults([]);
+  };
+
+  const handleSearchFund = async () => {
+    if (!searchQuery.trim()) {
+      setFundSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const results = await searchFundList(searchQuery);
+      setFundSearchResults(results);
+      setShowSearchResults(true);
+    } catch (error) {
+      console.error('Error searching fund:', error);
+      setFundSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleSelectFund = (fund: FundCatalogItem) => {
+    setSymbol(fund.abbr || fund.id);
+    setName(fund.name);
+    setSearchQuery('');
+    setShowSearchResults(false);
+    setFundSearchResults([]);
   };
 
   const handleFetchRealtime = async () => {
@@ -384,6 +413,56 @@ export default function AddInvestmentScreen() {
           </View>
         )}
 
+        {type === 'fund' && (
+          <View>
+            <Text style={styles.label}>ค้นหากองทุน</Text>
+            <View style={styles.searchContainer}>
+              <TextInput
+                style={[styles.input, styles.searchInput]}
+                value={searchQuery}
+                onChangeText={(text) => {
+                  setSearchQuery(text);
+                  if (text.trim().length === 0) {
+                    setShowSearchResults(false);
+                    setFundSearchResults([]);
+                  }
+                }}
+                placeholder="ค้นหาชื่อย่อ/ชื่อกองทุน เช่น K-USA, KFF6MHX"
+                placeholderTextColor={COLORS.textSecondary}
+              />
+              <TouchableOpacity
+                style={styles.searchButton}
+                onPress={handleSearchFund}
+                disabled={isSearching || !searchQuery.trim()}
+              >
+                <Ionicons name={isSearching ? 'sync' : 'search'} size={20} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
+
+            {showSearchResults && (
+              <View style={styles.searchResults}>
+                {fundSearchResults.length > 0 ? (
+                  fundSearchResults.map((fund) => (
+                    <TouchableOpacity
+                      key={fund.id}
+                      style={styles.searchResultItem}
+                      onPress={() => handleSelectFund(fund)}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.searchResultSymbol}>{fund.abbr || fund.id}</Text>
+                        <Text style={styles.searchResultName}>{fund.name}</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  ))
+                ) : (
+                  <Text style={styles.noResults}>ไม่พบผลลัพธ์</Text>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+
         <Text style={styles.label}>ตัวย่อ/รหัส *</Text>
         <TextInput
           style={styles.input}
@@ -477,7 +556,7 @@ export default function AddInvestmentScreen() {
         </View>
         {type === 'fund' && (
           <Text style={styles.fundHint}>
-            * กองทุนยังไม่รองรับดึง NAV อัตโนมัติ — กรอก NAV ที่ซื้อ (ต้นทุน) และ NAV ปัจจุบันเองจากใบยืนยัน/แอป บลจ.
+            * ค้นหากองทุนเพื่อเลือกชื่อได้ แต่ NAV ต้องกรอกเอง — ใส่ NAV ที่ซื้อ (ต้นทุน) และ NAV ปัจจุบันจากใบยืนยัน/แอป บลจ.
           </Text>
         )}
 
