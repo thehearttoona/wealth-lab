@@ -28,6 +28,7 @@ import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
+import { getIncomes } from '../services/incomeStorage';
 import { getTakeProfitSuggestion } from '../utils/takeProfit';
 import { getHoldingAnnualGrowth, getYearsToTarget } from '../utils/holdingAnalysis';
 import { useResponsive } from '../utils/responsive';
@@ -56,8 +57,9 @@ export default function PortfolioScreen() {
   const [goalExpectedInput, setGoalExpectedInput] = useState('');
   const [plan, setPlan] = useState<InvestmentPlan | null>(null);
   const [planModalVisible, setPlanModalVisible] = useState(false);
-  const [planReserveInput, setPlanReserveInput] = useState('');
+  const [planPercentInput, setPlanPercentInput] = useState('');
   const [planRoundsInput, setPlanRoundsInput] = useState('');
+  const [salaryTotal, setSalaryTotal] = useState(0);
   const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number }[]>([]);
 
   const loadData = async () => {
@@ -74,6 +76,12 @@ export default function PortfolioScreen() {
       setPlan(await getInvestmentPlan());
     } catch {
       // ยังไม่มีตาราง/ยังไม่ตั้งแผน — ปล่อยเป็น null
+    }
+    try {
+      const incomes = await getIncomes();
+      setSalaryTotal(incomes.filter((i) => i.category === 'เงินเดือน').reduce((s, i) => s + i.amount, 0));
+    } catch {
+      setSalaryTotal(0);
     }
 
     // เช็ค 2 วันแดงติด (เฉพาะ crypto/หุ้น) — ทำแบบ background ไม่บล็อกการโหลด
@@ -132,18 +140,18 @@ export default function PortfolioScreen() {
   };
 
   const openPlanModal = () => {
-    setPlanReserveInput(plan?.cashReserve?.toString() || '');
+    setPlanPercentInput(plan?.setAsidePercent?.toString() || '');
     setPlanRoundsInput(plan?.dcaRounds?.toString() || '');
     setPlanModalVisible(true);
   };
 
   const handleSavePlan = async () => {
-    const reserve = parseFloat(planReserveInput.replace(/,/g, ''));
+    const percent = parseFloat(planPercentInput.replace(/,/g, ''));
     const rounds = parseInt(planRoundsInput, 10);
-    if (!reserve || reserve <= 0) { showMsg('กรุณากรอกเงินสำรองที่ถูกต้อง'); return; }
+    if (!percent || percent <= 0 || percent > 100) { showMsg('กรุณากรอก % ที่กันไว้ (1-100)'); return; }
     if (!rounds || rounds <= 0) { showMsg('กรุณากรอกจำนวนรอบที่ถูกต้อง'); return; }
     try {
-      const newPlan: InvestmentPlan = { cashReserve: reserve, dcaRounds: rounds };
+      const newPlan: InvestmentPlan = { setAsidePercent: percent, dcaRounds: rounds };
       await saveInvestmentPlan(newPlan);
       setPlan(newPlan);
       setPlanModalVisible(false);
@@ -492,7 +500,7 @@ export default function PortfolioScreen() {
           )}
         </View>
 
-        {/* ── การ์ดแผนเติมเงิน (เงินสำรอง ÷ รอบ) ── */}
+        {/* ── การ์ดแผนเติมเงิน: กันเงินเดือน % → สะสม − ลงทุนไปแล้ว = เหลือรอลงทุน ── */}
         <View style={styles.goalCard}>
           <View style={styles.goalCardHeader}>
             <Text style={styles.goalCardTitle}>💰 แผนเติมเงินต่อรอบ</Text>
@@ -502,19 +510,36 @@ export default function PortfolioScreen() {
           </View>
           {!plan ? (
             <Text style={styles.goalCardEmpty}>
-              ตั้งเงินสำรองที่รอลงทุน + จำนวนรอบ แล้วระบบจะบอกว่าควรลงต่อรอบ/ต่อหุ้นเท่าไหร่
+              ตั้ง "กันเงินเดือนกี่ %" + จำนวนรอบ → ระบบสะสมจากเงินเดือนที่บันทึกไว้ หักยอดที่ลงทุนแล้ว บอกว่าลงได้ต่อรอบ/ต่อหุ้นเท่าไหร่
             </Text>
           ) : (
             (() => {
-              const perRound = plan.cashReserve / plan.dcaRounds;
+              const setAside = salaryTotal * (plan.setAsidePercent / 100);
+              const reserve = setAside - summary.totalCost; // เหลือรอลงทุน (อาจติดลบ = ลงเกินที่กันไว้)
+              const usable = Math.max(0, reserve);
+              const perRound = usable / plan.dcaRounds;
               const n = Math.max(1, investments.length);
               const perHolding = perRound / n;
               return (
                 <>
                   <Text style={styles.goalCardSub}>
-                    เงินสำรอง {formatCurrency(plan.cashReserve)} • {plan.dcaRounds} รอบ
+                    กันเงินเดือน {plan.setAsidePercent}% • {plan.dcaRounds} รอบ
                   </Text>
                   <View style={styles.horizonBox}>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>กันไว้สะสม (จากเงินเดือน)</Text>
+                      <Text style={styles.horizonRate}>{formatCurrency(setAside)}</Text>
+                    </View>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>ลงทุนไปแล้ว</Text>
+                      <Text style={styles.horizonRate}>{formatCurrency(summary.totalCost)}</Text>
+                    </View>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>เหลือรอลงทุน</Text>
+                      <Text style={[styles.horizonRate, reserve < 0 && { color: COLORS.error }]}>
+                        {formatCurrency(reserve)}
+                      </Text>
+                    </View>
                     <View style={styles.horizonRow}>
                       <Text style={styles.horizonYears}>ลงได้ต่อรอบ</Text>
                       <Text style={styles.horizonRate}>{formatCurrency(perRound)}</Text>
@@ -524,6 +549,9 @@ export default function PortfolioScreen() {
                       <Text style={styles.horizonRate}>{formatCurrency(perHolding)}</Text>
                     </View>
                   </View>
+                  {reserve < 0 && (
+                    <Text style={styles.tpSubText}>* ลงทุนเกินงบที่กันไว้แล้ว</Text>
+                  )}
                 </>
               );
             })()
@@ -680,13 +708,13 @@ export default function PortfolioScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>💰 แผนเติมเงินต่อรอบ</Text>
-            <Text style={styles.modalLabel}>เงินสำรองรอลงทุน (บาท)</Text>
+            <Text style={styles.modalLabel}>กันเงินเดือนไปลงทุนกี่ % </Text>
             <TextInput
               style={styles.modalInput}
-              value={planReserveInput}
-              onChangeText={setPlanReserveInput}
+              value={planPercentInput}
+              onChangeText={setPlanPercentInput}
               keyboardType="numeric"
-              placeholder="เช่น 100000"
+              placeholder="เช่น 20"
               placeholderTextColor={COLORS.textSecondary}
             />
             <Text style={styles.modalLabel}>วางแผนทยอยลงกี่รอบ</Text>

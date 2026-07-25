@@ -1,8 +1,8 @@
 import { supabase } from './supabase';
 
 export interface InvestmentPlan {
-  cashReserve: number;  // เงินสำรองรอลงทุน (บาท)
-  dcaRounds: number;    // จำนวนรอบที่วางแผนจะทยอยลง
+  setAsidePercent: number; // กันเงินเดือนกี่ % ไปลงทุน
+  dcaRounds: number;       // จำนวนรอบที่วางแผนจะทยอยลง
 }
 
 const getUserId = async (): Promise<string> => {
@@ -17,15 +17,15 @@ export const getInvestmentPlan = async (): Promise<InvestmentPlan | null> => {
     .select('*')
     .maybeSingle();
   if (error) throw error;
-  if (!data || data.cash_reserve == null || data.dca_rounds == null) return null;
-  return { cashReserve: data.cash_reserve, dcaRounds: data.dca_rounds };
+  if (!data || data.salary_set_aside_percent == null || data.dca_rounds == null) return null;
+  return { setAsidePercent: data.salary_set_aside_percent, dcaRounds: data.dca_rounds };
 };
 
 export const saveInvestmentPlan = async (plan: InvestmentPlan): Promise<void> => {
   const userId = await getUserId();
   const { error } = await supabase.from('investment_plan').upsert({
     user_id: userId,
-    cash_reserve: plan.cashReserve,
+    salary_set_aside_percent: plan.setAsidePercent,
     dca_rounds: plan.dcaRounds,
   });
   if (error) throw error;
