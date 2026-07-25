@@ -58,7 +58,7 @@ export default function PortfolioScreen() {
   const [planModalVisible, setPlanModalVisible] = useState(false);
   const [planReserveInput, setPlanReserveInput] = useState('');
   const [planRoundsInput, setPlanRoundsInput] = useState('');
-  const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string }[]>([]);
+  const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number }[]>([]);
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
@@ -81,13 +81,13 @@ export default function PortfolioScreen() {
       ['crypto', 'stock_th', 'stock_foreign'].includes(i.type)
     );
     Promise.all(
-      candleTargets.map(async (i) => ({ inv: i, red: await getTwoRedDays(i.type, i.symbol) }))
+      candleTargets.map(async (i) => ({ inv: i, drop: await getTwoRedDays(i.type, i.symbol) }))
     )
       .then((results) =>
         setRedAlerts(
           results
-            .filter((r) => r.red === true)
-            .map((r) => ({ symbol: r.inv.symbol, name: r.inv.name }))
+            .filter((r) => r.drop !== null)
+            .map((r) => ({ symbol: r.inv.symbol, name: r.inv.name, dropPercent: r.drop as number }))
         )
       )
       .catch(() => {});
@@ -304,7 +304,7 @@ export default function PortfolioScreen() {
             <Text style={styles.tpSubText}>ถือ &lt; 3 เดือน ยังประเมินโต/ปีไม่ได้</Text>
           ) : growth.annualReturnPercent != null ? (
             <Text style={styles.tpSubText}>
-              โตเฉลี่ย ~{growth.annualReturnPercent >= 0 ? '+' : ''}{growth.annualReturnPercent.toFixed(1)}%/ปี
+              AVG โตเฉลี่ย ~{growth.annualReturnPercent >= 0 ? '+' : ''}{growth.annualReturnPercent.toFixed(1)}%/ปี
               {!tp.reached && yearsToTarget != null && yearsToTarget > 0
                 ? ` • คาดถึงจุดขายในอีก ~${yearsToTarget.toFixed(1)} ปี`
                 : !tp.reached && growth.annualReturnPercent <= 0
@@ -361,18 +361,19 @@ export default function PortfolioScreen() {
     ? analyzePortfolioGoal(goal, summary.totalValue, summary.totalCost, portfolioStartDate)
     : null;
 
-  // รายการที่ติดลบ เรียงจากลบมากสุด
-  const losers = investments
+  // รายการที่กำไรถึงจุดขายทำกำไรแล้ว (currentReturn >= เป้าตามประเภทสินทรัพย์) เรียงกำไรมากสุดก่อน
+  const shouldSell = investments
     .map((inv) => {
       const buyTHB = convertToTHB(inv.buyPrice, inv.currency);
       const curTHB = convertToTHB(inv.currentPrice ?? inv.buyPrice, inv.currency);
       const cost = buyTHB * inv.quantity + (inv.fees || 0);
       const value = curTHB * inv.quantity;
       const pct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
-      return { inv, pct };
+      const target = getTakeProfitSuggestion(inv.type, pct).suggestedPercent;
+      return { inv, pct, target };
     })
-    .filter((h) => h.pct < 0)
-    .sort((a, b) => a.pct - b.pct);
+    .filter((h) => h.pct >= h.target)
+    .sort((a, b) => b.pct - a.pct);
 
   const listHeaderElement = (
       <View>
@@ -556,19 +557,21 @@ export default function PortfolioScreen() {
             {redAlerts.map((a) => (
               <View key={a.symbol} style={styles.loserRow}>
                 <Text style={styles.loserName} numberOfLines={1}>{a.symbol || a.name}</Text>
-                <Text style={styles.loserPct}>แดง 2 วัน</Text>
+                <Text style={styles.loserPct}>{a.dropPercent.toFixed(2)}%</Text>
               </View>
             ))}
           </View>
         )}
 
-        {losers.length > 0 && (
+        {shouldSell.length > 0 && (
           <View style={styles.losersCard}>
-            <Text style={styles.losersTitle}>🔻 ติดลบมากสุด</Text>
-            {losers.slice(0, 5).map(({ inv, pct }) => (
+            <Text style={styles.losersTitle}>✅ ควรขายทำกำไร</Text>
+            {shouldSell.slice(0, 5).map(({ inv, pct, target }) => (
               <View key={inv.id} style={styles.loserRow}>
                 <Text style={styles.loserName} numberOfLines={1}>{inv.symbol || inv.name}</Text>
-                <Text style={styles.loserPct}>{pct.toFixed(2)}%</Text>
+                <Text style={[styles.loserPct, { color: COLORS.success }]}>
+                  +{pct.toFixed(1)}% (เป้า +{target}%)
+                </Text>
               </View>
             ))}
           </View>
