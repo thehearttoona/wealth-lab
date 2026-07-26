@@ -30,6 +30,8 @@ import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../ser
 import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
 import { getIncomes } from '../services/incomeStorage';
 import { getExpenses } from '../services/storage';
+import { getAccounts } from '../services/accountStorage';
+import { Account } from '../types/account';
 import { getTakeProfitSuggestion } from '../utils/takeProfit';
 import { getHoldingAnnualGrowth, getYearsToTarget } from '../utils/holdingAnalysis';
 import { useResponsive } from '../utils/responsive';
@@ -62,6 +64,7 @@ export default function PortfolioScreen() {
   const [planRoundsInput, setPlanRoundsInput] = useState('');
   const [monthSalary, setMonthSalary] = useState(0);   // เงินเดือนที่บันทึกในเดือนปัจจุบัน
   const [monthExpense, setMonthExpense] = useState(0); // รายจ่ายรวมในเดือนปัจจุบัน
+  const [reserveAccounts, setReserveAccounts] = useState<Account[]>([]); // บัญชีบทบาท "รอลงทุน"
   const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number }[]>([]);
 
   const loadData = async () => {
@@ -78,6 +81,12 @@ export default function PortfolioScreen() {
       setPlan(await getInvestmentPlan());
     } catch {
       // ยังไม่มีตาราง/ยังไม่ตั้งแผน — ปล่อยเป็น null
+    }
+    try {
+      const accs = await getAccounts();
+      setReserveAccounts(accs.filter((a) => a.role === 'reserve'));
+    } catch {
+      setReserveAccounts([]);
     }
     try {
       // เดือนปัจจุบันเป็น YYYY-MM แล้วกรองเฉพาะรายการของเดือนนี้ (แปลง พ.ศ.→ค.ศ. ก่อน)
@@ -113,6 +122,8 @@ export default function PortfolioScreen() {
           results
             .filter((r) => r.drop !== null)
             .map((r) => ({ symbol: r.inv.symbol, name: r.inv.name, dropPercent: r.drop as number }))
+            // เรียงจากลบเยอะสุด → น้อยสุด (dropPercent เป็นค่าลบ)
+            .sort((a, b) => a.dropPercent - b.dropPercent)
         )
       )
       .catch(() => {});
@@ -458,6 +469,13 @@ export default function PortfolioScreen() {
             <Ionicons name="add-circle-outline" size={18} color="#ffffff" />
             <Text style={styles.addButtonText}> เพิ่มการลงทุน</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.addButton, styles.updateButton]}
+            onPress={() => navigation.navigate('Accounts')}
+          >
+            <Ionicons name="wallet-outline" size={18} color={COLORS.primary} />
+            <Text style={styles.updateButtonText}> บัญชี</Text>
+          </TouchableOpacity>
         </View>
 
         {/* ── การ์ดเป้าหมายพอร์ตรวม ── */}
@@ -592,6 +610,58 @@ export default function PortfolioScreen() {
             })()
           )}
         </View>
+
+        {/* ── การ์ดเงินรอลงทุน (สำรอง) หลายสกุล + สมการความมั่งคั่ง ── */}
+        {reserveAccounts.length > 0 && (() => {
+          const reserveTHB = reserveAccounts.reduce(
+            (s, a) => s + convertToTHB(a.manualBalance || 0, a.currency),
+            0
+          );
+          const wealth = reserveTHB + summary.totalValue;
+          return (
+            <View style={styles.goalCard}>
+              <View style={styles.goalCardHeader}>
+                <Text style={styles.goalCardTitle}>
+                  <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> เงินรอลงทุน (สำรอง)
+                </Text>
+              </View>
+              <View style={styles.horizonBox}>
+                {reserveAccounts.map((a) => (
+                  <View key={a.id} style={styles.horizonRow}>
+                    <Text style={styles.horizonYears}>
+                      {a.name} ({a.currency})
+                    </Text>
+                    <Text style={styles.horizonRate}>
+                      {formatCurrencyWithType(a.manualBalance || 0, a.currency)}
+                      {a.currency !== 'THB'
+                        ? ` ≈ ${formatCurrency(convertToTHB(a.manualBalance || 0, a.currency))}`
+                        : ''}
+                    </Text>
+                  </View>
+                ))}
+                <View style={[styles.horizonRow, styles.reserveTotalRow]}>
+                  <Text style={styles.reserveTotalLabel}>รวมเงินรอลงทุน (THB)</Text>
+                  <Text style={styles.reserveTotalValue}>{formatCurrency(reserveTHB)}</Text>
+                </View>
+              </View>
+              <View style={styles.wealthBox}>
+                <View style={styles.horizonRow}>
+                  <Text style={styles.horizonYears}>+ มูลค่าพอร์ต (ลงไปแล้ว)</Text>
+                  <Text style={styles.horizonRate}>{formatCurrency(summary.totalValue)}</Text>
+                </View>
+                <View style={[styles.horizonRow, styles.reserveTotalRow]}>
+                  <Text style={styles.reserveTotalLabel}>ความมั่งคั่งเพื่อลงทุนรวม</Text>
+                  <Text style={styles.reserveTotalValue}>{formatCurrency(wealth)}</Text>
+                </View>
+              </View>
+              {reserveAccounts.some((a) => a.manualBalance == null) && (
+                <Text style={styles.tpSubText}>
+                  * บางบัญชียังไม่ได้ใส่ยอด — ไปกรอกยอดคงเหลือที่หน้า "บัญชีของฉัน"
+                </Text>
+              )}
+            </View>
+          );
+        })()}
 
         {Object.keys(summary.byType).length > 0 && (
           isDesktop ? (
@@ -1024,6 +1094,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
+  },
+  reserveTotalRow: {
+    marginTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    paddingTop: 8,
+  },
+  reserveTotalLabel: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  reserveTotalValue: {
+    fontSize: 15,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+  },
+  wealthBox: {
+    marginTop: 10,
+    backgroundColor: `${COLORS.primary}0D`,
+    padding: 10,
   },
   modalOverlay: {
     flex: 1,

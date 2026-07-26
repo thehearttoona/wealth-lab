@@ -95,6 +95,8 @@ export type RootStackParamList = {
   IncomeScreen: undefined;
   Installments: undefined;
   AddInstallment: { plan?: InstallmentPlan };
+  Accounts: undefined;
+  ImportStatement: undefined;
 };
 
 export interface AIMessage {

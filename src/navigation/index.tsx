@@ -33,6 +33,8 @@ import AddIncomeScreen from '../screens/AddIncomeScreen';
 import IncomeScreen from '../screens/IncomeScreen';
 import InstallmentsScreen from '../screens/InstallmentsScreen';
 import AddInstallmentScreen from '../screens/AddInstallmentScreen';
+import AccountsScreen from '../screens/AccountsScreen';
+import ImportStatementScreen from '../screens/ImportStatementScreen';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 import AIAssistant from '../components/AIAssistant';
@@ -221,6 +223,16 @@ export default function Navigation() {
           name="AddInstallment"
           component={AddInstallmentScreen}
           options={{ title: 'เพิ่มรายการผ่อน' }}
+        />
+        <Stack.Screen
+          name="Accounts"
+          component={AccountsScreen}
+          options={{ title: 'บัญชีของฉัน' }}
+        />
+        <Stack.Screen
+          name="ImportStatement"
+          component={ImportStatementScreen}
+          options={{ title: 'นำเข้า statement' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

@@ -50,7 +50,9 @@
       "Bash(rm -rf dist-234)",
       "Bash(rm -rf dist-red)",
       "Bash(git commit *)",
-      "Bash(vercel deploy *)"
+      "Bash(vercel deploy *)",
+      "Bash(cat)",
+      "Bash(node ptest.mjs sample.txt)"
     ]
   }
 }
