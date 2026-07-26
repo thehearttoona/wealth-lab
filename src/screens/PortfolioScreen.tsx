@@ -23,12 +23,13 @@ import {
   getPortfolioSummary,
   updateInvestment,
 } from '../services/investmentStorage';
-import { formatCurrency, formatCurrencyWithType, convertToTHB, COLORS } from '../utils/constants';
+import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
 import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
 import { getIncomes } from '../services/incomeStorage';
+import { getExpenses } from '../services/storage';
 import { getTakeProfitSuggestion } from '../utils/takeProfit';
 import { getHoldingAnnualGrowth, getYearsToTarget } from '../utils/holdingAnalysis';
 import { useResponsive } from '../utils/responsive';
@@ -59,7 +60,8 @@ export default function PortfolioScreen() {
   const [planModalVisible, setPlanModalVisible] = useState(false);
   const [planPercentInput, setPlanPercentInput] = useState('');
   const [planRoundsInput, setPlanRoundsInput] = useState('');
-  const [salaryTotal, setSalaryTotal] = useState(0);
+  const [monthSalary, setMonthSalary] = useState(0);   // เงินเดือนที่บันทึกในเดือนปัจจุบัน
+  const [monthExpense, setMonthExpense] = useState(0); // รายจ่ายรวมในเดือนปัจจุบัน
   const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number }[]>([]);
 
   const loadData = async () => {
@@ -78,10 +80,25 @@ export default function PortfolioScreen() {
       // ยังไม่มีตาราง/ยังไม่ตั้งแผน — ปล่อยเป็น null
     }
     try {
-      const incomes = await getIncomes();
-      setSalaryTotal(incomes.filter((i) => i.category === 'เงินเดือน').reduce((s, i) => s + i.amount, 0));
+      // เดือนปัจจุบันเป็น YYYY-MM แล้วกรองเฉพาะรายการของเดือนนี้ (แปลง พ.ศ.→ค.ศ. ก่อน)
+      const now = new Date();
+      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const inThisMonth = (dateStr: string) => toChristianYear(dateStr || '').slice(0, 7) === monthKey;
+
+      const [incomes, expenses] = await Promise.all([getIncomes(), getExpenses()]);
+      setMonthSalary(
+        incomes
+          .filter((i) => i.category === 'เงินเดือน' && inThisMonth(i.date))
+          .reduce((s, i) => s + i.amount, 0)
+      );
+      setMonthExpense(
+        expenses
+          .filter((e) => e.type !== 'income' && inThisMonth(e.date))
+          .reduce((s, e) => s + e.amount, 0)
+      );
     } catch {
-      setSalaryTotal(0);
+      setMonthSalary(0);
+      setMonthExpense(0);
     }
 
     // เช็ค 2 วันแดงติด (เฉพาะ crypto/หุ้น) — ทำแบบ background ไม่บล็อกการโหลด
@@ -230,10 +247,12 @@ export default function PortfolioScreen() {
         Alert.alert('สำเร็จ', `อัปเดตราคาสำเร็จ ${updatedCount} รายการ`);
       }
     } catch (error) {
+      console.error('handleUpdatePrices error:', error);
+      const detail = (error as any)?.message || String(error);
       if (Platform.OS === 'web') {
-        window.alert('เกิดข้อผิดพลาดในการอัปเดตราคา');
+        window.alert(`เกิดข้อผิดพลาดในการอัปเดตราคา\n${detail}`);
       } else {
-        Alert.alert('ข้อผิดพลาด', 'เกิดข้อผิดพลาดในการอัปเดตราคา');
+        Alert.alert('ข้อผิดพลาด', `เกิดข้อผิดพลาดในการอัปเดตราคา\n${detail}`);
       }
     } finally {
       setIsUpdatingPrices(false);
@@ -518,35 +537,43 @@ export default function PortfolioScreen() {
           </View>
           {!plan ? (
             <Text style={styles.goalCardEmpty}>
-              ตั้ง "กันเงินเดือนกี่ %" + จำนวนรอบ → ระบบสะสมจากเงินเดือนที่บันทึกไว้ หักยอดที่ลงทุนแล้ว บอกว่าลงได้ต่อรอบ/ต่อหุ้นเท่าไหร่
+              ตั้ง "กันเงินเดือนกี่ %" + จำนวนรอบ → ระบบดึงเงินเดือน−รายจ่ายของเดือนนี้ที่บันทึกไว้ คำนวณให้ว่าลงได้ต่อรอบ/ต่อหุ้นเท่าไหร่ (อัตโนมัติ ไม่ต้องกรอกเพิ่ม)
             </Text>
           ) : (
             (() => {
-              const setAside = salaryTotal * (plan.setAsidePercent / 100);
-              const reserve = setAside - summary.totalCost; // เหลือรอลงทุน (อาจติดลบ = ลงเกินที่กันไว้)
-              const usable = Math.max(0, reserve);
-              const perRound = usable / plan.dcaRounds;
+              const netIncome = monthSalary - monthExpense;     // เหลือจริงเดือนนี้
+              const setAside = Math.max(0, netIncome) * (plan.setAsidePercent / 100); // กันไปลงทุน/เดือน
+              const perRound = setAside / plan.dcaRounds;
               const n = Math.max(1, investments.length);
               const perHolding = perRound / n;
               return (
                 <>
                   <Text style={styles.goalCardSub}>
-                    กันเงินเดือน {plan.setAsidePercent}% • {plan.dcaRounds} รอบ
+                    กันเงินเดือน {plan.setAsidePercent}% • {plan.dcaRounds} รอบ/เดือน
                   </Text>
+                  {monthSalary === 0 ? (
+                    <Text style={styles.tpSubText}>
+                      * ยังไม่ได้บันทึกเงินเดือนของเดือนนี้ — บันทึกรายรับหมวด "เงินเดือน" ก่อน ระบบจะคำนวณให้อัตโนมัติ
+                    </Text>
+                  ) : null}
                   <View style={styles.horizonBox}>
                     <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>กันไว้สะสม (จากเงินเดือน)</Text>
-                      <Text style={styles.horizonRate}>{formatCurrency(setAside)}</Text>
+                      <Text style={styles.horizonYears}>เงินเดือนเดือนนี้</Text>
+                      <Text style={styles.horizonRate}>{formatCurrency(monthSalary)}</Text>
                     </View>
                     <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>ลงทุนไปแล้ว</Text>
-                      <Text style={styles.horizonRate}>{formatCurrency(summary.totalCost)}</Text>
+                      <Text style={styles.horizonYears}>รายจ่ายเดือนนี้</Text>
+                      <Text style={styles.horizonRate}>−{formatCurrency(monthExpense)}</Text>
                     </View>
                     <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>เหลือรอลงทุน</Text>
-                      <Text style={[styles.horizonRate, reserve < 0 && { color: COLORS.error }]}>
-                        {formatCurrency(reserve)}
+                      <Text style={styles.horizonYears}>เหลือจริง</Text>
+                      <Text style={[styles.horizonRate, netIncome < 0 && { color: COLORS.error }]}>
+                        {formatCurrency(netIncome)}
                       </Text>
+                    </View>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>กันไปลงทุน ({plan.setAsidePercent}%)</Text>
+                      <Text style={styles.horizonRate}>{formatCurrency(setAside)}</Text>
                     </View>
                     <View style={styles.horizonRow}>
                       <Text style={styles.horizonYears}>ลงได้ต่อรอบ</Text>
@@ -557,8 +584,8 @@ export default function PortfolioScreen() {
                       <Text style={styles.horizonRate}>{formatCurrency(perHolding)}</Text>
                     </View>
                   </View>
-                  {reserve < 0 && (
-                    <Text style={styles.tpSubText}>* ลงทุนเกินงบที่กันไว้แล้ว</Text>
+                  {netIncome < 0 && (
+                    <Text style={styles.tpSubText}>* เดือนนี้รายจ่ายมากกว่ารายรับ ยังไม่มีเงินเหลือกันไปลงทุน</Text>
                   )}
                 </>
               );
@@ -742,7 +769,7 @@ export default function PortfolioScreen() {
               placeholder="เช่น 20"
               placeholderTextColor={COLORS.textSecondary}
             />
-            <Text style={styles.modalLabel}>วางแผนทยอยลงกี่รอบ</Text>
+            <Text style={styles.modalLabel}>ทยอยลงกี่รอบต่อเดือน</Text>
             <TextInput
               style={styles.modalInput}
               value={planRoundsInput}
