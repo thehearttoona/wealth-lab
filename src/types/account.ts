@@ -8,7 +8,8 @@ export interface Account {
   name: string;          // ชื่อบัญชี เช่น "บริษัท", "USD รอลงทุน"
   currency: Currency;    // สกุลเงินของบัญชี ('THB' | 'USD' | ...)
   role: AccountRole;     // ใช้จ่าย / รอลงทุน(สำรอง) / พักรายได้ / อื่นๆ
-  manualBalance?: number; // ยอดคงเหลือกรอกเอง (สำหรับบัญชี/กระเป๋าที่ไม่ import เช่น USDT wallet)
+  manualBalance?: number; // ยอดคงเหลือกรอกเอง — สำหรับบัญชี reserve = "ยอดที่เติมเข้าทั้งหมด" (ระบบหักที่ซื้อไปแล้วให้)
+  platform?: string;     // แพลตฟอร์มของบัญชี reserve เช่น Bitkub — ผูกกับ investment.platform เพื่อหักต้นทุนที่ซื้อไปแล้ว
   createdAt: string;
 }
 

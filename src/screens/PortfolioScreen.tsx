@@ -633,11 +633,31 @@ export default function PortfolioScreen() {
 
         {/* ── การ์ดเงินรอลงทุน (สำรอง) หลายสกุล + สมการความมั่งคั่ง ── */}
         {reserveAccounts.length > 0 && (() => {
-          const reserveTHB = reserveAccounts.reduce(
-            (s, a) => s + convertToTHB(a.manualBalance || 0, a.currency),
-            0
-          );
-          const wealth = reserveTHB + summary.totalValue;
+          // ต้นทุน investments รวมตาม platform (THB) — ไว้หักออกจาก "ยอดที่เติมเข้า" ของบัญชี reserve
+          const investedByPlatform: Record<string, number> = {};
+          investments.forEach((inv) => {
+            const key = (inv.platform || '').trim().toLowerCase();
+            if (!key) return;
+            const costTHB = convertToTHB(inv.buyPrice, inv.currency ?? 'THB') * inv.quantity + (inv.fees || 0);
+            investedByPlatform[key] = (investedByPlatform[key] || 0) + costTHB;
+          });
+
+          // ต่อบัญชี: เงินสดรอลงทุน = ยอดที่เติม(THB) − ต้นทุนที่ซื้อบน platform นั้น
+          const rows = reserveAccounts.map((a) => {
+            const fundedTHB = convertToTHB(a.manualBalance || 0, a.currency);
+            const platKey = (a.platform || '').trim().toLowerCase();
+            const investedTHB = platKey ? (investedByPlatform[platKey] || 0) : 0;
+            return { a, fundedTHB, investedTHB, cashTHB: fundedTHB - investedTHB, hasPlatform: !!platKey };
+          });
+
+          const reserveCashTHB = rows.reduce((s, r) => s + r.cashTHB, 0);
+          const wealth = reserveCashTHB + summary.totalValue;
+          // ต้นทุนที่หักไปแล้ว (จาก platform ที่ผูกบัญชี) — ที่เหลือคือสินทรัพย์ที่ยังไม่ได้ผูก
+          const matchedCostTHB = Array.from(
+            new Set(rows.filter((r) => r.hasPlatform).map((r) => (r.a.platform || '').trim().toLowerCase()))
+          ).reduce((s, k) => s + (investedByPlatform[k] || 0), 0);
+          const unlinkedCostTHB = summary.totalCost - matchedCostTHB;
+
           return (
             <View style={styles.goalCard}>
               <View style={styles.goalCardHeader}>
@@ -646,22 +666,30 @@ export default function PortfolioScreen() {
                 </Text>
               </View>
               <View style={styles.horizonBox}>
-                {reserveAccounts.map((a) => (
-                  <View key={a.id} style={styles.horizonRow}>
-                    <Text style={styles.horizonYears}>
-                      {a.name} ({a.currency})
-                    </Text>
-                    <Text style={styles.horizonRate}>
-                      {formatCurrencyWithType(a.manualBalance || 0, a.currency)}
-                      {a.currency !== 'THB'
-                        ? ` ≈ ${formatCurrency(convertToTHB(a.manualBalance || 0, a.currency))}`
-                        : ''}
-                    </Text>
+                {rows.map(({ a, fundedTHB, investedTHB, cashTHB, hasPlatform }) => (
+                  <View key={a.id} style={styles.reserveAcctRow}>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>
+                        {a.name} ({a.currency}){a.platform ? ` · ${a.platform}` : ''}
+                      </Text>
+                      <Text style={[styles.horizonRate, cashTHB < 0 && { color: COLORS.error }]}>
+                        {formatCurrency(cashTHB)}
+                      </Text>
+                    </View>
+                    {hasPlatform ? (
+                      <Text style={styles.reserveAcctSub}>
+                        เติม {formatCurrency(fundedTHB)} − ลงทุนแล้ว {formatCurrency(investedTHB)}
+                      </Text>
+                    ) : (
+                      <Text style={styles.reserveAcctSub}>ยังไม่ได้ผูก platform — โชว์ยอดที่เติมตรงๆ</Text>
+                    )}
                   </View>
                 ))}
                 <View style={[styles.horizonRow, styles.reserveTotalRow]}>
-                  <Text style={styles.reserveTotalLabel}>รวมเงินรอลงทุน (THB)</Text>
-                  <Text style={styles.reserveTotalValue}>{formatCurrency(reserveTHB)}</Text>
+                  <Text style={styles.reserveTotalLabel}>รวมเงินสดรอลงทุน (THB)</Text>
+                  <Text style={[styles.reserveTotalValue, reserveCashTHB < 0 && { color: COLORS.error }]}>
+                    {formatCurrency(reserveCashTHB)}
+                  </Text>
                 </View>
               </View>
               <View style={styles.wealthBox}>
@@ -682,7 +710,12 @@ export default function PortfolioScreen() {
               </View>
               {reserveAccounts.some((a) => a.manualBalance == null) && (
                 <Text style={styles.tpSubText}>
-                  * บางบัญชียังไม่ได้ใส่ยอด — ไปกรอกยอดคงเหลือที่หน้า "บัญชีของฉัน"
+                  * บางบัญชียังไม่ได้ใส่ยอดที่เติม — ไปกรอกที่หน้า "บัญชีของฉัน"
+                </Text>
+              )}
+              {unlinkedCostTHB > 1 && (
+                <Text style={styles.tpSubText}>
+                  * มีสินทรัพย์ต้นทุน ~{formatCurrency(unlinkedCostTHB)} ที่ platform ยังไม่ตรงกับบัญชี reserve ไหน — ตั้ง platform ให้ตรงกัน เพื่อไม่ให้เงินสดรอลงทุนเกินจริง
                 </Text>
               )}
             </View>
@@ -1119,6 +1152,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 3,
+  },
+  reserveAcctRow: {
+    paddingVertical: 2,
+  },
+  reserveAcctSub: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 1,
   },
   horizonYears: {
     fontSize: 13,

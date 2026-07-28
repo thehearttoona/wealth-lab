@@ -16,7 +16,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { Account, AccountRole, ACCOUNT_ROLES, ACCOUNT_CURRENCIES } from '../types/account';
-import { Currency } from '../types/investment';
+import { Currency, INVESTMENT_PLATFORMS } from '../types/investment';
 import { getAccounts, saveAccount, updateAccount, deleteAccount } from '../services/accountStorage';
 import { COLORS, getCurrencySymbol, formatCurrency } from '../utils/constants';
 
@@ -37,6 +37,7 @@ export default function AccountsScreen() {
   const [currency, setCurrency] = useState<Currency>('THB');
   const [role, setRole] = useState<AccountRole>('spending');
   const [balanceInput, setBalanceInput] = useState('');
+  const [platform, setPlatform] = useState<string>('');
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +61,7 @@ export default function AccountsScreen() {
     setCurrency('THB');
     setRole('spending');
     setBalanceInput('');
+    setPlatform('');
     setModalVisible(true);
   };
 
@@ -69,6 +71,7 @@ export default function AccountsScreen() {
     setCurrency(acc.currency);
     setRole(acc.role);
     setBalanceInput(acc.manualBalance != null ? acc.manualBalance.toString() : '');
+    setPlatform(acc.platform || '');
     setModalVisible(true);
   };
 
@@ -89,6 +92,7 @@ export default function AccountsScreen() {
       currency,
       role,
       manualBalance: Number.isFinite(manualBalance as number) ? manualBalance : undefined,
+      platform: role === 'reserve' && platform ? platform : undefined,
       createdAt: editing?.createdAt ?? new Date().toISOString(),
     };
     try {
@@ -152,6 +156,7 @@ export default function AccountsScreen() {
                 <Text style={styles.cardName}>{acc.name}</Text>
                 <Text style={styles.cardSub}>
                   {roleLabel(acc.role)} • {acc.currency}
+                  {acc.platform ? ` • ${acc.platform}` : ''}
                 </Text>
               </View>
               <View style={styles.cardRight}>
@@ -228,13 +233,39 @@ export default function AccountsScreen() {
               ))}
             </View>
 
-            <Text style={styles.modalLabel}>ยอดคงเหลือ (ไม่บังคับ)</Text>
+            {role === 'reserve' && (
+              <>
+                <Text style={styles.modalLabel}>แพลตฟอร์มที่ผูก (ไม่บังคับ)</Text>
+                <View style={styles.chipRow}>
+                  {INVESTMENT_PLATFORMS.map((p) => (
+                    <TouchableOpacity
+                      key={p}
+                      style={[styles.chip, platform === p && styles.chipActive]}
+                      onPress={() => setPlatform(platform === p ? '' : p)}
+                    >
+                      <Text style={[styles.chipText, platform === p && styles.chipTextActive]}>{p}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.hint}>
+                  เลือกให้ตรงกับ platform ของสินทรัพย์ → ระบบจะหักต้นทุนที่ซื้อบน platform นี้ออกจากยอดที่เติม เหลือ = เงินสดรอลงทุนจริง
+                </Text>
+              </>
+            )}
+
+            <Text style={styles.modalLabel}>
+              {role === 'reserve' ? 'ยอดที่เติมเข้าทั้งหมด (ไม่บังคับ)' : 'ยอดคงเหลือ (ไม่บังคับ)'}
+            </Text>
             <TextInput
               style={styles.modalInput}
               value={balanceInput}
               onChangeText={setBalanceInput}
               keyboardType="numeric"
-              placeholder="กรอกเองสำหรับกระเป๋าที่ไม่ได้ import เช่น USDT wallet"
+              placeholder={
+                role === 'reserve'
+                  ? 'ยอดที่โอนเข้าแพลตฟอร์มนี้ทั้งหมด ระบบจะหักที่ซื้อไปแล้วให้'
+                  : 'กรอกเองสำหรับกระเป๋าที่ไม่ได้ import เช่น USDT wallet'
+              }
               placeholderTextColor={COLORS.textSecondary}
             />
 
@@ -268,6 +299,13 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginBottom: 4,
     lineHeight: 18,
+  },
+  hint: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+    lineHeight: 16,
+    marginTop: 4,
   },
   emptyBox: { alignItems: 'center', gap: 8, paddingVertical: 40 },
   emptyText: { fontSize: 13, fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary },

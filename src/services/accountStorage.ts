@@ -14,6 +14,7 @@ const mapFromDb = (row: any): Account => ({
   currency: row.currency,
   role: row.role,
   manualBalance: row.manual_balance ?? undefined,
+  platform: row.platform ?? undefined,
   createdAt: row.created_at,
 });
 
@@ -23,6 +24,7 @@ const mapToDb = (acc: Account, userId: string) => ({
   currency: acc.currency,
   role: acc.role,
   manual_balance: acc.manualBalance ?? null,
+  platform: acc.platform ?? null,
   created_at: acc.createdAt,
   user_id: userId,
 });
