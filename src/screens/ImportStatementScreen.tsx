@@ -161,7 +161,7 @@ export default function ImportStatementScreen() {
         )}
 
         {/* วางข้อความ */}
-        <Text style={styles.label}>วางข้อความจาก statement (K PLUS)</Text>
+        <Text style={styles.label}>วางข้อความจาก statement (KBank / แบงก์อื่นที่มียอดคงเหลือต่อบรรทัด)</Text>
         <TextInput
           style={styles.textarea}
           value={rawText}
