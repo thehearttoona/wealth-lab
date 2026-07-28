@@ -25,7 +25,7 @@ import {
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
 import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
-import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
+import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis, yearsToReachGoal, INVEST_PERCENT_STEPS } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
 import { getIncomes } from '../services/incomeStorage';
@@ -184,9 +184,13 @@ export default function PortfolioScreen() {
     const income = parseFloat(planIncomeInput.replace(/,/g, ''));
     if (!percent || percent <= 0 || percent > 100) { showMsg('กรุณากรอก % ที่กันไว้ (1-100)'); return; }
     if (!rounds || rounds <= 0) { showMsg('กรุณากรอกจำนวนรอบที่ถูกต้อง'); return; }
-    if (!income || income <= 0) { showMsg('กรุณากรอกเงินเดือน/เงินได้ต่อเดือน'); return; }
+    // เงินเดือนไม่บังคับ — ถ้าเว้นว่าง ระบบจะใช้เงินเดือนที่ import มาแทน
     try {
-      const newPlan: InvestmentPlan = { setAsidePercent: percent, dcaRounds: rounds, expectedIncome: income };
+      const newPlan: InvestmentPlan = {
+        setAsidePercent: percent,
+        dcaRounds: rounds,
+        expectedIncome: Number.isFinite(income) && income > 0 ? income : undefined,
+      };
       await saveInvestmentPlan(newPlan);
       setPlan(newPlan);
       setPlanModalVisible(false);
@@ -549,6 +553,68 @@ export default function PortfolioScreen() {
             </>
           )}
         </View>
+
+        {/* ── การ์ดจำลอง: กันเงินลงทุน 10–80% → ถึงเป้าเร็วแค่ไหน ── */}
+        {goalAnalysis && !goalAnalysis.reached && (() => {
+          const income = plan?.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
+          const r = goalAnalysis.projectionRatePercent; // % คาดโต (ผู้ใช้ตั้ง หรือพาซจริง)
+          if (income <= 0 || r == null || r <= 0) {
+            return (
+              <View style={styles.goalCard}>
+                <Text style={styles.goalCardTitle}>
+                  <Ionicons name="flash-outline" size={18} color={COLORS.primary} /> จำลอง % ลงทุน → ถึงเป้าเร็วแค่ไหน
+                </Text>
+                <Text style={styles.goalCardEmpty}>
+                  ต้องมี (1) เงินเดือน/เงินได้ต่อเดือน — ตั้งที่การ์ด "แผนเติมเงิน" และ (2) "คาดโตปีละกี่ %" — ตั้งที่การ์ดเป้าหมาย ก่อน ระบบถึงจะจำลองให้ได้
+                </Text>
+              </View>
+            );
+          }
+          const rows = INVEST_PERCENT_STEPS.map((pct) => {
+            const monthly = income * (pct / 100);
+            const years = yearsToReachGoal(goalAnalysis.currentValue, goalAnalysis.targetAmount, r, monthly);
+            return { pct, monthly, years };
+          });
+          const currentPct = plan?.setAsidePercent ?? null;
+          return (
+            <View style={styles.goalCard}>
+              <View style={styles.goalCardHeader}>
+                <Text style={styles.goalCardTitle}>
+                  <Ionicons name="flash-outline" size={18} color={COLORS.primary} /> จำลอง % ลงทุน → ถึงเป้าเร็วแค่ไหน
+                </Text>
+              </View>
+              <Text style={styles.goalCardSub}>
+                ฐานเงินได้ {formatCurrency(income)}/เดือน • คาดโต {r.toFixed(1)}%/ปี • เป้า {formatCurrency(goalAnalysis.targetAmount)}
+              </Text>
+              <View style={styles.horizonBox}>
+                <View style={styles.horizonRow}>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1 }]}>กัน %</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1.4, textAlign: 'right' }]}>ลงทุน/เดือน</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1.2, textAlign: 'right' }]}>ถึงเป้าใน</Text>
+                </View>
+                {rows.map(({ pct, monthly, years }) => {
+                  const isCurrent = currentPct != null && pct === currentPct;
+                  return (
+                    <View key={pct} style={[styles.horizonRow, isCurrent && styles.simRowActive]}>
+                      <Text style={[styles.simCol, { flex: 1 }, isCurrent && styles.simActiveText]}>
+                        {pct}%{isCurrent ? ' ●' : ''}
+                      </Text>
+                      <Text style={[styles.simCol, { flex: 1.4, textAlign: 'right' }, isCurrent && styles.simActiveText]}>
+                        {formatCurrency(monthly)}
+                      </Text>
+                      <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }, isCurrent && styles.simActiveText]}>
+                        {years != null ? `${years.toFixed(1)} ปี` : '—'}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+              <Text style={styles.tpSubText}>
+                กัน % มากขึ้น = ถึงเป้าไวขึ้น แต่เหลือใช้น้อยลง • ● = % ที่ตั้งไว้ตอนนี้
+              </Text>
+            </View>
+          );
+        })()}
 
         {/* ── การ์ดแผนเติมเงิน: กันเงินเดือน % → สะสม − ลงทุนไปแล้ว = เหลือรอลงทุน ── */}
         <View style={styles.goalCard}>
@@ -1161,6 +1227,25 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     marginTop: 1,
+  },
+  simCol: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
+  },
+  simHead: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+  },
+  simRowActive: {
+    backgroundColor: `${COLORS.primary}12`,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+  },
+  simActiveText: {
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
   },
   horizonYears: {
     fontSize: 13,

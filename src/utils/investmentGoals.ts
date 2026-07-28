@@ -94,3 +94,30 @@ export function analyzePortfolioGoal(
     projectedDate,
   };
 }
+
+// จำนวนปีที่จะถึงเป้า เมื่อเติมเงินลงทุนเพิ่มทุกเดือน (พอร์ตทบต้นรายปี + เงินเติมแบบ annuity)
+//   FV(t) = current(1+r)^t + Cยรายปี·[((1+r)^t − 1)/r]  →  แก้หา t
+// คืน null ถ้าไปไม่ถึง (เช่น ไม่โต ไม่เติมเงิน) ; คืน 0 ถ้าถึงเป้าแล้ว
+export function yearsToReachGoal(
+  current: number,
+  target: number,
+  annualReturnPercent: number,
+  monthlyContribution: number
+): number | null {
+  if (target <= 0) return null;
+  if (current >= target) return 0;
+  const r = annualReturnPercent / 100;
+  const annualC = Math.max(0, monthlyContribution) * 12;
+  if (r <= 0) {
+    // ไม่มีการโต — พึ่งเงินเติมล้วน
+    return annualC > 0 ? (target - current) / annualC : null;
+  }
+  const k = annualC / r;
+  const ratio = (target + k) / (current + k);
+  if (ratio <= 0) return null;
+  const years = Math.log(ratio) / Math.log(1 + r);
+  return years > 0 && Number.isFinite(years) ? years : null;
+}
+
+// สัดส่วนที่ใช้จำลองในตาราง: 10% → 80% ทีละ 10
+export const INVEST_PERCENT_STEPS = [10, 20, 30, 40, 50, 60, 70, 80];
