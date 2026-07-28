@@ -1,8 +1,9 @@
 import { supabase } from './supabase';
 
 export interface InvestmentPlan {
-  setAsidePercent: number; // กันเงินเดือนกี่ % ไปลงทุน
-  dcaRounds: number;       // จำนวนรอบที่วางแผนจะทยอยลง
+  setAsidePercent: number;  // กันเงินเดือนกี่ % ไปลงทุน
+  dcaRounds: number;        // จำนวนรอบที่วางแผนจะทยอยลง
+  expectedIncome?: number;  // เงินเดือน/เงินได้ต่อเดือน (โดยประมาณ) — ฐานที่นิ่งของแผน "จ่ายตัวเองก่อน"
 }
 
 const getUserId = async (): Promise<string> => {
@@ -18,7 +19,11 @@ export const getInvestmentPlan = async (): Promise<InvestmentPlan | null> => {
     .maybeSingle();
   if (error) throw error;
   if (!data || data.salary_set_aside_percent == null || data.dca_rounds == null) return null;
-  return { setAsidePercent: data.salary_set_aside_percent, dcaRounds: data.dca_rounds };
+  return {
+    setAsidePercent: data.salary_set_aside_percent,
+    dcaRounds: data.dca_rounds,
+    expectedIncome: data.expected_income ?? undefined,
+  };
 };
 
 export const saveInvestmentPlan = async (plan: InvestmentPlan): Promise<void> => {
@@ -27,6 +32,7 @@ export const saveInvestmentPlan = async (plan: InvestmentPlan): Promise<void> =>
     user_id: userId,
     salary_set_aside_percent: plan.setAsidePercent,
     dca_rounds: plan.dcaRounds,
+    expected_income: plan.expectedIncome ?? null,
   });
   if (error) throw error;
 };

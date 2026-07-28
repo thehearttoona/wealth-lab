@@ -52,7 +52,8 @@
       "Bash(git commit *)",
       "Bash(vercel deploy *)",
       "Bash(cat)",
-      "Bash(node ptest.mjs sample.txt)"
+      "Bash(node ptest.mjs sample.txt)",
+      "Bash(node test-parser.mjs)"
     ]
   }
 }

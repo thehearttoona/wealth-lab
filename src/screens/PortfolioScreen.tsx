@@ -62,6 +62,7 @@ export default function PortfolioScreen() {
   const [planModalVisible, setPlanModalVisible] = useState(false);
   const [planPercentInput, setPlanPercentInput] = useState('');
   const [planRoundsInput, setPlanRoundsInput] = useState('');
+  const [planIncomeInput, setPlanIncomeInput] = useState('');
   const [monthSalary, setMonthSalary] = useState(0);   // เงินเดือนที่บันทึกในเดือนปัจจุบัน
   const [monthExpense, setMonthExpense] = useState(0); // รายจ่ายรวมในเดือนปัจจุบัน
   const [reserveAccounts, setReserveAccounts] = useState<Account[]>([]); // บัญชีบทบาท "รอลงทุน"
@@ -170,16 +171,22 @@ export default function PortfolioScreen() {
   const openPlanModal = () => {
     setPlanPercentInput(plan?.setAsidePercent?.toString() || '');
     setPlanRoundsInput(plan?.dcaRounds?.toString() || '');
+    // pre-fill เงินเดือนคาดหวัง: ใช้ค่าที่ตั้งไว้ก่อน ไม่งั้น fallback เป็นเงินเดือนล่าสุดของเดือนนี้
+    setPlanIncomeInput(
+      (plan?.expectedIncome || monthSalary || '').toString().replace(/^0$/, '')
+    );
     setPlanModalVisible(true);
   };
 
   const handleSavePlan = async () => {
     const percent = parseFloat(planPercentInput.replace(/,/g, ''));
     const rounds = parseInt(planRoundsInput, 10);
+    const income = parseFloat(planIncomeInput.replace(/,/g, ''));
     if (!percent || percent <= 0 || percent > 100) { showMsg('กรุณากรอก % ที่กันไว้ (1-100)'); return; }
     if (!rounds || rounds <= 0) { showMsg('กรุณากรอกจำนวนรอบที่ถูกต้อง'); return; }
+    if (!income || income <= 0) { showMsg('กรุณากรอกเงินเดือน/เงินได้ต่อเดือน'); return; }
     try {
-      const newPlan: InvestmentPlan = { setAsidePercent: percent, dcaRounds: rounds };
+      const newPlan: InvestmentPlan = { setAsidePercent: percent, dcaRounds: rounds, expectedIncome: income };
       await saveInvestmentPlan(newPlan);
       setPlan(newPlan);
       setPlanModalVisible(false);
@@ -555,44 +562,55 @@ export default function PortfolioScreen() {
           </View>
           {!plan ? (
             <Text style={styles.goalCardEmpty}>
-              ตั้ง "กันเงินเดือนกี่ %" + จำนวนรอบ → ระบบดึงเงินเดือน−รายจ่ายของเดือนนี้ที่บันทึกไว้ คำนวณให้ว่าลงได้ต่อรอบ/ต่อหุ้นเท่าไหร่ (อัตโนมัติ ไม่ต้องกรอกเพิ่ม)
+              ตั้ง "เงินเดือนต่อเดือน" + "กันกี่ %" + จำนวนรอบ → ระบบแบ่งเงินเดือนนี้ให้เห็นครบ: เงินลงทุน / งบใช้จ่าย / เหลือใช้ได้ แบบกันลงทุน "ก่อนใช้" (จ่ายตัวเองก่อน) และคำนวณว่าลงได้ต่อรอบ/ต่อหุ้นเท่าไหร่
             </Text>
           ) : (
             (() => {
-              const netIncome = monthSalary - monthExpense;     // เหลือจริงเดือนนี้
-              const setAside = Math.max(0, netIncome) * (plan.setAsidePercent / 100); // กันไปลงทุน/เดือน
+              // ฐานที่นิ่ง: เงินเดือนคาดหวังที่ตั้งไว้ (ของเดิมที่ยังไม่ตั้งจะ fallback เป็นเงินเดือนเดือนนี้)
+              const baseIncome = plan.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
+              const setAside = baseIncome * (plan.setAsidePercent / 100);   // จ่ายตัวเองก่อน (ไม่หักรายจ่าย)
               const perRound = setAside / plan.dcaRounds;
               const n = Math.max(1, investments.length);
               const perHolding = perRound / n;
+              const spendBudget = baseIncome - setAside;      // งบใช้จ่าย = กันลงทุนก่อนแล้วเหลือเท่านี้
+              const leftToSpend = spendBudget - monthExpense; // เหลือใช้ได้อีก (< 0 = ใช้เกินงบ)
               return (
                 <>
                   <Text style={styles.goalCardSub}>
-                    กันเงินเดือน {plan.setAsidePercent}% • {plan.dcaRounds} รอบ/เดือน
+                    กัน {plan.setAsidePercent}% • {plan.dcaRounds} รอบ/เดือน • จ่ายตัวเองก่อน
                   </Text>
-                  {monthSalary === 0 ? (
+                  {baseIncome === 0 ? (
                     <Text style={styles.tpSubText}>
-                      * ยังไม่ได้บันทึกเงินเดือนของเดือนนี้ — บันทึกรายรับหมวด "เงินเดือน" ก่อน ระบบจะคำนวณให้อัตโนมัติ
+                      * ยังไม่ได้ตั้งเงินเดือนต่อเดือน — กด "แก้ไข" เพื่อกรอกฐานเงินเดือน ระบบจะคำนวณให้
                     </Text>
                   ) : null}
+                  {/* Envelope: แบ่งเงินเดือนนี้เป็น เงินลงทุน / งบใช้จ่าย / เหลือใช้ได้ */}
                   <View style={styles.horizonBox}>
                     <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>เงินเดือนเดือนนี้</Text>
-                      <Text style={styles.horizonRate}>{formatCurrency(monthSalary)}</Text>
+                      <Text style={styles.horizonYears}>เงินเดือน (ฐาน)</Text>
+                      <Text style={styles.horizonRate}>{formatCurrency(baseIncome)}</Text>
                     </View>
                     <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>รายจ่ายเดือนนี้</Text>
+                      <Text style={styles.horizonYears}>กันลงทุน ({plan.setAsidePercent}%)</Text>
+                      <Text style={styles.horizonRate}>−{formatCurrency(setAside)}</Text>
+                    </View>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>งบใช้จ่าย</Text>
+                      <Text style={styles.horizonRate}>{formatCurrency(spendBudget)}</Text>
+                    </View>
+                    <View style={styles.horizonRow}>
+                      <Text style={styles.horizonYears}>ใช้ไปแล้วเดือนนี้</Text>
                       <Text style={styles.horizonRate}>−{formatCurrency(monthExpense)}</Text>
                     </View>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>เหลือจริง</Text>
-                      <Text style={[styles.horizonRate, netIncome < 0 && { color: COLORS.error }]}>
-                        {formatCurrency(netIncome)}
+                    <View style={[styles.horizonRow, styles.reserveTotalRow]}>
+                      <Text style={styles.reserveTotalLabel}>เหลือใช้ได้อีก</Text>
+                      <Text style={[styles.reserveTotalValue, leftToSpend < 0 && { color: COLORS.error }]}>
+                        {formatCurrency(leftToSpend)}
                       </Text>
                     </View>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>กันไปลงทุน ({plan.setAsidePercent}%)</Text>
-                      <Text style={styles.horizonRate}>{formatCurrency(setAside)}</Text>
-                    </View>
+                  </View>
+                  {/* DCA: เงินลงทุนที่กันไว้ → ทยอยลงกี่ต่อรอบ/ต่อหุ้น */}
+                  <View style={styles.wealthBox}>
                     <View style={styles.horizonRow}>
                       <Text style={styles.horizonYears}>ลงได้ต่อรอบ</Text>
                       <Text style={styles.horizonRate}>{formatCurrency(perRound)}</Text>
@@ -602,8 +620,10 @@ export default function PortfolioScreen() {
                       <Text style={styles.horizonRate}>{formatCurrency(perHolding)}</Text>
                     </View>
                   </View>
-                  {netIncome < 0 && (
-                    <Text style={styles.tpSubText}>* เดือนนี้รายจ่ายมากกว่ารายรับ ยังไม่มีเงินเหลือกันไปลงทุน</Text>
+                  {baseIncome > 0 && leftToSpend < 0 && (
+                    <Text style={[styles.tpSubText, { color: COLORS.error }]}>
+                      ⚠ เดือนนี้ใช้เกินงบไป {formatCurrency(-leftToSpend)} — กระทบเงินที่กันไว้ลงทุน
+                    </Text>
                   )}
                 </>
               );
@@ -646,8 +666,14 @@ export default function PortfolioScreen() {
               </View>
               <View style={styles.wealthBox}>
                 <View style={styles.horizonRow}>
-                  <Text style={styles.horizonYears}>+ มูลค่าพอร์ต (ลงไปแล้ว)</Text>
-                  <Text style={styles.horizonRate}>{formatCurrency(summary.totalValue)}</Text>
+                  <Text style={styles.horizonYears}>+ ต้นทุนที่ลงไปแล้ว</Text>
+                  <Text style={styles.horizonRate}>{formatCurrency(summary.totalCost)}</Text>
+                </View>
+                <View style={styles.horizonRow}>
+                  <Text style={styles.horizonYears}>+ กำไร/ขาดทุน</Text>
+                  <Text style={[styles.horizonRate, isProfit ? styles.profitPositive : styles.profitNegative]}>
+                    {isProfit ? '+' : ''}{formatCurrency(summary.totalProfit)}
+                  </Text>
                 </View>
                 <View style={[styles.horizonRow, styles.reserveTotalRow]}>
                   <Text style={styles.reserveTotalLabel}>ความมั่งคั่งเพื่อลงทุนรวม</Text>
@@ -830,6 +856,15 @@ export default function PortfolioScreen() {
             <Text style={styles.modalTitle}>
               <Ionicons name="wallet-outline" size={18} color={COLORS.primary} /> แผนเติมเงินต่อรอบ
             </Text>
+            <Text style={styles.modalLabel}>เงินเดือน/เงินได้ต่อเดือน (โดยประมาณ)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={planIncomeInput}
+              onChangeText={setPlanIncomeInput}
+              keyboardType="numeric"
+              placeholder="เช่น 50000 — ใช้เป็นฐานคำนวณที่นิ่งทั้งเดือน"
+              placeholderTextColor={COLORS.textSecondary}
+            />
             <Text style={styles.modalLabel}>กันเงินเดือนไปลงทุนกี่ % </Text>
             <TextInput
               style={styles.modalInput}
