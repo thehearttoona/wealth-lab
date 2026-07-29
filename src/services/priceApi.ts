@@ -298,38 +298,54 @@ export async function getGoldPrice(targetCurrency: string = 'THB'): Promise<numb
 }
 
 // ========================
-// แท่งเทียนรายวัน — เช็ค 2 วันแดงติด (close < open) สำหรับ crypto/หุ้น
+// แท่งเทียนรายวัน — เช็คแดงติดกันเป็นจำนวนคู่ (2/4/6…) สำหรับ crypto/หุ้น
 // ========================
 
-// หา "2 แท่งแดงติดกัน" คู่ล่าสุดในช่วงที่ดึงมา (แท่งแดง = close < open)
-// คืน % ที่ลง (open แท่งแรกของคู่ → close แท่งหลัง, ค่าติดลบ) — ไม่พบคู่แดงติด → null
-function recentTwoRedDrop(opens: any[], closes: any[]): number | null {
+export interface RedStreakAlert {
+  count: number;        // จำนวนแท่งแดงติดกันล่าสุด (เป็นเลขคู่เสมอ: 2, 4, 6…)
+  dropPercent: number;  // % ที่ลงตลอดสตรีค (open แท่งแรก → close แท่งล่าสุด, ค่าติดลบ)
+}
+
+// นับ "แท่งแดงติดกันล่าสุด" (แท่งแดง = close < open) จากแท่งท้ายสุดไล่ย้อนขึ้นไป
+// แจ้งเตือนเฉพาะเมื่อจำนวนแท่งแดงติดกันเป็น "เลขคู่" (2, 4, 6…) เท่านั้น
+// เลขคี่ (1, 3, 5…) → คืน null ต่อให้แดงติดกันก็ไม่แจ้ง
+// คืน % ที่ลงตลอดสตรีค (ค่าติดลบ) — ไม่เข้าเงื่อนไข → null
+function recentEvenRedStreak(opens: any[], closes: any[]): RedStreakAlert | null {
   const pairs: [number, number][] = [];
   for (let i = 0; i < opens.length; i++) {
     const o = parseFloat(opens[i]);
     const c = parseFloat(closes[i]);
     if (!isNaN(o) && !isNaN(c)) pairs.push([o, c]);
   }
-  // ไล่จากท้าย หา 2 แท่งแดงติดกันคู่ที่ใหม่ที่สุด
-  for (let i = pairs.length - 1; i >= 1; i--) {
-    const [o2, c2] = pairs[i];
-    const [o1, c1] = pairs[i - 1];
-    if (c1 < o1 && c2 < o2) {
-      return ((c2 - o1) / o1) * 100;
-    }
+  // นับแท่งแดงติดกันจากท้ายสุด
+  let streak = 0;
+  for (let i = pairs.length - 1; i >= 0; i--) {
+    const [o, c] = pairs[i];
+    if (c < o) streak++;
+    else break;
   }
-  return null;
+  // ต้องแดงติดกันอย่างน้อย 2 แท่ง และเป็นเลขคู่เท่านั้น
+  if (streak < 2 || streak % 2 !== 0) return null;
+  const firstIdx = pairs.length - streak;
+  const startOpen = pairs[firstIdx][0];
+  const lastClose = pairs[pairs.length - 1][1];
+  return { count: streak, dropPercent: ((lastClose - startOpen) / startOpen) * 100 };
 }
 
-// คืน % ที่ลง (ค่าลบ) ถ้ามี 2 วันแดงติดในช่วงล่าสุด, null = ไม่มี/เช็คไม่ได้
-export async function getTwoRedDays(type: string, symbol: string): Promise<number | null> {
+// คืนข้อมูลแดงติดกันเป็นเลขคู่ในช่วงล่าสุด, null = ไม่เข้าเงื่อนไข/เช็คไม่ได้
+// นับเฉพาะ "แท่งที่ปิดแล้วจริง" — ตัดแท่งวันปัจจุบันที่ยังวิ่งอยู่ (intraday) ออกก่อนเสมอ
+export async function getTwoRedDays(type: string, symbol: string): Promise<RedStreakAlert | null> {
   try {
     if (type === 'crypto') {
       const up = symbol.toUpperCase();
-      const res = await fetchWithTimeout(`${BINANCE_API}/klines?symbol=${up}USDT&interval=1d&limit=5`);
+      // ดึงย้อนหลังมากพอ (15 แท่ง) ให้จับสตรีคคู่ที่ยาวได้ (เช่น 6/8 แท่ง)
+      const res = await fetchWithTimeout(`${BINANCE_API}/klines?symbol=${up}USDT&interval=1d&limit=15`);
       if (!res.ok) return null; // เหรียญไม่มีคู่เทรดบน Binance
-      const data: any[] = await res.json(); // [[openTime, open, high, low, close, ...], ...]
-      return recentTwoRedDrop(data.map((k) => k[1]), data.map((k) => k[4]));
+      const data: any[] = await res.json(); // [[openTime, open, high, low, close, ..., closeTime, ...], ...]
+      // เก็บเฉพาะแท่งที่ปิดแล้ว: closeTime (index 6, ms) ต้องผ่านมาแล้ว
+      const now = Date.now();
+      const closed = data.filter((k) => Number(k[6]) <= now);
+      return recentEvenRedStreak(closed.map((k) => k[1]), closed.map((k) => k[4]));
     }
     if (type === 'stock_th' || type === 'stock_foreign') {
       const attempts = symbol.includes('.')
@@ -338,11 +354,25 @@ export async function getTwoRedDays(type: string, symbol: string): Promise<numbe
           ? [`${symbol}.BK`, symbol]
           : [symbol, `${symbol}.BK`];
       for (const s of attempts) {
-        const res = await fetchWithTimeout(`/api/yahoo-quote?symbol=${encodeURIComponent(s)}&range=7d&interval=1d`);
+        const res = await fetchWithTimeout(`/api/yahoo-quote?symbol=${encodeURIComponent(s)}&range=1mo&interval=1d`);
         if (!res.ok) continue;
         const data = await res.json();
-        const q = data?.chart?.result?.[0]?.indicators?.quote?.[0];
-        if (q?.open && q?.close) return recentTwoRedDrop(q.open, q.close);
+        const result = data?.chart?.result?.[0];
+        const q = result?.indicators?.quote?.[0];
+        if (!q?.open || !q?.close) continue;
+        let opens: any[] = q.open;
+        let closes: any[] = q.close;
+        // ตัดแท่งวันปัจจุบันที่ session ยังไม่ปิดออก (ใช้ meta.currentTradingPeriod.regular)
+        const ts: number[] | undefined = result?.timestamp;
+        const reg = result?.meta?.currentTradingPeriod?.regular; // { start, end } (วินาที)
+        const lastTs = ts?.[ts.length - 1];
+        const nowSec = Date.now() / 1000;
+        if (reg && lastTs != null && lastTs >= reg.start && nowSec < reg.end) {
+          // แท่งท้ายสุด = session ปัจจุบันที่ยังไม่ปิด → ตัดทิ้ง
+          opens = opens.slice(0, -1);
+          closes = closes.slice(0, -1);
+        }
+        return recentEvenRedStreak(opens, closes);
       }
       return null;
     }

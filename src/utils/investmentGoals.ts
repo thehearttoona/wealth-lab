@@ -121,3 +121,35 @@ export function yearsToReachGoal(
 
 // สัดส่วนที่ใช้จำลองในตาราง: 10% → 80% ทีละ 10
 export const INVEST_PERCENT_STEPS = [10, 20, 30, 40, 50, 60, 70, 80];
+
+// สัดส่วนกำไรต่อเดือนที่ใช้จำลอง (%/เดือน) — จากทำได้จริงแบบระวัง ไปจนถึงเทรดเก่งมาก
+export const MONTHLY_RETURN_STEPS = [1, 2, 3, 5, 7, 10];
+
+// แปลงกำไรต่อเดือน (ทบต้น) → กำไรต่อปีเทียบเท่า (%)
+export function monthlyToAnnualPercent(monthlyReturnPercent: number): number {
+  return (Math.pow(1 + monthlyReturnPercent / 100, 12) - 1) * 100;
+}
+
+// จำนวนเดือนที่จะถึงเป้า เมื่อพอร์ตโต m%/เดือน (ทบต้นรายเดือน) + เติมเงินทุกเดือน (annuity รายเดือน)
+//   FV(n) = current(1+m)^n + C·[((1+m)^n − 1)/m]  →  แก้หา n
+// คืน null ถ้าไปไม่ถึง (ไม่โต + ไม่เติมเงิน) ; คืน 0 ถ้าถึงเป้าแล้ว
+export function monthsToReachGoal(
+  current: number,
+  target: number,
+  monthlyReturnPercent: number,
+  monthlyContribution: number
+): number | null {
+  if (target <= 0) return null;
+  if (current >= target) return 0;
+  const m = monthlyReturnPercent / 100;
+  const C = Math.max(0, monthlyContribution);
+  if (m <= 0) {
+    // ไม่โต — พึ่งเงินเติมล้วน
+    return C > 0 ? (target - current) / C : null;
+  }
+  const k = C / m;
+  const ratio = (target + k) / (current + k);
+  if (ratio <= 0) return null;
+  const n = Math.log(ratio) / Math.log(1 + m);
+  return n > 0 && Number.isFinite(n) ? n : null;
+}

@@ -25,7 +25,7 @@ import {
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
 import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
-import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis, yearsToReachGoal, INVEST_PERCENT_STEPS } from '../utils/investmentGoals';
+import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis, yearsToReachGoal, INVEST_PERCENT_STEPS, monthsToReachGoal, monthlyToAnnualPercent, MONTHLY_RETURN_STEPS } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
 import { getIncomes } from '../services/incomeStorage';
@@ -66,7 +66,7 @@ export default function PortfolioScreen() {
   const [monthSalary, setMonthSalary] = useState(0);   // เงินเดือนที่บันทึกในเดือนปัจจุบัน
   const [monthExpense, setMonthExpense] = useState(0); // รายจ่ายรวมในเดือนปัจจุบัน
   const [reserveAccounts, setReserveAccounts] = useState<Account[]>([]); // บัญชีบทบาท "รอลงทุน"
-  const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number }[]>([]);
+  const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number; count: number }[]>([]);
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
@@ -111,18 +111,23 @@ export default function PortfolioScreen() {
       setMonthExpense(0);
     }
 
-    // เช็ค 2 วันแดงติด (เฉพาะ crypto/หุ้น) — ทำแบบ background ไม่บล็อกการโหลด
+    // เช็คแดงติดกันเป็นเลขคู่ (2/4/6…) เฉพาะ crypto/หุ้น — ทำแบบ background ไม่บล็อกการโหลด
     const candleTargets = allInvestments.filter((i) =>
       ['crypto', 'stock_th', 'stock_foreign'].includes(i.type)
     );
     Promise.all(
-      candleTargets.map(async (i) => ({ inv: i, drop: await getTwoRedDays(i.type, i.symbol) }))
+      candleTargets.map(async (i) => ({ inv: i, alert: await getTwoRedDays(i.type, i.symbol) }))
     )
       .then((results) =>
         setRedAlerts(
           results
-            .filter((r) => r.drop !== null)
-            .map((r) => ({ symbol: r.inv.symbol, name: r.inv.name, dropPercent: r.drop as number }))
+            .filter((r) => r.alert !== null)
+            .map((r) => ({
+              symbol: r.inv.symbol,
+              name: r.inv.name,
+              dropPercent: r.alert!.dropPercent,
+              count: r.alert!.count,
+            }))
             // เรียงจากลบเยอะสุด → น้อยสุด (dropPercent เป็นค่าลบ)
             .sort((a, b) => a.dropPercent - b.dropPercent)
         )
@@ -409,8 +414,10 @@ export default function PortfolioScreen() {
   const portfolioStartDate = investments.length > 0
     ? investments.reduce((earliest, inv) => (inv.buyDate < earliest ? inv.buyDate : earliest), investments[0].buyDate)
     : null;
+  // ฐานคำนวณเป้าหมาย = ต้นทุนที่ลงจริง (ไม่รวมกำไรที่ยังไม่ได้ขาย/unrealized)
+  // กำไรลอยตัวยังไม่เกิดจริงจนกว่าจะปิดออเดอร์ จึงไม่นับรวมในทุกส่วนของการคำนวณถึงเป้า
   const goalAnalysis: PortfolioGoalAnalysis | null = goal
-    ? analyzePortfolioGoal(goal, summary.totalValue, summary.totalCost, portfolioStartDate)
+    ? analyzePortfolioGoal(goal, summary.totalCost, summary.totalCost, portfolioStartDate)
     : null;
 
   // ตัวที่กำไร (ทั้งที่ถึงเป้าและยังไม่ถึง) — โชว์ % + คาดกี่ปีถึงเป้าขายทำกำไร เรียงใกล้/เกินเป้าก่อน
@@ -508,7 +515,7 @@ export default function PortfolioScreen() {
             <>
               <View style={styles.goalCardTopRow}>
                 <Text style={styles.goalCardSub}>
-                  ถ้าขายตอนนี้ {formatCurrency(goalAnalysis.currentValue)}
+                  ต้นทุนที่ลงไปแล้ว {formatCurrency(goalAnalysis.currentValue)}
                 </Text>
                 <Text style={styles.goalCardSub}>
                   {goalAnalysis.reached ? 'ถึงเป้าแล้ว 🎉' : `ไปได้ ${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}%`}
@@ -620,6 +627,63 @@ export default function PortfolioScreen() {
               </View>
               <Text style={styles.tpSubText}>
                 กัน % มากขึ้น = ถึงเป้าไวขึ้น แต่เหลือใช้น้อยลง • ● = % ที่ตั้งไว้ตอนนี้
+              </Text>
+            </View>
+          );
+        })()}
+
+        {/* ── การ์ดจำลอง: ทำกำไร X%/เดือน → ถึงเป้าเร็วแค่ไหน ── */}
+        {goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0 && (() => {
+          const income = plan?.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
+          const currentPct = plan?.setAsidePercent ?? null;
+          // เงินเติมต่อเดือน = กัน % ที่ตั้งไว้ × เงินได้ (ถ้ายังไม่ตั้งแผน = 0 → จำลองแบบทบต้นล้วน)
+          const monthlyContribution = currentPct != null && income > 0 ? income * (currentPct / 100) : 0;
+          const rows = MONTHLY_RETURN_STEPS.map((mpct) => {
+            const annual = monthlyToAnnualPercent(mpct);
+            const months = monthsToReachGoal(
+              goalAnalysis.currentValue,
+              goalAnalysis.targetAmount,
+              mpct,
+              monthlyContribution
+            );
+            return { mpct, annual, months };
+          });
+          const fmtMonths = (n: number | null): string => {
+            if (n == null) return '—';
+            const m = Math.round(n);
+            if (m < 1) return '< 1 เดือน';
+            if (m < 12) return `${m} เดือน`;
+            const y = n / 12;
+            return `${y.toFixed(1)} ปี`;
+          };
+          return (
+            <View style={styles.goalCard}>
+              <View style={styles.goalCardHeader}>
+                <Text style={styles.goalCardTitle}>
+                  <Ionicons name="rocket-outline" size={18} color={COLORS.primary} /> จำลอง % กำไร/เดือน → ถึงเป้าเร็วแค่ไหน
+                </Text>
+              </View>
+              <Text style={styles.goalCardSub}>
+                จากต้นทุนที่ลงไปแล้ว {formatCurrency(goalAnalysis.currentValue)}
+                {monthlyContribution > 0 ? ` • เติมเพิ่ม ${formatCurrency(monthlyContribution)}/เดือน` : ' • ไม่เติมเงินเพิ่ม (ทบต้นล้วน)'}
+                {' '}• เป้า {formatCurrency(goalAnalysis.targetAmount)}
+              </Text>
+              <View style={styles.horizonBox}>
+                <View style={styles.horizonRow}>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1 }]}>กำไร/เดือน</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1.2, textAlign: 'right' }]}>≈ ต่อปี</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1.2, textAlign: 'right' }]}>ถึงเป้าใน</Text>
+                </View>
+                {rows.map(({ mpct, annual, months }) => (
+                  <View key={mpct} style={styles.horizonRow}>
+                    <Text style={[styles.simCol, { flex: 1 }]}>{mpct}%</Text>
+                    <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }]}>{annual.toFixed(0)}%</Text>
+                    <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }]}>{fmtMonths(months)}</Text>
+                  </View>
+                ))}
+              </View>
+              <Text style={styles.tpSubText}>
+                ทำกำไรต่อเดือนได้มาก = ถึงเป้าไวขึ้นแบบทบต้น • ตัวเลขนี้สมมติทำได้สม่ำเสมอทุกเดือน (จริงมีขึ้นมีลง)
               </Text>
             </View>
           );
@@ -823,11 +887,13 @@ export default function PortfolioScreen() {
           <View style={styles.losersCard}>
             <View style={styles.cardTitleRow}>
               <Ionicons name="warning" size={16} color={COLORS.error} />
-              <Text style={styles.losersTitle}>ราคาลง 2 วันติด</Text>
+              <Text style={styles.losersTitle}>ราคาลงแดงติดกัน (2/4/6 แท่ง)</Text>
             </View>
             {redAlerts.map((a) => (
               <View key={a.symbol} style={styles.loserRow}>
-                <Text style={styles.loserName} numberOfLines={1}>{a.symbol || a.name}</Text>
+                <Text style={styles.loserName} numberOfLines={1}>
+                  {a.symbol || a.name} <Text style={styles.tpSubText}>· แดง {a.count} แท่ง</Text>
+                </Text>
                 <Text style={styles.loserPct}>{a.dropPercent.toFixed(2)}%</Text>
               </View>
             ))}
