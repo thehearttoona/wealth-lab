@@ -26,6 +26,7 @@ import AddExpenseScreen from '../screens/AddExpenseScreen';
 import RecurringBillsScreen from '../screens/RecurringBillsScreen';
 import PortfolioScreen from '../screens/PortfolioScreen';
 import AddInvestmentScreen from '../screens/AddInvestmentScreen';
+import ManageByPlatformScreen from '../screens/ManageByPlatformScreen';
 import AddTradingOrderScreen from '../screens/AddTradingOrderScreen';
 import ExpenseTrackingScreen from '../screens/ExpenseTrackingScreen';
 import AddMonthlySummaryScreen from '../screens/AddMonthlySummaryScreen';
@@ -193,6 +194,18 @@ export default function Navigation() {
           name="AddInvestment"
           component={AddInvestmentScreen}
           options={{ title: 'เพิ่มการลงทุน' }}
+        />
+        <Stack.Screen
+          name="ManageByPlatform"
+          component={ManageByPlatformScreen}
+          options={({ navigation }) => ({
+            title: 'จัดการตามแพลตฟอร์ม',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
         />
         <Stack.Screen
           name="AddTradingOrder"

@@ -494,6 +494,13 @@ export default function PortfolioScreen() {
             <Ionicons name="wallet-outline" size={18} color={COLORS.primary} />
             <Text style={styles.updateButtonText}> บัญชี</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.addButton, styles.updateButton]}
+            onPress={() => navigation.navigate('ManageByPlatform')}
+          >
+            <Ionicons name="layers-outline" size={18} color={COLORS.primary} />
+            <Text style={styles.updateButtonText}> จัดการหลายรายการ</Text>
+          </TouchableOpacity>
         </View>
 
         {/* ── การ์ดเป้าหมายพอร์ตรวม ── */}

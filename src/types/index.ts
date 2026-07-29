@@ -85,6 +85,7 @@ export type RootStackParamList = {
   RecurringBills: undefined;
   Portfolio: undefined;
   AddInvestment: { investment?: any };
+  ManageByPlatform: undefined;
   Statistics: undefined;
   TradingOrders: undefined;
   AddTradingOrder: { order?: TradingOrder };

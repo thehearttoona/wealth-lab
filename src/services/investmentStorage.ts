@@ -91,6 +91,35 @@ export const updateInvestment = async (investment: Investment): Promise<void> =>
   if (error) throw error;
 };
 
+// เพิ่มหลายรายการพร้อมกัน (bulk insert) — ใช้ในหน้า "จัดการตามแพลตฟอร์ม"
+export const saveInvestments = async (investments: Investment[]): Promise<void> => {
+  if (investments.length === 0) return;
+  const userId = await getUserId();
+  const { error } = await supabase
+    .from('investments')
+    .insert(investments.map((inv) => mapInvestmentToDb(inv, userId)));
+  if (error) throw error;
+};
+
+// เปลี่ยน platform ของหลายรายการพร้อมกัน (bulk update) — RLS กรองให้เฉพาะของ user เองอยู่แล้ว
+export const updateInvestmentsPlatform = async (ids: string[], platform: string | null): Promise<void> => {
+  if (ids.length === 0) return;
+  const { error } = await supabase
+    .from('investments')
+    .update({ platform: platform || null })
+    .in('id', ids);
+  if (error) throw error;
+};
+
+// ลบหลายรายการพร้อมกัน (ลบ transactions ที่ผูกอยู่ก่อน) — bulk delete
+export const deleteInvestments = async (ids: string[]): Promise<void> => {
+  if (ids.length === 0) return;
+  const { error: txError } = await supabase.from('transactions').delete().in('investment_id', ids);
+  if (txError) throw txError;
+  const { error } = await supabase.from('investments').delete().in('id', ids);
+  if (error) throw error;
+};
+
 export const deleteInvestment = async (id: string): Promise<void> => {
   const { error: txError } = await supabase
     .from('transactions')
