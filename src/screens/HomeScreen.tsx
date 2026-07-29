@@ -26,6 +26,11 @@ import { FontDisplay } from 'expo-font';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
+// สีไฮไลต์ช่องปฏิทินวันที่มีแต่รายรับ — เขียวอ่อนให้เข้ากับธีมสว่าง (เดิมเป็น #0F2A1E เขียวเข้มจนตัวเลขจม)
+const INCOME_DAY_BG = '#E3F3EC';
+const INCOME_DAY_BORDER = '#B7E0CE';
+const INCOME_DAY_TEXT = '#136B47';
+
 export default function HomeScreen() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
   const { isDesktop, isMobile } = useResponsive();
@@ -108,10 +113,13 @@ export default function HomeScreen() {
         })
         .reduce((sum, i) => sum + i.amount, 0);
       if (totalAmount > 0 || dayIncome > 0) {
+        // วันที่มีรายรับล้วน (ไม่มีรายจ่าย) → ไฮไลต์เขียวอ่อน ให้ตัวเลขยังอ่านออกบนธีมสว่าง
+        const incomeOnly = dayIncome > 0 && totalAmount === 0;
         marked[dateStr] = {
           customStyles: {
             container: {
-              backgroundColor: dayIncome > 0 && totalAmount === 0 ? '#0F2A1E' : 'transparent',
+              backgroundColor: incomeOnly ? INCOME_DAY_BG : 'transparent',
+              borderColor: incomeOnly ? INCOME_DAY_BORDER : 'transparent',
               borderRadius: 0,
             },
             text: { color: COLORS.text, fontWeight: 'bold' },
@@ -695,6 +703,8 @@ export default function HomeScreen() {
             const incomeAmt = marking?.incomeAmount || 0;
             const isToday = marking?.customStyles?.text?.color === COLORS.primary;
             const isSelected = selectedDate === date?.dateString;
+            // บนพื้นเขียวอ่อน ใช้เขียวเข้มขึ้นเพื่อให้ตัวเลขอ่านชัด
+            const onIncomeBg = marking?.customStyles?.container?.backgroundColor === INCOME_DAY_BG;
             return (
               <TouchableOpacity
                 style={[
@@ -715,7 +725,7 @@ export default function HomeScreen() {
                   {date?.day}
                 </Text>
                 {amount > 0 ? <Text style={[styles.dayAmount, { color: COLORS.primary }]}>-{fmtShort(amount)}</Text> : null}
-                {incomeAmt > 0 ? <Text style={[styles.dayAmount, { color: COLORS.success }]}>+{fmtShort(incomeAmt)}</Text> : null}
+                {incomeAmt > 0 ? <Text style={[styles.dayAmount, { color: onIncomeBg ? INCOME_DAY_TEXT : COLORS.success }]}>+{fmtShort(incomeAmt)}</Text> : null}
               </TouchableOpacity>
             );
           }}

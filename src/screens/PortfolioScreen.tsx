@@ -576,6 +576,15 @@ export default function PortfolioScreen() {
             return { pct, monthly, years };
           });
           const currentPct = plan?.setAsidePercent ?? null;
+          // ต่ำกว่า 1 ปี → โชว์เป็นเดือน ; ตั้งแต่ 1 ปีขึ้นไป → โชว์เป็นปี
+          const fmtDur = (y: number | null): string => {
+            if (y == null) return '—';
+            if (y < 1) {
+              const m = Math.round(y * 12);
+              return m < 1 ? '< 1 เดือน' : `${m} เดือน`;
+            }
+            return `${y.toFixed(1)} ปี`;
+          };
           return (
             <View style={styles.goalCard}>
               <View style={styles.goalCardHeader}>
@@ -603,7 +612,7 @@ export default function PortfolioScreen() {
                         {formatCurrency(monthly)}
                       </Text>
                       <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }, isCurrent && styles.simActiveText]}>
-                        {years != null ? `${years.toFixed(1)} ปี` : '—'}
+                        {fmtDur(years)}
                       </Text>
                     </View>
                   );
@@ -698,7 +707,8 @@ export default function PortfolioScreen() {
         </View>
 
         {/* ── การ์ดเงินรอลงทุน (สำรอง) หลายสกุล + สมการความมั่งคั่ง ── */}
-        {reserveAccounts.length > 0 && (() => {
+        {/* ซ่อนไว้ชั่วคราวตามที่ผู้ใช้ต้องการ — เปลี่ยน false กลับเป็น true เพื่อโชว์อีกครั้ง */}
+        {false && reserveAccounts.length > 0 && (() => {
           // ต้นทุน investments รวมตาม platform (THB) — ไว้หักออกจาก "ยอดที่เติมเข้า" ของบัญชี reserve
           const investedByPlatform: Record<string, number> = {};
           investments.forEach((inv) => {
