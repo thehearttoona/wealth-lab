@@ -119,6 +119,30 @@ export function yearsToReachGoal(
   return years > 0 && Number.isFinite(years) ? years : null;
 }
 
+// ตัวกลับด้านของ monthsToReachGoal: อยากถึงเป้าใน "กี่ปี" ต้องเติมเดือนละเท่าไหร่
+//   FV(n) = current(1+m)^n + C·[((1+m)^n − 1)/m] = target  →  แก้หา C (เงินเติมต่อเดือน)
+//   โดย m = อัตราต่อเดือนที่ได้จากอัตราต่อปีแบบทบต้น, n = years×12
+// คืน 0 ถ้าไม่ต้องเติม (ถึงเป้าแล้ว หรือปล่อยให้โตเองก็ถึง) ; คืน null ถ้าคำนวณไม่ได้
+export function requiredMonthlyContribution(
+  current: number,
+  target: number,
+  annualReturnPercent: number,
+  years: number
+): number | null {
+  if (target <= 0 || years <= 0) return null;
+  if (current >= target) return 0;
+  const n = years * 12;
+  const m = Math.pow(1 + annualReturnPercent / 100, 1 / 12) - 1; // อัตราต่อเดือนจากต่อปี (ทบต้น)
+  if (m <= 0) {
+    // ไม่โต (หรือติดลบ) — พึ่งเงินเติมล้วน
+    return (target - current) / n;
+  }
+  const grown = current * Math.pow(1 + m, n);
+  if (grown >= target) return 0; // ปล่อยให้พอร์ตโตเองก็ถึงเป้าแล้ว ไม่ต้องเติม
+  const C = ((target - grown) * m) / (Math.pow(1 + m, n) - 1);
+  return C > 0 && Number.isFinite(C) ? C : null;
+}
+
 // สัดส่วนที่ใช้จำลองในตาราง: 10% → 80% ทีละ 10
 export const INVEST_PERCENT_STEPS = [10, 20, 30, 40, 50, 60, 70, 80];
 

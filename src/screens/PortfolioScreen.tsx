@@ -25,7 +25,7 @@ import {
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
 import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
-import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis, yearsToReachGoal, INVEST_PERCENT_STEPS, monthsToReachGoal, monthlyToAnnualPercent, MONTHLY_RETURN_STEPS } from '../utils/investmentGoals';
+import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis, yearsToReachGoal, INVEST_PERCENT_STEPS, monthsToReachGoal, monthlyToAnnualPercent, MONTHLY_RETURN_STEPS, GOAL_HORIZONS, requiredMonthlyContribution } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
 import { getIncomes } from '../services/incomeStorage';
@@ -67,6 +67,7 @@ export default function PortfolioScreen() {
   const [monthExpense, setMonthExpense] = useState(0); // รายจ่ายรวมในเดือนปัจจุบัน
   const [reserveAccounts, setReserveAccounts] = useState<Account[]>([]); // บัญชีบทบาท "รอลงทุน"
   const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number; count: number }[]>([]);
+  const [reqHorizon, setReqHorizon] = useState(5); // กรอบเวลาที่เลือกในการ์ด "เดือนละเท่าไหร่ถึงเป้า" (ปี)
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
@@ -567,6 +568,120 @@ export default function PortfolioScreen() {
             </>
           )}
         </View>
+
+        {/* ── การ์ด: เดือนละเท่าไหร่ถึงเป้า + แบ่งลงหุ้นไทย/ต่างประเทศ/คริปโต ── */}
+        {goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0 && (() => {
+          const r = goalAnalysis.projectionRatePercent; // % คาดโต (ผู้ใช้ตั้ง หรือพาซจริง)
+          const income = plan?.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
+          if (r == null || r <= 0) {
+            return (
+              <View style={styles.goalCard}>
+                <Text style={styles.goalCardTitle}>
+                  <Ionicons name="calculator-outline" size={18} color={COLORS.primary} /> เดือนละเท่าไหร่ถึงเป้า
+                </Text>
+                <Text style={styles.goalCardEmpty}>
+                  ใส่ "คาดโตปีละกี่ %" ที่การ์ดเป้าหมายก่อน ระบบถึงจะคำนวณว่าต้องลงทุนเดือนละเท่าไหร่เพื่อให้ถึงเป้า
+                </Text>
+              </View>
+            );
+          }
+          const current = goalAnalysis.currentValue; // = ต้นทุนที่ลงจริง (ไม่รวมกำไรลอยตัว)
+          const target = goalAnalysis.targetAmount;
+          const rows = GOAL_HORIZONS.map((years) => ({
+            years,
+            monthly: requiredMonthlyContribution(current, target, r, years),
+          }));
+          // สัดส่วนตามพอร์ตปัจจุบัน (ต้นทุน) ใน 3 กลุ่ม — ถ้ายังไม่มีพอร์ตให้แบ่งเท่ากัน
+          const cTH = summary.byType.stock_th?.cost ?? 0;
+          const cFR = summary.byType.stock_foreign?.cost ?? 0;
+          const cCR = summary.byType.crypto?.cost ?? 0;
+          const s3 = cTH + cFR + cCR;
+          const shares = s3 > 0
+            ? [
+                { key: 'stock_th', label: 'หุ้นไทย', share: cTH / s3 },
+                { key: 'stock_foreign', label: 'หุ้นต่างประเทศ', share: cFR / s3 },
+                { key: 'crypto', label: 'คริปโต', share: cCR / s3 },
+              ]
+            : [
+                { key: 'stock_th', label: 'หุ้นไทย', share: 1 / 3 },
+                { key: 'stock_foreign', label: 'หุ้นต่างประเทศ', share: 1 / 3 },
+                { key: 'crypto', label: 'คริปโต', share: 1 / 3 },
+              ];
+          const selected = rows.find((x) => x.years === reqHorizon) ?? rows[0];
+          const selMonthly = selected.monthly ?? 0;
+          const dcaRounds = plan?.dcaRounds ?? null;
+          const perTrade = dcaRounds && dcaRounds > 0 ? selMonthly / dcaRounds : null;
+          return (
+            <View style={styles.goalCard}>
+              <View style={styles.goalCardHeader}>
+                <Text style={styles.goalCardTitle}>
+                  <Ionicons name="calculator-outline" size={18} color={COLORS.primary} /> เดือนละเท่าไหร่ถึงเป้า
+                </Text>
+              </View>
+              <Text style={styles.goalCardSub}>
+                จากต้นทุน {formatCurrency(current)} • คาดโต {r.toFixed(1)}%/ปี • เป้า {formatCurrency(target)}
+                {s3 <= 0 ? ' • ยังไม่มีพอร์ต → แบ่งเท่ากัน 3 กลุ่ม' : ''}
+              </Text>
+              <View style={styles.horizonBox}>
+                <View style={styles.horizonRow}>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1 }]}>ถึงเป้าใน</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1.5, textAlign: 'right' }]}>ต้องลง/เดือน</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1.2, textAlign: 'right' }]}>% ของเงินได้</Text>
+                </View>
+                {rows.map(({ years, monthly }) => {
+                  const isSel = years === selected.years;
+                  const pctSal = income > 0 && monthly != null ? (monthly / income) * 100 : null;
+                  return (
+                    <TouchableOpacity key={years} onPress={() => setReqHorizon(years)}>
+                      <View style={[styles.horizonRow, isSel && styles.simRowActive]}>
+                        <Text style={[styles.simCol, { flex: 1 }, isSel && styles.simActiveText]}>
+                          {years} ปี{isSel ? ' ●' : ''}
+                        </Text>
+                        <Text style={[styles.simCol, { flex: 1.5, textAlign: 'right' }, isSel && styles.simActiveText]}>
+                          {monthly == null ? '—' : monthly <= 0 ? 'โตเองถึง' : formatCurrency(monthly)}
+                        </Text>
+                        <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }, isSel && styles.simActiveText]}>
+                          {pctSal == null ? '—' : `${pctSal.toFixed(0)}%`}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* แบ่งลงแต่ละกลุ่มของกรอบเวลาที่เลือก */}
+              <Text style={[styles.horizonHeader, { marginTop: 12 }]}>
+                แบ่งลงแต่ละกลุ่ม (เป้า {selected.years} ปี → {selMonthly > 0 ? formatCurrency(selMonthly) : '0'}/เดือน)
+              </Text>
+              <View style={styles.horizonBox}>
+                <View style={styles.horizonRow}>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1.3 }]}>กลุ่ม</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 0.8, textAlign: 'right' }]}>สัดส่วน</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1.4, textAlign: 'right' }]}>เงิน/เดือน</Text>
+                  <Text style={[styles.simCol, styles.simHead, { flex: 1, textAlign: 'right' }]}>ไม้/เดือน</Text>
+                </View>
+                {shares.map(({ key, label, share }) => {
+                  const amt = selMonthly * share;
+                  const trades = perTrade && perTrade > 0 ? Math.round(amt / perTrade) : null;
+                  return (
+                    <View key={key} style={styles.horizonRow}>
+                      <Text style={[styles.simCol, { flex: 1.3 }]}>{label}</Text>
+                      <Text style={[styles.simCol, { flex: 0.8, textAlign: 'right' }]}>{(share * 100).toFixed(0)}%</Text>
+                      <Text style={[styles.simCol, { flex: 1.4, textAlign: 'right' }]}>{formatCurrency(amt)}</Text>
+                      <Text style={[styles.simCol, { flex: 1, textAlign: 'right' }]}>{trades == null ? '—' : `${trades} ไม้`}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+              <Text style={styles.tpSubText}>
+                {dcaRounds && dcaRounds > 0
+                  ? `แตกเป็นไม้จาก "จำนวนรอบ DCA ${dcaRounds} รอบ/เดือน" (งบ ~${formatCurrency(perTrade || 0)}/ไม้) • แตะแถวบนเพื่อเปลี่ยนกรอบเวลา`
+                  : 'ตั้ง "จำนวนรอบ DCA" ที่การ์ดแผนเติมเงิน เพื่อดูจำนวนไม้/เดือน • แตะแถวบนเพื่อเปลี่ยนกรอบเวลา'}
+                {' '}• สัดส่วนอิงพอร์ตปัจจุบัน (ต้นทุน)
+              </Text>
+            </View>
+          );
+        })()}
 
         {/* ── การ์ดจำลอง: กันเงินลงทุน 10–80% → ถึงเป้าเร็วแค่ไหน ── */}
         {goalAnalysis && !goalAnalysis.reached && (() => {
