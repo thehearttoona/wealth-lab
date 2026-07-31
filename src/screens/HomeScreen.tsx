@@ -904,7 +904,7 @@ export default function HomeScreen() {
 
         {/* ── Header ── */}
         <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
-          <Text style={styles.topBarLogo}>WEALTH LAB</Text>
+          <Text style={styles.topBarLogo}>PAKMUT WEALTH</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             {isDesktop && (
               <>

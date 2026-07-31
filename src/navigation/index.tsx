@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
 import LoginScreen from '../screens/LoginScreen';
 import { NavigationContainer } from '@react-navigation/native';
@@ -58,9 +58,14 @@ const TAB_ITEMS = [
 function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPress: (name: string) => void }) {
   return (
     <View style={sidebarStyles.container}>
-      {/* <View style={sidebarStyles.logoSection}>
-        <Text style={sidebarStyles.logoText}>WEALTH LAB</Text>
-      </View> */}
+      <View style={sidebarStyles.logoSection}>
+        <Image
+          source={require('../../assets/icon.png')}
+          style={sidebarStyles.logoMark}
+          resizeMode="contain"
+        />
+        <Text style={sidebarStyles.logoText}>Pakmut Wealth</Text>
+      </View>
       <ScrollView style={sidebarStyles.navList}>
         {TAB_ITEMS.map((item) => {
           const isActive = activeTab === item.name;
@@ -269,11 +274,16 @@ const sidebarStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  logoMark: {
+    width: 32,
+    height: 32,
+  },
   logoText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
-    color: COLORS.text,
-    letterSpacing: 0.5,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+    letterSpacing: 0.3,
   },
   navList: {
     flex: 1,

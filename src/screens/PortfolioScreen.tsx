@@ -16,16 +16,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
-import { Investment, PortfolioSummary, INVESTMENT_TYPES } from '../types/investment';
+import { Investment, PortfolioSummary, INVESTMENT_TYPES, RealizedTrade } from '../types/investment';
+import { getRealizedTrades, saveRealizedTrade } from '../services/realizedStorage';
+import { summarizeRealized } from '../utils/realizedAnalysis';
 import {
   getInvestments,
   deleteInvestment,
   getPortfolioSummary,
   updateInvestment,
 } from '../services/investmentStorage';
-import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
+import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS, INVEST_EXPENSE_CATEGORY } from '../utils/constants';
+import { investedByMonth, currentMonthKey, setAsideStreak } from '../utils/savingsDiscipline';
 import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
-import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis, yearsToReachGoal, INVEST_PERCENT_STEPS, monthsToReachGoal, monthlyToAnnualPercent, MONTHLY_RETURN_STEPS, GOAL_HORIZONS, requiredMonthlyContribution } from '../utils/investmentGoals';
+import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis, monthsToReachGoal, monthlyToAnnualPercent, GOAL_HORIZONS, requiredMonthlyContribution } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
 import { getIncomes } from '../services/incomeStorage';
@@ -64,10 +67,23 @@ export default function PortfolioScreen() {
   const [planRoundsInput, setPlanRoundsInput] = useState('');
   const [planIncomeInput, setPlanIncomeInput] = useState('');
   const [monthSalary, setMonthSalary] = useState(0);   // เงินเดือนที่บันทึกในเดือนปัจจุบัน
-  const [monthExpense, setMonthExpense] = useState(0); // รายจ่ายรวมในเดือนปัจจุบัน
+  const [monthExpense, setMonthExpense] = useState(0); // รายจ่ายรวมในเดือนปัจจุบัน (ไม่รวมหมวด "ลงทุน")
+  const [monthInvestLogged, setMonthInvestLogged] = useState(0); // ที่บันทึกเป็นรายจ่ายหมวด "ลงทุน" เดือนนี้
   const [reserveAccounts, setReserveAccounts] = useState<Account[]>([]); // บัญชีบทบาท "รอลงทุน"
   const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number; count: number }[]>([]);
   const [reqHorizon, setReqHorizon] = useState(5); // กรอบเวลาที่เลือกในการ์ด "เดือนละเท่าไหร่ถึงเป้า" (ปี)
+  const [showPlanDetail, setShowPlanDetail] = useState(false); // กาง/ยุบรายละเอียดแผน — เริ่มต้นยุบไว้ให้หน้าไม่ยาว
+  // ตัวจำลอง "ปรับ 2 ตัว → คำตอบเดียว" แทนตาราง what-if 3 ตัว (null = ยังไม่แตะ ใช้ % จากแผนที่ตั้งไว้)
+  const [simPct, setSimPct] = useState<number | null>(null);
+  const [simReturn, setSimReturn] = useState(3); // กำไร %/เดือน ที่สมมติ
+  // ── การขายจริง: ตัวชี้วัดฝีมือที่วัดได้ (ต่างจากกำไรลอยตัว) ──
+  const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
+  const [realizedTableMissing, setRealizedTableMissing] = useState(false); // ยังไม่ได้รัน SQL
+  const [sellTarget, setSellTarget] = useState<Investment | null>(null);
+  const [sellQtyInput, setSellQtyInput] = useState('');
+  const [sellPriceInput, setSellPriceInput] = useState('');
+  const [sellDateInput, setSellDateInput] = useState('');
+  const [sellFeesInput, setSellFeesInput] = useState('');
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
@@ -83,6 +99,14 @@ export default function PortfolioScreen() {
       setPlan(await getInvestmentPlan());
     } catch {
       // ยังไม่มีตาราง/ยังไม่ตั้งแผน — ปล่อยเป็น null
+    }
+    try {
+      setRealizedTrades(await getRealizedTrades());
+      setRealizedTableMissing(false);
+    } catch {
+      // ยังไม่ได้รัน sql/realized_trades.sql — โชว์คำแนะนำแทนที่จะเงียบ
+      setRealizedTrades([]);
+      setRealizedTableMissing(true);
     }
     try {
       const accs = await getAccounts();
@@ -102,13 +126,22 @@ export default function PortfolioScreen() {
           .filter((i) => i.category === 'เงินเดือน' && inThisMonth(i.date))
           .reduce((s, i) => s + i.amount, 0)
       );
+      // กันหมวด "ลงทุน" ออกจากงบใช้จ่าย — เงินที่โอนไปลงทุนคือการออม ไม่ใช่เงินที่ใช้หมดไป
+      // ถ้านับรวม จะดูเหมือนใช้เกินงบทั้งที่จริง ๆ คือทำตามแผน
+      const monthExpenses = expenses.filter((e) => e.type !== 'income' && inThisMonth(e.date));
       setMonthExpense(
-        expenses
-          .filter((e) => e.type !== 'income' && inThisMonth(e.date))
+        monthExpenses
+          .filter((e) => e.category !== INVEST_EXPENSE_CATEGORY)
+          .reduce((s, e) => s + e.amount, 0)
+      );
+      setMonthInvestLogged(
+        monthExpenses
+          .filter((e) => e.category === INVEST_EXPENSE_CATEGORY)
           .reduce((s, e) => s + e.amount, 0)
       );
     } catch {
       setMonthSalary(0);
+      setMonthInvestLogged(0);
       setMonthExpense(0);
     }
 
@@ -139,6 +172,67 @@ export default function PortfolioScreen() {
   const showMsg = (msg: string) => {
     if (Platform.OS === 'web') window.alert(msg);
     else Alert.alert('', msg);
+  };
+
+  // ── บันทึกการขาย: ปลดล็อก "ผลตอบแทนจริง" แทนการเดาเลขคาดหวัง ──
+  const openSellModal = (inv: Investment) => {
+    setSellTarget(inv);
+    setSellQtyInput(inv.quantity.toString());
+    setSellPriceInput((inv.currentPrice ?? inv.buyPrice).toString());
+    setSellDateInput(new Date().toISOString().slice(0, 10));
+    setSellFeesInput('');
+  };
+
+  const handleConfirmSell = async () => {
+    if (!sellTarget) return;
+    const qty = parseFloat(sellQtyInput.replace(/,/g, ''));
+    const price = parseFloat(sellPriceInput.replace(/,/g, ''));
+    const date = sellDateInput.trim();
+    const sellFee = parseFloat(sellFeesInput.replace(/,/g, '')) || 0;
+    if (!qty || qty <= 0 || qty > sellTarget.quantity) {
+      showMsg(`จำนวนที่ขายต้องมากกว่า 0 และไม่เกิน ${sellTarget.quantity}`);
+      return;
+    }
+    if (!price || price <= 0) { showMsg('กรุณากรอกราคาขาย'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { showMsg('วันที่ขายต้องเป็นรูปแบบ YYYY-MM-DD'); return; }
+
+    // ค่าธรรมเนียมซื้อ ปันตามสัดส่วนที่ขาย แล้วบวกค่าธรรมเนียมขายที่กรอก
+    const buyFeeShare = (sellTarget.fees || 0) * (qty / sellTarget.quantity);
+    try {
+      await saveRealizedTrade({
+        id: Date.now().toString(),
+        symbol: sellTarget.symbol,
+        name: sellTarget.name,
+        assetType: sellTarget.type,
+        currency: sellTarget.currency ?? 'THB',
+        quantity: qty,
+        buyPrice: sellTarget.buyPrice,
+        sellPrice: price,
+        buyDate: toChristianYear(sellTarget.buyDate || '').slice(0, 10),
+        sellDate: date,
+        fees: buyFeeShare + sellFee,
+      });
+      // ขายหมด → ลบรายการทิ้ง ; ขายบางส่วน → ลดจำนวนและค่าธรรมเนียมที่เหลือตามสัดส่วน
+      if (qty >= sellTarget.quantity) {
+        await deleteInvestment(sellTarget.id);
+      } else {
+        await updateInvestment({
+          ...sellTarget,
+          quantity: sellTarget.quantity - qty,
+          fees: Math.max(0, (sellTarget.fees || 0) - buyFeeShare),
+        });
+      }
+      setSellTarget(null);
+      showMsg('บันทึกการขายแล้ว');
+      loadData();
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      showMsg(
+        /realized_trades|does not exist|schema cache/i.test(msg)
+          ? 'ยังไม่ได้สร้างตาราง — เอา sql/realized_trades.sql ไปรันที่ Supabase ก่อน'
+          : `บันทึกการขายไม่สำเร็จ: ${msg}`
+      );
+    }
   };
 
   const openGoalModal = () => {
@@ -371,39 +465,19 @@ export default function PortfolioScreen() {
             </Text>
           ) : null}
         </View>
-        <TouchableOpacity
-          style={styles.deleteButton}
-          onPress={() => handleDelete(item.id, item.name)}
-        >
-          <Ionicons name="trash-outline" size={14} color={COLORS.textSecondary} />
-          <Text style={styles.deleteButtonText}> ลบ</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  };
-
-  const renderTypeCard = (type: string, data: any, icon: string) => {
-    const isProfit = data.profit >= 0;
-    const percentage = summary.totalValue > 0 ? (data.value / summary.totalValue) * 100 : 0;
-
-    return (
-      <View key={type} style={[
-        styles.typeCard,
-        isDesktop && styles.typeCardDesktop,
-      ]}>
-        <View style={styles.typeHeader}>
-          <Ionicons name={icon as any} size={20} color={COLORS.primary} />
-          <Text style={styles.typeName}>
-            {INVESTMENT_TYPES.find((t) => t.value === type)?.label || type}
-          </Text>
-          <Text style={styles.typeCount}>({data.count})</Text>
-        </View>
-        <Text style={styles.typeValue}>{formatCurrency(data.value)}</Text>
-        <View style={styles.typeFooter}>
-          <Text style={[styles.typeProfit, isProfit ? styles.profitPositive : styles.profitNegative]}>
-            {isProfit ? '+' : ''}{formatCurrency(data.profit)}
-          </Text>
-          <Text style={styles.typePercentage}>{percentage.toFixed(2)}%</Text>
+        <View style={styles.itemActionRow}>
+          {/* ขาย = บันทึกผลจริง ต่างจาก ลบ = เอาออกเฉย ๆ ไม่นับเป็นผลงาน */}
+          <TouchableOpacity style={styles.sellButton} onPress={() => openSellModal(item)}>
+            <Ionicons name="cash-outline" size={14} color={COLORS.primary} />
+            <Text style={styles.sellButtonText}> ขาย</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={() => handleDelete(item.id, item.name)}
+          >
+            <Ionicons name="trash-outline" size={14} color={COLORS.textSecondary} />
+            <Text style={styles.deleteButtonText}> ลบ</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -417,9 +491,88 @@ export default function PortfolioScreen() {
     : null;
   // ฐานคำนวณเป้าหมาย = ต้นทุนที่ลงจริง (ไม่รวมกำไรที่ยังไม่ได้ขาย/unrealized)
   // กำไรลอยตัวยังไม่เกิดจริงจนกว่าจะปิดออเดอร์ จึงไม่นับรวมในทุกส่วนของการคำนวณถึงเป้า
+  // ผลตอบแทนจริงจากการขาย — ตัวนี้คือ "ฝีมือที่วัดได้" ใช้แทนเลขคาดหวังถ้ามีข้อมูลพอ
+  const realized = summarizeRealized(realizedTrades);
+
   const goalAnalysis: PortfolioGoalAnalysis | null = goal
-    ? analyzePortfolioGoal(goal, summary.totalCost, summary.totalCost, portfolioStartDate)
+    ? analyzePortfolioGoal(
+        goal,
+        summary.totalCost,
+        summary.totalCost,
+        portfolioStartDate,
+        new Date(),
+        realized.annualReturnPercent
+      )
     : null;
+
+  // ── ตัวเลขแผนเติมเงิน: คำนวณครั้งเดียวที่นี่ ใช้ทั้งการ์ดสรุปด้านบนและรายละเอียดด้านล่าง ──
+  // ฐานที่นิ่ง = เงินเดือนคาดหวังที่ตั้งไว้ (ถ้ายังไม่ตั้ง fallback เป็นเงินเดือนที่บันทึกเดือนนี้)
+  const baseIncome = plan?.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
+  const hasPlanNumbers = !!plan && baseIncome > 0;
+  const setAside = plan ? baseIncome * (plan.setAsidePercent / 100) : 0; // จ่ายตัวเองก่อน (ไม่หักรายจ่าย)
+  const perRound = plan && plan.dcaRounds > 0 ? setAside / plan.dcaRounds : null;
+  const spendBudget = baseIncome - setAside;      // งบใช้จ่าย = กันลงทุนก่อนแล้วเหลือเท่านี้
+  const leftToSpend = spendBudget - monthExpense; // เหลือใช้ได้อีก (< 0 = ใช้เกินงบ)
+
+  // ── วินัยการกันเงิน: "กันไว้" กับ "ลงจริง" ตรงกันหรือเปล่า ──
+  // อ่านจากรายการลงทุนที่บันทึกไว้แล้ว ไม่ต้องให้กรอกอะไรเพิ่ม
+  const investedPerMonth = investedByMonth(investments, realizedTrades);
+  const investedThisMonth = investedPerMonth[currentMonthKey()] ?? 0;
+  const investProgress = setAside > 0 ? Math.min(1, investedThisMonth / setAside) : 0;
+  const investShortfall = Math.max(0, setAside - investedThisMonth);
+  const streakMonths = setAsideStreak(investedPerMonth, setAside);
+  // เงินที่ต้องเติมต่อเดือนของกรอบเวลาที่เลือก — null = คำนวณไม่ได้, 0 = ปล่อยให้โตเองก็ถึง
+  const reqMonthly =
+    goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0 && goalAnalysis.projectionRatePercent
+      ? requiredMonthlyContribution(
+          goalAnalysis.currentValue,
+          goalAnalysis.targetAmount,
+          goalAnalysis.projectionRatePercent,
+          reqHorizon
+        )
+      : null;
+  // ต้องโตปีละกี่ % ของกรอบเวลาที่เลือก (แบบไม่เติมเงินเพิ่ม)
+  const horizonRate =
+    goalAnalysis?.requiredByHorizon.find((h) => h.years === reqHorizon)?.annualReturnPercent ?? null;
+
+  // ── ตัวจำลอง: กัน % + กำไร %/เดือน → ถึงเป้าในกี่เดือน (คำตอบเดียว แทนตาราง what-if 3 ตัว) ──
+  const simPctValue = simPct ?? plan?.setAsidePercent ?? 20;
+  const simContribution = baseIncome > 0 ? baseIncome * (simPctValue / 100) : 0;
+  const simMonths =
+    goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0
+      ? monthsToReachGoal(goalAnalysis.currentValue, goalAnalysis.targetAmount, simReturn, simContribution)
+      : null;
+  const fmtMonthsAnswer = (n: number | null): string => {
+    if (n == null) return 'ไปไม่ถึง';
+    const m = Math.round(n);
+    if (m < 1) return 'ถึงแล้ว';
+    if (m < 24) return `${m} เดือน`;
+    return `${(n / 12).toFixed(1)} ปี`;
+  };
+  const dcaRoundsCount = plan?.dcaRounds && plan.dcaRounds > 0 ? plan.dcaRounds : null;
+
+  // สัดส่วน 3 กลุ่มตามต้นทุนที่ถืออยู่ — ยังไม่มีพอร์ตให้แบ่งเท่ากัน
+  const shares = (() => {
+    const cTH = summary.byType.stock_th?.cost ?? 0;
+    const cFR = summary.byType.stock_foreign?.cost ?? 0;
+    const cCR = summary.byType.crypto?.cost ?? 0;
+    const s3 = cTH + cFR + cCR;
+    const pick = (c: number) => (s3 > 0 ? c / s3 : 1 / 3);
+    return [
+      { key: 'stock_th', label: 'หุ้นไทย', share: pick(cTH) },
+      { key: 'stock_foreign', label: 'หุ้นต่างประเทศ', share: pick(cFR) },
+      { key: 'crypto', label: 'คริปโต', share: pick(cCR) },
+    ];
+  })();
+
+  // ทำกำไรก้อนนี้อีกกี่ครั้งถึงเป้า — ยุบการ์ดเดิมเหลือข้อความบรรทัดเดียว (อิงมูลค่าตลาด)
+  const profitTimesText: string | null = (() => {
+    if (!goalAnalysis) return null;
+    const gap = goalAnalysis.targetAmount - summary.totalValue;
+    if (gap <= 0) return 'มูลค่าถึงเป้าแล้ว 🎉';
+    if (summary.totalProfit <= 0) return 'ยังไม่มีกำไร';
+    return `อีก ~${Math.ceil(gap / summary.totalProfit)} ครั้ง`;
+  })();
 
   // ตัวที่กำไร (ทั้งที่ถึงเป้าและยังไม่ถึง) — โชว์ % + คาดกี่ปีถึงเป้าขายทำกำไร เรียงใกล้/เกินเป้าก่อน
   const shouldSell = investments
@@ -545,352 +698,391 @@ export default function PortfolioScreen() {
                 {!goalAnalysis.reached && ` • ขาดอีก ${formatCurrency(goalAnalysis.remaining)}`}
               </Text>
 
-              {!goalAnalysis.reached && goalAnalysis.requiredByHorizon.length > 0 && (
-                <View style={styles.horizonBox}>
-                  <Text style={styles.horizonHeader}>ต้องโตเฉลี่ยปีละ</Text>
-                  {goalAnalysis.requiredByHorizon.map((h) => (
-                    <View key={h.years} style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>ภายใน {h.years} ปี</Text>
-                      <Text style={styles.horizonRate}>~{h.annualReturnPercent.toFixed(1)}% / ปี</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-
               {/* ประมาณวันถึงเป้า — จาก % ที่ตั้งเอง หรือพาซจริง */}
               {!goalAnalysis.reached && (
                 <Text style={styles.goalVerdict}>
                   {goalAnalysis.projectedYearsToReach != null
-                    ? ` ${goalAnalysis.projectionSource === 'user' ? 'ที่คาดโตปีละ' : 'พาซปัจจุบันโตเฉลี่ยปีละ'} ~${goalAnalysis.projectionRatePercent!.toFixed(1)}% → คาดถึงเป้าในอีก ~${goalAnalysis.projectedYearsToReach.toFixed(1)} ปี (≈ ${new Date(goalAnalysis.projectedDate!).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })})`
+                    ? ` ${
+                        goalAnalysis.projectionSource === 'realized'
+                          ? 'จากการขายจริงโตเฉลี่ยปีละ'
+                          : goalAnalysis.projectionSource === 'user'
+                            ? 'ที่คาดโตปีละ'
+                            : 'พาซปัจจุบันโตเฉลี่ยปีละ'
+                      } ~${goalAnalysis.projectionRatePercent!.toFixed(1)}% → คาดถึงเป้าในอีก ~${goalAnalysis.projectedYearsToReach.toFixed(1)} ปี (≈ ${new Date(goalAnalysis.projectedDate!).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })})`
                     : 'ใส่ "คาดโตปีละกี่ %" ในปุ่มแก้ไข เพื่อให้ระบบคำนวณว่าจะถึงเป้าในกี่ปี'}
+                </Text>
+              )}
+
+              {/* ตัวเลขที่ต้องรู้วันนี้ — ยุบสาระของหลายการ์ดเหลือแถวเดียว รายละเอียดกางดูด้านล่าง */}
+              <View style={styles.kpiRow}>
+                {!goalAnalysis.reached && (
+                  <View style={styles.kpiCell}>
+                    <Text style={styles.kpiLabel}>ต้องลง/เดือน ({reqHorizon} ปี)</Text>
+                    <Text style={styles.kpiValue}>
+                      {reqMonthly == null ? '—' : reqMonthly <= 0 ? 'โตเองถึง' : formatCurrency(reqMonthly)}
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.kpiCell}>
+                  <Text style={styles.kpiLabel}>ลงได้/รอบ</Text>
+                  <Text style={styles.kpiValue}>{perRound == null ? '—' : formatCurrency(perRound)}</Text>
+                </View>
+                <View style={styles.kpiCell}>
+                  <Text style={styles.kpiLabel}>เหลือใช้เดือนนี้</Text>
+                  <Text style={[styles.kpiValue, hasPlanNumbers && leftToSpend < 0 && styles.kpiValueNeg]}>
+                    {hasPlanNumbers ? formatCurrency(leftToSpend) : '—'}
+                  </Text>
+                </View>
+              </View>
+              {/* ── วินัยการกันเงิน: จุดที่แผนพังบ่อยสุด — "กันไว้" ไม่เท่ากับ "ลงจริง" ── */}
+              {hasPlanNumbers && setAside > 0 && (
+                <View style={styles.disciplineBox}>
+                  <View style={styles.planLine}>
+                    <Text style={styles.planLineLabel}>เดือนนี้ลงจริง / กันไว้</Text>
+                    <Text
+                      style={[
+                        styles.planLineValue,
+                        { color: investShortfall > 0 ? COLORS.warning : COLORS.success },
+                      ]}
+                    >
+                      {formatCurrency(investedThisMonth)} / {formatCurrency(setAside)}
+                    </Text>
+                  </View>
+                  <View style={styles.goalTrack}>
+                    <View
+                      style={[
+                        styles.goalFill,
+                        {
+                          width: `${investProgress * 100}%`,
+                          backgroundColor: investShortfall > 0 ? COLORS.warning : COLORS.success,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.tpSubText}>
+                    {investShortfall > 0
+                      ? `ยังต้องโอนเข้าลงทุนอีก ${formatCurrency(investShortfall)} (ทำได้ ${(investProgress * 100).toFixed(0)}%)`
+                      : '✓ กันเงินครบแล้วเดือนนี้'}
+                    {streakMonths > 0
+                      ? ` • ทำครบติดกัน ${streakMonths} เดือน`
+                      : ' • ยังไม่มีเดือนที่ทำครบติดกัน'}
+                  </Text>
+                </View>
+              )}
+
+              {hasPlanNumbers && leftToSpend < 0 ? (
+                <Text style={[styles.tpSubText, { color: COLORS.error }]}>
+                  ⚠ เดือนนี้ใช้เกินงบไป {formatCurrency(-leftToSpend)} — กระทบเงินที่กันไว้ลงทุน
+                </Text>
+              ) : !hasPlanNumbers ? (
+                <Text style={styles.tpSubText}>
+                  * ยังไม่ได้ตั้งแผนเติมเงิน/เงินเดือน — กด "ดูรายละเอียดแผน" ด้านล่างเพื่อตั้งค่า
+                </Text>
+              ) : null}
+            </>
+          )}
+        </View>
+
+        {/* ── ผลงานจริง (realized): กำไรที่ขายแล้วเท่านั้น ไม่นับกำไรลอยตัว ── */}
+        <View style={styles.goalCard}>
+          <Text style={styles.goalCardTitle}>
+            <Ionicons name="ribbon-outline" size={18} color={COLORS.primary} /> ผลงานจริง (ที่ขายแล้ว)
+          </Text>
+          {realizedTableMissing ? (
+            <Text style={styles.goalCardEmpty}>
+              ยังใช้ไม่ได้ — เอาไฟล์ `sql/realized_trades.sql` ไปรันที่ Supabase SQL editor ก่อน 1 ครั้ง แล้วกลับมาหน้านี้
+            </Text>
+          ) : realized.tradeCount === 0 ? (
+            <Text style={styles.goalCardEmpty}>
+              ยังไม่มีการขายที่บันทึกไว้ — กด "ขาย" ที่รายการลงทุนด้านล่างเมื่อขายจริง
+              {'\n'}ตัวเลขทั้งหมดในหน้านี้ยังเป็น "กำไรลอยตัว" ที่ยังไม่เกิดขึ้นจริง จนกว่าจะมีการขายบันทึกไว้
+            </Text>
+          ) : (
+            <>
+              <View style={styles.kpiRow}>
+                <View style={styles.kpiCell}>
+                  <Text style={styles.kpiLabel}>กำไรจริง</Text>
+                  <Text style={[styles.kpiValue, realized.totalPnlTHB < 0 && styles.kpiValueNeg]}>
+                    {realized.totalPnlTHB >= 0 ? '+' : ''}{formatCurrency(realized.totalPnlTHB)}
+                  </Text>
+                </View>
+                <View style={styles.kpiCell}>
+                  <Text style={styles.kpiLabel}>คิดเป็น</Text>
+                  <Text style={[styles.kpiValue, realized.totalPnlPercent < 0 && styles.kpiValueNeg]}>
+                    {realized.totalPnlPercent >= 0 ? '+' : ''}{realized.totalPnlPercent.toFixed(1)}%
+                  </Text>
+                </View>
+                <View style={styles.kpiCell}>
+                  <Text style={styles.kpiLabel}>ชนะ {realized.winCount}/{realized.tradeCount} ดีล</Text>
+                  <Text style={styles.kpiValue}>{realized.winRatePercent.toFixed(0)}%</Text>
+                </View>
+              </View>
+              <View style={styles.planLine}>
+                <Text style={styles.planLineLabel}>ผลตอบแทนจริงต่อปี (ถือเฉลี่ย {realized.avgHoldYears.toFixed(1)} ปี)</Text>
+                <Text style={styles.planLineValue}>
+                  {realized.annualReturnPercent != null
+                    ? `${realized.annualReturnPercent >= 0 ? '+' : ''}${realized.annualReturnPercent.toFixed(1)}%`
+                    : realized.tooShort
+                      ? 'ถือสั้นเกินไป'
+                      : '—'}
+                </Text>
+              </View>
+              {/* จุดที่สำคัญที่สุด: ของจริง vs ที่ตั้งไว้ */}
+              {goal?.expectedAnnualReturnPercent != null && realized.annualReturnPercent != null && (
+                <Text
+                  style={[
+                    styles.tpSubText,
+                    {
+                      color:
+                        realized.annualReturnPercent >= goal.expectedAnnualReturnPercent
+                          ? COLORS.success
+                          : COLORS.error,
+                    },
+                  ]}
+                >
+                  {realized.annualReturnPercent >= goal.expectedAnnualReturnPercent
+                    ? `✓ ทำได้จริง ${realized.annualReturnPercent.toFixed(1)}% เทียบกับที่ตั้งไว้ ${goal.expectedAnnualReturnPercent}% — แผนใช้ตัวเลขจริงคำนวณให้แล้ว`
+                    : `⚠ ทำได้จริง ${realized.annualReturnPercent.toFixed(1)}% แต่ตั้งไว้ ${goal.expectedAnnualReturnPercent}% — แผนด้านล่างเปลี่ยนไปใช้ตัวเลขจริงแล้ว`}
+                </Text>
+              )}
+              {realized.bestTrade && realized.worstTrade && realized.tradeCount > 1 && (
+                <Text style={styles.tpSubText}>
+                  ดีที่สุด {realized.bestTrade.trade.symbol} {realized.bestTrade.pnlPercent >= 0 ? '+' : ''}
+                  {realized.bestTrade.pnlPercent.toFixed(1)}% • แย่ที่สุด {realized.worstTrade.trade.symbol}{' '}
+                  {realized.worstTrade.pnlPercent >= 0 ? '+' : ''}{realized.worstTrade.pnlPercent.toFixed(1)}%
                 </Text>
               )}
             </>
           )}
         </View>
 
-        {/* ── การ์ด: เดือนละเท่าไหร่ถึงเป้า + แบ่งลงหุ้นไทย/ต่างประเทศ/คริปโต ── */}
-        {goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0 && (() => {
-          const r = goalAnalysis.projectionRatePercent; // % คาดโต (ผู้ใช้ตั้ง หรือพาซจริง)
-          const income = plan?.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
-          if (r == null || r <= 0) {
-            return (
-              <View style={styles.goalCard}>
-                <Text style={styles.goalCardTitle}>
-                  <Ionicons name="calculator-outline" size={18} color={COLORS.primary} /> เดือนละเท่าไหร่ถึงเป้า
-                </Text>
-                <Text style={styles.goalCardEmpty}>
-                  ใส่ "คาดโตปีละกี่ %" ที่การ์ดเป้าหมายก่อน ระบบถึงจะคำนวณว่าต้องลงทุนเดือนละเท่าไหร่เพื่อให้ถึงเป้า
-                </Text>
-              </View>
-            );
-          }
-          const current = goalAnalysis.currentValue; // = ต้นทุนที่ลงจริง (ไม่รวมกำไรลอยตัว)
-          const target = goalAnalysis.targetAmount;
-          const rows = GOAL_HORIZONS.map((years) => ({
-            years,
-            monthly: requiredMonthlyContribution(current, target, r, years),
-          }));
-          // สัดส่วนตามพอร์ตปัจจุบัน (ต้นทุน) ใน 3 กลุ่ม — ถ้ายังไม่มีพอร์ตให้แบ่งเท่ากัน
-          const cTH = summary.byType.stock_th?.cost ?? 0;
-          const cFR = summary.byType.stock_foreign?.cost ?? 0;
-          const cCR = summary.byType.crypto?.cost ?? 0;
-          const s3 = cTH + cFR + cCR;
-          const shares = s3 > 0
-            ? [
-                { key: 'stock_th', label: 'หุ้นไทย', share: cTH / s3 },
-                { key: 'stock_foreign', label: 'หุ้นต่างประเทศ', share: cFR / s3 },
-                { key: 'crypto', label: 'คริปโต', share: cCR / s3 },
-              ]
-            : [
-                { key: 'stock_th', label: 'หุ้นไทย', share: 1 / 3 },
-                { key: 'stock_foreign', label: 'หุ้นต่างประเทศ', share: 1 / 3 },
-                { key: 'crypto', label: 'คริปโต', share: 1 / 3 },
-              ];
-          const selected = rows.find((x) => x.years === reqHorizon) ?? rows[0];
-          const selMonthly = selected.monthly ?? 0;
-          const dcaRounds = plan?.dcaRounds ?? null;
-          const perTrade = dcaRounds && dcaRounds > 0 ? selMonthly / dcaRounds : null;
-          return (
-            <View style={styles.goalCard}>
-              <View style={styles.goalCardHeader}>
-                <Text style={styles.goalCardTitle}>
-                  <Ionicons name="calculator-outline" size={18} color={COLORS.primary} /> เดือนละเท่าไหร่ถึงเป้า
-                </Text>
-              </View>
-              <Text style={styles.goalCardSub}>
-                จากต้นทุน {formatCurrency(current)} • คาดโต {r.toFixed(1)}%/ปี • เป้า {formatCurrency(target)}
-                {s3 <= 0 ? ' • ยังไม่มีพอร์ต → แบ่งเท่ากัน 3 กลุ่ม' : ''}
-              </Text>
-              <View style={styles.horizonBox}>
-                <View style={styles.horizonRow}>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1 }]}>ถึงเป้าใน</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1.5, textAlign: 'right' }]}>ต้องลง/เดือน</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1.2, textAlign: 'right' }]}>% ของเงินได้</Text>
-                </View>
-                {rows.map(({ years, monthly }) => {
-                  const isSel = years === selected.years;
-                  const pctSal = income > 0 && monthly != null ? (monthly / income) * 100 : null;
-                  return (
-                    <TouchableOpacity key={years} onPress={() => setReqHorizon(years)}>
-                      <View style={[styles.horizonRow, isSel && styles.simRowActive]}>
-                        <Text style={[styles.simCol, { flex: 1 }, isSel && styles.simActiveText]}>
-                          {years} ปี{isSel ? ' ●' : ''}
-                        </Text>
-                        <Text style={[styles.simCol, { flex: 1.5, textAlign: 'right' }, isSel && styles.simActiveText]}>
-                          {monthly == null ? '—' : monthly <= 0 ? 'โตเองถึง' : formatCurrency(monthly)}
-                        </Text>
-                        <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }, isSel && styles.simActiveText]}>
-                          {pctSal == null ? '—' : `${pctSal.toFixed(0)}%`}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* แบ่งลงแต่ละกลุ่มของกรอบเวลาที่เลือก */}
-              <Text style={[styles.horizonHeader, { marginTop: 12 }]}>
-                แบ่งลงแต่ละกลุ่ม (เป้า {selected.years} ปี → {selMonthly > 0 ? formatCurrency(selMonthly) : '0'}/เดือน)
-              </Text>
-              <View style={styles.horizonBox}>
-                <View style={styles.horizonRow}>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1.3 }]}>กลุ่ม</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 0.8, textAlign: 'right' }]}>สัดส่วน</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1.4, textAlign: 'right' }]}>เงิน/เดือน</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1, textAlign: 'right' }]}>ไม้/เดือน</Text>
-                </View>
-                {shares.map(({ key, label, share }) => {
-                  const amt = selMonthly * share;
-                  const trades = perTrade && perTrade > 0 ? Math.round(amt / perTrade) : null;
-                  return (
-                    <View key={key} style={styles.horizonRow}>
-                      <Text style={[styles.simCol, { flex: 1.3 }]}>{label}</Text>
-                      <Text style={[styles.simCol, { flex: 0.8, textAlign: 'right' }]}>{(share * 100).toFixed(0)}%</Text>
-                      <Text style={[styles.simCol, { flex: 1.4, textAlign: 'right' }]}>{formatCurrency(amt)}</Text>
-                      <Text style={[styles.simCol, { flex: 1, textAlign: 'right' }]}>{trades == null ? '—' : `${trades} ไม้`}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-              <Text style={styles.tpSubText}>
-                {dcaRounds && dcaRounds > 0
-                  ? `แตกเป็นไม้จาก "จำนวนรอบ DCA ${dcaRounds} รอบ/เดือน" (งบ ~${formatCurrency(perTrade || 0)}/ไม้) • แตะแถวบนเพื่อเปลี่ยนกรอบเวลา`
-                  : 'ตั้ง "จำนวนรอบ DCA" ที่การ์ดแผนเติมเงิน เพื่อดูจำนวนไม้/เดือน • แตะแถวบนเพื่อเปลี่ยนกรอบเวลา'}
-                {' '}• สัดส่วนอิงพอร์ตปัจจุบัน (ต้นทุน)
-              </Text>
+        {redAlerts.length > 0 && (
+          <View style={styles.losersCard}>
+            <View style={styles.cardTitleRow}>
+              <Ionicons name="warning" size={16} color={COLORS.error} />
+              <Text style={styles.losersTitle}>ราคาลงแดงติดกัน (2/4/6 แท่ง)</Text>
             </View>
-          );
-        })()}
-
-        {/* ── การ์ดจำลอง: กันเงินลงทุน 10–80% → ถึงเป้าเร็วแค่ไหน ── */}
-        {goalAnalysis && !goalAnalysis.reached && (() => {
-          const income = plan?.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
-          const r = goalAnalysis.projectionRatePercent; // % คาดโต (ผู้ใช้ตั้ง หรือพาซจริง)
-          if (income <= 0 || r == null || r <= 0) {
-            return (
-              <View style={styles.goalCard}>
-                <Text style={styles.goalCardTitle}>
-                  <Ionicons name="flash-outline" size={18} color={COLORS.primary} /> จำลอง % ลงทุน → ถึงเป้าเร็วแค่ไหน
+            {redAlerts.map((a) => (
+              <View key={a.symbol} style={styles.loserRow}>
+                <Text style={styles.loserName} numberOfLines={1}>
+                  {a.symbol || a.name} <Text style={styles.tpSubText}>· แดง {a.count} แท่ง</Text>
                 </Text>
-                <Text style={styles.goalCardEmpty}>
-                  ต้องมี (1) เงินเดือน/เงินได้ต่อเดือน — ตั้งที่การ์ด "แผนเติมเงิน" และ (2) "คาดโตปีละกี่ %" — ตั้งที่การ์ดเป้าหมาย ก่อน ระบบถึงจะจำลองให้ได้
-                </Text>
+                <Text style={styles.loserPct}>{a.dropPercent.toFixed(2)}%</Text>
               </View>
-            );
-          }
-          const rows = INVEST_PERCENT_STEPS.map((pct) => {
-            const monthly = income * (pct / 100);
-            const years = yearsToReachGoal(goalAnalysis.currentValue, goalAnalysis.targetAmount, r, monthly);
-            return { pct, monthly, years };
-          });
-          const currentPct = plan?.setAsidePercent ?? null;
-          // ต่ำกว่า 1 ปี → โชว์เป็นเดือน ; ตั้งแต่ 1 ปีขึ้นไป → โชว์เป็นปี
-          const fmtDur = (y: number | null): string => {
-            if (y == null) return '—';
-            if (y < 1) {
-              const m = Math.round(y * 12);
-              return m < 1 ? '< 1 เดือน' : `${m} เดือน`;
-            }
-            return `${y.toFixed(1)} ปี`;
-          };
-          return (
-            <View style={styles.goalCard}>
-              <View style={styles.goalCardHeader}>
-                <Text style={styles.goalCardTitle}>
-                  <Ionicons name="flash-outline" size={18} color={COLORS.primary} /> จำลอง % ลงทุน → ถึงเป้าเร็วแค่ไหน
-                </Text>
-              </View>
-              <Text style={styles.goalCardSub}>
-                ฐานเงินได้ {formatCurrency(income)}/เดือน • คาดโต {r.toFixed(1)}%/ปี • เป้า {formatCurrency(goalAnalysis.targetAmount)}
-              </Text>
-              <View style={styles.horizonBox}>
-                <View style={styles.horizonRow}>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1 }]}>กัน %</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1.4, textAlign: 'right' }]}>ลงทุน/เดือน</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1.2, textAlign: 'right' }]}>ถึงเป้าใน</Text>
-                </View>
-                {rows.map(({ pct, monthly, years }) => {
-                  const isCurrent = currentPct != null && pct === currentPct;
-                  return (
-                    <View key={pct} style={[styles.horizonRow, isCurrent && styles.simRowActive]}>
-                      <Text style={[styles.simCol, { flex: 1 }, isCurrent && styles.simActiveText]}>
-                        {pct}%{isCurrent ? ' ●' : ''}
-                      </Text>
-                      <Text style={[styles.simCol, { flex: 1.4, textAlign: 'right' }, isCurrent && styles.simActiveText]}>
-                        {formatCurrency(monthly)}
-                      </Text>
-                      <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }, isCurrent && styles.simActiveText]}>
-                        {fmtDur(years)}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-              <Text style={styles.tpSubText}>
-                กัน % มากขึ้น = ถึงเป้าไวขึ้น แต่เหลือใช้น้อยลง • ● = % ที่ตั้งไว้ตอนนี้
-              </Text>
-            </View>
-          );
-        })()}
-
-        {/* ── การ์ดจำลอง: ทำกำไร X%/เดือน → ถึงเป้าเร็วแค่ไหน ── */}
-        {goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0 && (() => {
-          const income = plan?.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
-          const currentPct = plan?.setAsidePercent ?? null;
-          // เงินเติมต่อเดือน = กัน % ที่ตั้งไว้ × เงินได้ (ถ้ายังไม่ตั้งแผน = 0 → จำลองแบบทบต้นล้วน)
-          const monthlyContribution = currentPct != null && income > 0 ? income * (currentPct / 100) : 0;
-          const rows = MONTHLY_RETURN_STEPS.map((mpct) => {
-            const annual = monthlyToAnnualPercent(mpct);
-            const months = monthsToReachGoal(
-              goalAnalysis.currentValue,
-              goalAnalysis.targetAmount,
-              mpct,
-              monthlyContribution
-            );
-            return { mpct, annual, months };
-          });
-          const fmtMonths = (n: number | null): string => {
-            if (n == null) return '—';
-            const m = Math.round(n);
-            if (m < 1) return '< 1 เดือน';
-            if (m < 12) return `${m} เดือน`;
-            const y = n / 12;
-            return `${y.toFixed(1)} ปี`;
-          };
-          return (
-            <View style={styles.goalCard}>
-              <View style={styles.goalCardHeader}>
-                <Text style={styles.goalCardTitle}>
-                  <Ionicons name="rocket-outline" size={18} color={COLORS.primary} /> จำลอง % กำไร/เดือน → ถึงเป้าเร็วแค่ไหน
-                </Text>
-              </View>
-              <Text style={styles.goalCardSub}>
-                จากต้นทุนที่ลงไปแล้ว {formatCurrency(goalAnalysis.currentValue)}
-                {monthlyContribution > 0 ? ` • เติมเพิ่ม ${formatCurrency(monthlyContribution)}/เดือน` : ' • ไม่เติมเงินเพิ่ม (ทบต้นล้วน)'}
-                {' '}• เป้า {formatCurrency(goalAnalysis.targetAmount)}
-              </Text>
-              <View style={styles.horizonBox}>
-                <View style={styles.horizonRow}>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1 }]}>กำไร/เดือน</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1.2, textAlign: 'right' }]}>≈ ต่อปี</Text>
-                  <Text style={[styles.simCol, styles.simHead, { flex: 1.2, textAlign: 'right' }]}>ถึงเป้าใน</Text>
-                </View>
-                {rows.map(({ mpct, annual, months }) => (
-                  <View key={mpct} style={styles.horizonRow}>
-                    <Text style={[styles.simCol, { flex: 1 }]}>{mpct}%</Text>
-                    <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }]}>{annual.toFixed(0)}%</Text>
-                    <Text style={[styles.simCol, { flex: 1.2, textAlign: 'right' }]}>{fmtMonths(months)}</Text>
-                  </View>
-                ))}
-              </View>
-              <Text style={styles.tpSubText}>
-                ทำกำไรต่อเดือนได้มาก = ถึงเป้าไวขึ้นแบบทบต้น • ตัวเลขนี้สมมติทำได้สม่ำเสมอทุกเดือน (จริงมีขึ้นมีลง)
-              </Text>
-            </View>
-          );
-        })()}
-
-        {/* ── การ์ดแผนเติมเงิน: กันเงินเดือน % → สะสม − ลงทุนไปแล้ว = เหลือรอลงทุน ── */}
-        <View style={styles.goalCard}>
-          <View style={styles.goalCardHeader}>
-            <Text style={styles.goalCardTitle}>
-              <Ionicons name="wallet-outline" size={18} color={COLORS.primary} /> แผนเติมเงินต่อรอบ
-            </Text>
-            <TouchableOpacity onPress={openPlanModal}>
-              <Text style={styles.goalCardEdit}>{plan ? 'แก้ไข' : 'ตั้งแผน'}</Text>
-            </TouchableOpacity>
+            ))}
           </View>
-          {!plan ? (
-            <Text style={styles.goalCardEmpty}>
-              ตั้ง "เงินเดือนต่อเดือน" + "กันกี่ %" + จำนวนรอบ → ระบบแบ่งเงินเดือนนี้ให้เห็นครบ: เงินลงทุน / งบใช้จ่าย / เหลือใช้ได้ แบบกันลงทุน "ก่อนใช้" (จ่ายตัวเองก่อน) และคำนวณว่าลงได้ต่อรอบ/ต่อหุ้นเท่าไหร่
-            </Text>
-          ) : (
-            (() => {
-              // ฐานที่นิ่ง: เงินเดือนคาดหวังที่ตั้งไว้ (ของเดิมที่ยังไม่ตั้งจะ fallback เป็นเงินเดือนเดือนนี้)
-              const baseIncome = plan.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
-              const setAside = baseIncome * (plan.setAsidePercent / 100);   // จ่ายตัวเองก่อน (ไม่หักรายจ่าย)
-              const perRound = setAside / plan.dcaRounds;
-              const n = Math.max(1, investments.length);
-              const perHolding = perRound / n;
-              const spendBudget = baseIncome - setAside;      // งบใช้จ่าย = กันลงทุนก่อนแล้วเหลือเท่านี้
-              const leftToSpend = spendBudget - monthExpense; // เหลือใช้ได้อีก (< 0 = ใช้เกินงบ)
-              return (
-                <>
-                  <Text style={styles.goalCardSub}>
-                    กัน {plan.setAsidePercent}% • {plan.dcaRounds} รอบ/เดือน • จ่ายตัวเองก่อน
-                  </Text>
-                  {baseIncome === 0 ? (
-                    <Text style={styles.tpSubText}>
-                      * ยังไม่ได้ตั้งเงินเดือนต่อเดือน — กด "แก้ไข" เพื่อกรอกฐานเงินเดือน ระบบจะคำนวณให้
-                    </Text>
-                  ) : null}
-                  {/* Envelope: แบ่งเงินเดือนนี้เป็น เงินลงทุน / งบใช้จ่าย / เหลือใช้ได้ */}
-                  <View style={styles.horizonBox}>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>เงินเดือน (ฐาน)</Text>
-                      <Text style={styles.horizonRate}>{formatCurrency(baseIncome)}</Text>
-                    </View>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>กันลงทุน ({plan.setAsidePercent}%)</Text>
-                      <Text style={styles.horizonRate}>−{formatCurrency(setAside)}</Text>
-                    </View>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>งบใช้จ่าย</Text>
-                      <Text style={styles.horizonRate}>{formatCurrency(spendBudget)}</Text>
-                    </View>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>ใช้ไปแล้วเดือนนี้</Text>
-                      <Text style={styles.horizonRate}>−{formatCurrency(monthExpense)}</Text>
-                    </View>
-                    <View style={[styles.horizonRow, styles.reserveTotalRow]}>
-                      <Text style={styles.reserveTotalLabel}>เหลือใช้ได้อีก</Text>
-                      <Text style={[styles.reserveTotalValue, leftToSpend < 0 && { color: COLORS.error }]}>
-                        {formatCurrency(leftToSpend)}
-                      </Text>
-                    </View>
-                  </View>
-                  {/* DCA: เงินลงทุนที่กันไว้ → ทยอยลงกี่ต่อรอบ/ต่อหุ้น */}
-                  <View style={styles.wealthBox}>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>ลงได้ต่อรอบ</Text>
-                      <Text style={styles.horizonRate}>{formatCurrency(perRound)}</Text>
-                    </View>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>ต่อหุ้น/รอบ ({n} ตัว)</Text>
-                      <Text style={styles.horizonRate}>{formatCurrency(perHolding)}</Text>
-                    </View>
-                  </View>
-                  {baseIncome > 0 && leftToSpend < 0 && (
-                    <Text style={[styles.tpSubText, { color: COLORS.error }]}>
-                      ⚠ เดือนนี้ใช้เกินงบไป {formatCurrency(-leftToSpend)} — กระทบเงินที่กันไว้ลงทุน
-                    </Text>
-                  )}
-                </>
-              );
-            })()
-          )}
+        )}
+
+        {shouldSell.length > 0 && (
+          <View style={styles.losersCard}>
+            <View style={styles.cardTitleRow}>
+              <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
+              <Text style={styles.losersTitle}>ควรขายทำกำไร</Text>
+            </View>
+            {shouldSell.map(({ inv, pct, target, reached, yearsToTarget }) => (
+              <View key={inv.id} style={styles.sellItem}>
+                <View style={styles.loserRow}>
+                  <Text style={styles.loserName} numberOfLines={1}>{inv.symbol || inv.name}</Text>
+                  <Text style={[styles.loserPct, { color: COLORS.success }]}>+{pct.toFixed(1)}%</Text>
+                </View>
+                <Text style={styles.tpSubText}>
+                  เป้า +{target}% • {reached
+                    ? 'ถึงเป้าแล้ว'
+                    : yearsToTarget != null
+                      ? `คาดถึงเป้าในอีก ~${yearsToTarget.toFixed(1)} ปี`
+                      : 'ยังประเมินไม่ได้'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <View style={styles.listHeader}>
+          <Text style={styles.listTitle}>รายการลงทุน</Text>
+          <Text style={styles.tpNote}>* เป้าขายทำกำไรเป็นแนวทางทั่วไปตามประเภทสินทรัพย์</Text>
         </View>
+      </View>
+  );
+
+  // ── ชุดวางแผนถึงเป้า → ย้ายมาต่อท้ายรายการหุ้น (footer) เพื่อให้ "พอร์ต+หุ้นที่ถือ" ขึ้นก่อน ──
+  const planningFooterElement = (
+    <View>
+        {/* ── ปุ่มกาง/ยุบ: ค่าเริ่มต้นยุบไว้ ให้หน้าเหลือแค่การ์ดสรุปด้านบน ไม่ต้องเลื่อนผ่านตารางเยอะ ── */}
+        <TouchableOpacity style={styles.detailToggle} onPress={() => setShowPlanDetail((v) => !v)}>
+          <Ionicons
+            name={showPlanDetail ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color={COLORS.primary}
+          />
+          <Text style={styles.detailToggleText}>
+            {showPlanDetail ? ' ซ่อนแผน' : ' วางแผนถึงเป้า'}
+          </Text>
+        </TouchableOpacity>
+        {!showPlanDetail && (
+          <Text style={styles.detailToggleHint}>ลองปรับ % ที่กัน / กำไรที่ทำได้ → ดูว่าถึงเป้าเร็วแค่ไหน</Text>
+        )}
+
+        {showPlanDetail && (
+          <View style={styles.goalCard}>
+            <Text style={styles.goalCardTitle}>
+              <Ionicons name="options-outline" size={18} color={COLORS.primary} /> วางแผนถึงเป้า
+            </Text>
+
+            {goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0 ? (
+              <>
+                {/* กรอบเวลา — ชิปแถวเดียว แทนตาราง 1/3/5/10 ปี */}
+                <View style={styles.chipRow}>
+                  {GOAL_HORIZONS.map((y) => (
+                    <TouchableOpacity
+                      key={y}
+                      style={[styles.chip, y === reqHorizon && styles.chipActive]}
+                      onPress={() => setReqHorizon(y)}
+                    >
+                      <Text style={[styles.chipText, y === reqHorizon && styles.chipTextActive]}>{y} ปี</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={styles.planLine}>
+                  <Text style={styles.planLineLabel}>ต้องลง/เดือน (โต {(goalAnalysis.projectionRatePercent ?? 0).toFixed(0)}%/ปี)</Text>
+                  <Text style={styles.planLineValue}>
+                    {reqMonthly == null ? '—' : reqMonthly <= 0 ? 'โตเองถึง' : formatCurrency(reqMonthly)}
+                  </Text>
+                </View>
+                <View style={styles.planLine}>
+                  <Text style={styles.planLineLabel}>ถ้าไม่เติมเงินเลย ต้องโตปีละ</Text>
+                  <Text style={styles.planLineValue}>{horizonRate == null ? '—' : `${horizonRate.toFixed(1)}%`}</Text>
+                </View>
+                {profitTimesText != null && (
+                  <View style={styles.planLine}>
+                    <Text style={styles.planLineLabel}>ทำกำไรก้อนนี้อีกกี่ครั้งถึงเป้า</Text>
+                    <Text style={styles.planLineValue}>{profitTimesText}</Text>
+                  </View>
+                )}
+
+                {/* ลองปรับดู — ปุ่ม 2 ตัว → คำตอบเดียว แทนตารางจำลอง 3 ตัว (18 แถว) */}
+                <View style={styles.simDivider} />
+                <Text style={styles.horizonHeader}>ลองปรับดู</Text>
+                <View style={styles.stepRow}>
+                  <Text style={styles.stepLabel}>กันเงินลงทุน</Text>
+                  <View style={styles.stepControl}>
+                    <TouchableOpacity style={styles.stepBtn} onPress={() => setSimPct(Math.max(0, simPctValue - 5))}>
+                      <Ionicons name="remove" size={15} color={COLORS.primary} />
+                    </TouchableOpacity>
+                    <Text style={styles.stepValue}>{simPctValue}%</Text>
+                    <TouchableOpacity style={styles.stepBtn} onPress={() => setSimPct(Math.min(90, simPctValue + 5))}>
+                      <Ionicons name="add" size={15} color={COLORS.primary} />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.stepHint}>
+                    {simContribution > 0 ? `${formatCurrency(simContribution)}/ด.` : 'ไม่มีฐานเงินได้'}
+                  </Text>
+                </View>
+                <View style={styles.stepRow}>
+                  <Text style={styles.stepLabel}>กำไร/เดือน</Text>
+                  <View style={styles.stepControl}>
+                    <TouchableOpacity style={styles.stepBtn} onPress={() => setSimReturn(Math.max(0, simReturn - 1))}>
+                      <Ionicons name="remove" size={15} color={COLORS.primary} />
+                    </TouchableOpacity>
+                    <Text style={styles.stepValue}>{simReturn}%</Text>
+                    <TouchableOpacity style={styles.stepBtn} onPress={() => setSimReturn(Math.min(20, simReturn + 1))}>
+                      <Ionicons name="add" size={15} color={COLORS.primary} />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.stepHint}>≈ {monthlyToAnnualPercent(simReturn).toFixed(0)}%/ปี</Text>
+                </View>
+                <View style={styles.answerBox}>
+                  <Text style={styles.answerLabel}>ถึงเป้าใน</Text>
+                  <Text style={styles.answerBig}>{fmtMonthsAnswer(simMonths)}</Text>
+                </View>
+
+                {/* แบ่งไม้จากเงินที่กันไว้จริง — บรรทัดละกลุ่ม ไม่ใช่ตาราง 4 คอลัมน์ */}
+                {simContribution > 0 && (
+                  <>
+                    <View style={styles.simDivider} />
+                    <Text style={styles.horizonHeader}>
+                      แบ่งไม้จาก {formatCurrency(simContribution)}/เดือน
+                      {dcaRoundsCount ? ` · ${dcaRoundsCount} รอบ` : ''}
+                    </Text>
+                    {shares.map(({ key, label, share }) => {
+                      const amt = simContribution * share;
+                      const perTradeAmt = dcaRoundsCount ? simContribution / dcaRoundsCount : null;
+                      const trades = perTradeAmt && perTradeAmt > 0 ? Math.round(amt / perTradeAmt) : null;
+                      return (
+                        <View key={key} style={styles.planLine}>
+                          <Text style={styles.planLineLabel}>{label} {(share * 100).toFixed(0)}%</Text>
+                          <Text style={styles.planLineValue}>
+                            {formatCurrency(amt)}{trades != null ? ` · ${trades} ไม้` : ''}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </>
+                )}
+              </>
+            ) : (
+              <Text style={styles.goalCardEmpty}>
+                {!goalAnalysis
+                  ? 'ตั้งเป้าหมายพอร์ตก่อน (ปุ่ม "ตั้งเป้า" ด้านบน) ระบบถึงจะวางแผนให้ได้'
+                  : goalAnalysis.reached
+                    ? 'ถึงเป้าแล้ว 🎉 ตั้งเป้าใหม่ที่สูงขึ้นได้เลย'
+                    : 'ยังไม่มีต้นทุนในพอร์ต — เพิ่มการลงทุนก่อน'}
+              </Text>
+            )}
+
+            {/* งบเดือนนี้ (จ่ายตัวเองก่อน) — ยุบ envelope 5 แถว + DCA 2 แถว เหลือ 5 บรรทัด */}
+            <View style={styles.simDivider} />
+            <View style={styles.goalCardHeader}>
+              <Text style={styles.horizonHeader}>งบเดือนนี้ · จ่ายตัวเองก่อน</Text>
+              <TouchableOpacity onPress={openPlanModal}>
+                <Text style={styles.goalCardEdit}>{plan ? 'แก้ไข' : 'ตั้งแผน'}</Text>
+              </TouchableOpacity>
+            </View>
+            {!hasPlanNumbers ? (
+              <Text style={styles.goalCardEmpty}>
+                ตั้ง "เงินเดือนต่อเดือน" + "กันกี่ %" + จำนวนรอบ → ระบบจะบอกงบใช้จ่าย เหลือใช้ได้อีกเท่าไหร่ และลงได้ต่อรอบเท่าไหร่
+              </Text>
+            ) : (
+              <>
+                <View style={styles.planLine}>
+                  <Text style={styles.planLineLabel}>เงินเดือน (ฐาน)</Text>
+                  <Text style={styles.planLineValue}>{formatCurrency(baseIncome)}</Text>
+                </View>
+                <View style={styles.planLine}>
+                  <Text style={styles.planLineLabel}>กันลงทุน ({plan!.setAsidePercent}%)</Text>
+                  <Text style={styles.planLineValue}>−{formatCurrency(setAside)}</Text>
+                </View>
+                <View style={styles.planLine}>
+                  <Text style={styles.planLineLabel}>ใช้ไปแล้ว (งบ {formatCurrency(spendBudget)})</Text>
+                  <Text style={styles.planLineValue}>−{formatCurrency(monthExpense)}</Text>
+                </View>
+                {monthInvestLogged > 0 && (
+                  <View style={styles.planLine}>
+                    <Text style={styles.planLineLabel}>
+                      หมวด "ลงทุน" เดือนนี้ (กันออกจากงบใช้จ่ายแล้ว)
+                    </Text>
+                    <Text style={styles.planLineValue}>{formatCurrency(monthInvestLogged)}</Text>
+                  </View>
+                )}
+                <View style={[styles.planLine, styles.reserveTotalRow]}>
+                  <Text style={styles.reserveTotalLabel}>เหลือใช้ได้อีก</Text>
+                  <Text style={[styles.reserveTotalValue, leftToSpend < 0 && { color: COLORS.error }]}>
+                    {formatCurrency(leftToSpend)}
+                  </Text>
+                </View>
+                <View style={styles.planLine}>
+                  <Text style={styles.planLineLabel}>
+                    ลงได้ต่อรอบ ({plan!.dcaRounds} รอบ · {Math.max(1, investments.length)} ตัว)
+                  </Text>
+                  <Text style={styles.planLineValue}>
+                    {perRound == null
+                      ? '—'
+                      : `${formatCurrency(perRound)} · ${formatCurrency(perRound / Math.max(1, investments.length))}/ตัว`}
+                  </Text>
+                </View>
+              </>
+            )}
+          </View>
+        )}
 
         {/* ── การ์ดเงินรอลงทุน (สำรอง) หลายสกุล + สมการความมั่งคั่ง ── */}
         {/* ซ่อนไว้ชั่วคราวตามที่ผู้ใช้ต้องการ — เปลี่ยน false กลับเป็น true เพื่อโชว์อีกครั้ง */}
@@ -983,73 +1175,6 @@ export default function PortfolioScreen() {
             </View>
           );
         })()}
-
-        {Object.keys(summary.byType).length > 0 && (
-          isDesktop ? (
-            <View style={styles.typeWrapContainer}>
-              {Object.entries(summary.byType).map(([type, data]) =>
-                renderTypeCard(type, data, getTypeIcon(type))
-              )}
-            </View>
-          ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.typeScroll}
-              contentContainerStyle={styles.typeScrollContent}
-            >
-              {Object.entries(summary.byType).map(([type, data]) =>
-                renderTypeCard(type, data, getTypeIcon(type))
-              )}
-            </ScrollView>
-          )
-        )}
-
-        {redAlerts.length > 0 && (
-          <View style={styles.losersCard}>
-            <View style={styles.cardTitleRow}>
-              <Ionicons name="warning" size={16} color={COLORS.error} />
-              <Text style={styles.losersTitle}>ราคาลงแดงติดกัน (2/4/6 แท่ง)</Text>
-            </View>
-            {redAlerts.map((a) => (
-              <View key={a.symbol} style={styles.loserRow}>
-                <Text style={styles.loserName} numberOfLines={1}>
-                  {a.symbol || a.name} <Text style={styles.tpSubText}>· แดง {a.count} แท่ง</Text>
-                </Text>
-                <Text style={styles.loserPct}>{a.dropPercent.toFixed(2)}%</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {shouldSell.length > 0 && (
-          <View style={styles.losersCard}>
-            <View style={styles.cardTitleRow}>
-              <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
-              <Text style={styles.losersTitle}>ควรขายทำกำไร</Text>
-            </View>
-            {shouldSell.map(({ inv, pct, target, reached, yearsToTarget }) => (
-              <View key={inv.id} style={styles.sellItem}>
-                <View style={styles.loserRow}>
-                  <Text style={styles.loserName} numberOfLines={1}>{inv.symbol || inv.name}</Text>
-                  <Text style={[styles.loserPct, { color: COLORS.success }]}>+{pct.toFixed(1)}%</Text>
-                </View>
-                <Text style={styles.tpSubText}>
-                  เป้า +{target}% • {reached
-                    ? 'ถึงเป้าแล้ว'
-                    : yearsToTarget != null
-                      ? `คาดถึงเป้าในอีก ~${yearsToTarget.toFixed(1)} ปี`
-                      : 'ยังประเมินไม่ได้'}
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        <View style={styles.listHeader}>
-          <Text style={styles.listTitle}>รายการลงทุน</Text>
-          <Text style={styles.tpNote}>* เป้าขายทำกำไรเป็นแนวทางทั่วไปตามประเภทสินทรัพย์</Text>
-        </View>
       </View>
   );
 
@@ -1070,6 +1195,7 @@ export default function PortfolioScreen() {
             style={styles.list}
             contentContainerStyle={styles.listContent}
             ListHeaderComponent={listHeaderElement}
+            ListFooterComponent={planningFooterElement}
             ListEmptyComponent={
               <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
             }
@@ -1090,9 +1216,107 @@ export default function PortfolioScreen() {
               ))
             )}
             </View>
+            {planningFooterElement}
           </ScrollView>
         )}
       </View>
+
+      {/* ── Modal บันทึกการขาย ── */}
+      <Modal
+        visible={sellTarget !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSellTarget(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>
+              <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> บันทึกการขาย
+              {sellTarget ? ` — ${sellTarget.symbol || sellTarget.name}` : ''}
+            </Text>
+            {sellTarget && (() => {
+              // พรีวิวกำไร/ขาดทุนสด ๆ ตามที่พิมพ์ ก่อนกดบันทึก
+              const qty = parseFloat(sellQtyInput.replace(/,/g, '')) || 0;
+              const price = parseFloat(sellPriceInput.replace(/,/g, '')) || 0;
+              const sellFee = parseFloat(sellFeesInput.replace(/,/g, '')) || 0;
+              const buyFeeShare =
+                sellTarget.quantity > 0 ? (sellTarget.fees || 0) * (qty / sellTarget.quantity) : 0;
+              const cost = convertToTHB(sellTarget.buyPrice, sellTarget.currency) * qty;
+              const proceeds =
+                convertToTHB(price, sellTarget.currency) * qty - (buyFeeShare + sellFee);
+              const pnl = proceeds - cost;
+              const pct = cost > 0 ? (pnl / cost) * 100 : 0;
+              return (
+                <>
+                  <Text style={styles.goalCardSub}>
+                    ถืออยู่ {sellTarget.quantity} หน่วย • ต้นทุน{' '}
+                    {formatCurrencyWithType(sellTarget.buyPrice, sellTarget.currency)}/หน่วย
+                  </Text>
+                  <Text style={styles.modalLabel}>ขายกี่หน่วย</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={sellQtyInput}
+                    onChangeText={setSellQtyInput}
+                    keyboardType="numeric"
+                    placeholder={`สูงสุด ${sellTarget.quantity}`}
+                    placeholderTextColor={COLORS.textSecondary}
+                  />
+                  <Text style={styles.modalLabel}>
+                    ราคาขายต่อหน่วย ({sellTarget.currency ?? 'THB'})
+                  </Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={sellPriceInput}
+                    onChangeText={setSellPriceInput}
+                    keyboardType="numeric"
+                    placeholder="ราคาที่ขายได้จริง"
+                    placeholderTextColor={COLORS.textSecondary}
+                  />
+                  <Text style={styles.modalLabel}>วันที่ขาย (YYYY-MM-DD)</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={sellDateInput}
+                    onChangeText={setSellDateInput}
+                    placeholder="2026-08-01"
+                    placeholderTextColor={COLORS.textSecondary}
+                  />
+                  <Text style={styles.modalLabel}>ค่าธรรมเนียมขาย (บาท, ไม่บังคับ)</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={sellFeesInput}
+                    onChangeText={setSellFeesInput}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor={COLORS.textSecondary}
+                  />
+                  {qty > 0 && price > 0 && (
+                    <View style={styles.answerBox}>
+                      <Text style={styles.answerLabel}>กำไร/ขาดทุนจริงที่จะบันทึก</Text>
+                      <Text style={[styles.answerBig, pnl < 0 && { color: COLORS.error }]}>
+                        {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)} ({pnl >= 0 ? '+' : ''}
+                        {pct.toFixed(1)}%)
+                      </Text>
+                    </View>
+                  )}
+                  {qty >= sellTarget.quantity && (
+                    <Text style={styles.tpSubText}>
+                      * ขายหมด — รายการนี้จะถูกเอาออกจากพอร์ต แต่ผลกำไรจะถูกเก็บไว้ในประวัติผลงานจริง
+                    </Text>
+                  )}
+                </>
+              );
+            })()}
+            <TouchableOpacity style={styles.modalSaveBtn} onPress={handleConfirmSell}>
+              <Text style={styles.modalSaveBtnText}>บันทึกการขาย</Text>
+            </TouchableOpacity>
+            <View style={styles.modalBottomRow}>
+              <TouchableOpacity onPress={() => setSellTarget(null)}>
+                <Text style={styles.modalCancelText}>ยกเลิก</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Modal ตั้ง/แก้เป้าหมายพอร์ตรวม ── */}
       <Modal
@@ -1335,6 +1559,174 @@ const styles = StyleSheet.create({
     marginTop: 12,
     lineHeight: 18,
   },
+  // แถวตัวเลขสำคัญในการ์ดสรุป — ยุบสาระของหลายการ์ดเหลือแถวเดียว
+  kpiRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  kpiCell: {
+    flex: 1,
+    backgroundColor: `${COLORS.primary}0D`,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+  },
+  kpiLabel: {
+    fontSize: 10,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+    marginBottom: 2,
+  },
+  kpiValue: {
+    fontSize: 15,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+  },
+  kpiValueNeg: {
+    color: COLORS.error,
+  },
+  // บล็อกวินัยการกันเงิน — "กันไว้" vs "ลงจริง" เดือนนี้
+  disciplineBox: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  // ปุ่มกาง/ยุบรายละเอียดแผน
+  detailToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 8,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  detailToggleText: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+  },
+  detailToggleHint: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    lineHeight: 16,
+  },
+  // ── การ์ด "วางแผนถึงเป้า": ทุกอย่างเป็นบรรทัด ป้าย-ซ้าย ค่า-ขวา ไม่มีตารางหลายคอลัมน์ ──
+  planLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+    gap: 12,
+  },
+  planLineLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  planLineValue: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+    textAlign: 'right',
+  },
+  simDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 12,
+  },
+  // ชิปเลือกกรอบเวลา 1/3/5/10 ปี
+  chipRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  chip: {
+    flex: 1,
+    paddingVertical: 7,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  chipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  chipText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+  },
+  chipTextActive: {
+    color: '#ffffff',
+    fontFamily: 'NotoSansThai_600SemiBold',
+  },
+  // ปุ่ม −/+ ปรับสมมติฐาน
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    gap: 8,
+  },
+  stepLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  stepControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  stepBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  stepValue: {
+    minWidth: 46,
+    textAlign: 'center',
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  stepHint: {
+    width: 92,
+    textAlign: 'right',
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  // คำตอบเดียวตัวใหญ่ — แทนตาราง what-if
+  answerBox: {
+    marginTop: 10,
+    backgroundColor: `${COLORS.primary}0D`,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  answerLabel: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+  },
+  answerBig: {
+    fontSize: 24,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+  },
   tpRow: {
     paddingHorizontal: 16,
     paddingBottom: 12,
@@ -1426,25 +1818,11 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 1,
   },
-  simCol: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.text,
-  },
-  simHead: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.textSecondary,
-  },
-  simRowActive: {
-    backgroundColor: `${COLORS.primary}12`,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-  },
   simActiveText: {
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
   },
+  // ปุ่มสลับโหมดของการ์ดวางแผนถึงเป้า (ยุบ 3 ตารางเหลือ 1)
   horizonYears: {
     fontSize: 13,
     fontFamily: 'NotoSansThai_300Light',
@@ -1765,14 +2143,34 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
   },
+  // แถวปุ่มท้ายการ์ดหุ้น: ขาย (บันทึกผลจริง) | ลบ (เอาออกเฉย ๆ)
+  itemActionRow: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  sellButton: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: `${COLORS.primary}0D`,
+    borderRightWidth: 1,
+    borderRightColor: COLORS.border,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  sellButtonText: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+  },
   deleteButton: {
+    flex: 1,
     padding: 12,
     paddingHorizontal: 16,
     backgroundColor: COLORS.surface,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',

@@ -1,12 +1,19 @@
 {
-  "name": "Narix Tracking",
-  "short_name": "Narix",
+  "name": "Pakmut Wealth",
+  "short_name": "Pakmut",
+  "description": "วางแผนการเงินและติดตามพอร์ตลงทุน",
   "icons": [
     {
       "src": "/web-app-manifest-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/web-app-manifest-512x512.png",
@@ -15,7 +22,8 @@
       "purpose": "maskable"
     }
   ],
-  "theme_color": "#F68048",
+  "theme_color": "#294E80",
   "background_color": "#0D1B2A",
-  "display": "standalone"
+  "display": "standalone",
+  "start_url": "/"
 }

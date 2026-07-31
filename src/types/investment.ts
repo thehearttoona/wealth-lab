@@ -30,6 +30,24 @@ export interface Transaction {
   notes?: string;
 }
 
+// การขายที่เกิดขึ้นจริง (realized) — เก็บ snapshot ครบในแถวเดียว
+// จงใจไม่ผูก FK กับ investments เพราะขายหมดแล้วรายการลงทุนจะถูกลบทิ้ง
+// แต่ประวัติผลตอบแทนจริงต้องอยู่ต่อ ไม่งั้นวัดฝีมือย้อนหลังไม่ได้
+export interface RealizedTrade {
+  id: string;
+  symbol: string;
+  name: string;
+  assetType: InvestmentType;
+  currency: Currency;      // สกุลของ buyPrice/sellPrice (ทั้งคู่สกุลเดียวกัน)
+  quantity: number;
+  buyPrice: number;        // ต้นทุนต่อหน่วย
+  sellPrice: number;       // ราคาขายต่อหน่วย
+  buyDate: string;
+  sellDate: string;
+  fees?: number;           // ค่าธรรมเนียมรวม (ซื้อ+ขาย) เป็น THB
+  notes?: string;
+}
+
 export interface PortfolioSummary {
   totalValue: number;      // มูลค่ารวม
   totalCost: number;       // ต้นทุนรวม

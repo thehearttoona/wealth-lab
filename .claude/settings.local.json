@@ -55,7 +55,14 @@
       "Bash(node ptest.mjs sample.txt)",
       "Bash(node test-parser.mjs)",
       "Bash(git fetch *)",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "Bash(NEW=C:/Users/narin/AppData/Local/Temp/claude/C--Users-narin-Desktop-Narin-Srimongkhonthon-wealth-lab/1ef8d02a-7459-4f86-9162-a615146d86b0/scratchpad/new-detail.tsx node -e ' *)",
+      "Bash(grep -n \"// การ์ด \\\\\"กำไรตอนนี้\\\\|^  profit\\\\|^  simTab\\\\|^  simCol\\\\|^  simHead\\\\|^  simRowActive\" src/screens/PortfolioScreen.tsx)",
+      "Bash(awk 'NR>=697 && NR<=845' src/screens/PortfolioScreen.tsx)",
+      "Bash(NODE_PATH=\"C:/Users/narin/AppData/Roaming/npm/node_modules\" node shot.js)",
+      "Bash(sed -i \"s|eq\\('CAGR ดีลเดียว 1 ปี +20%', s1.annualReturnPercent, 20\\);|eqTol\\('CAGR ดีลเดียว 1 ปี ≈+20% \\(365 วัน vs ปี 365.25 วัน\\)', s1.annualReturnPercent, 20, 0.05\\);|\" t.js)",
+      "Bash(sed -i \"s|^const eq = |const eqTol = \\(name, got, want, tol\\) => { const ok = Math.abs\\(got-want\\) < tol; console.log\\(\\\\`\\\\${ok?'PASS':'FAIL'}  \\\\${name}  got=\\\\${got.toFixed\\(4\\)} want≈\\\\${want}\\\\`\\); ok?pass++:fail++; };\\\\nconst eq = |\" t.js)",
+      "Bash(node t.js)"
     ]
   }
 }

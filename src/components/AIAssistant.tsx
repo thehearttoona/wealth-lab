@@ -181,7 +181,7 @@ export default function AIAssistant({ fabBottom = 90 }: AIAssistantProps) {
             <View style={styles.header}>
               <View style={styles.headerLeft}>
                 <Ionicons name="hardware-chip-outline" size={20} color={COLORS.primary} />
-                <Text style={styles.headerTitle}>Narix AI</Text>
+                <Text style={styles.headerTitle}>Pakmut AI</Text>
               </View>
               <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <Ionicons name="close" size={22} color={COLORS.textSecondary} />
@@ -205,7 +205,7 @@ export default function AIAssistant({ fabBottom = 90 }: AIAssistantProps) {
                 ) : (
                   <View style={styles.emptyState}>
                     <Ionicons name="hardware-chip-outline" size={40} color={COLORS.primary} style={{ opacity: 0.6 }} />
-                    <Text style={styles.emptyTitle}>สวัสดี! ฉันคือ Narix AI</Text>
+                    <Text style={styles.emptyTitle}>สวัสดี! ฉันคือ Pakmut AI</Text>
                     <Text style={styles.emptyText}>ถามเรื่องการเงินของคุณได้เลย</Text>
                     <View style={styles.suggestions}>
                       {SUGGESTIONS.map((s) => (

@@ -15,7 +15,8 @@ export interface HorizonRequirement {
   annualReturnPercent: number; // ต้องโตเฉลี่ยปีละกี่ % ถึงจะถึงเป้าในกรอบเวลานี้
 }
 
-export type ProjectionSource = 'user' | 'actual';
+// 'realized' = วัดจากการขายจริง (น่าเชื่อถือสุด), 'user' = ผู้ใช้พิมพ์เอง, 'actual' = CAGR ของพอร์ตที่ยังไม่ขาย
+export type ProjectionSource = 'user' | 'actual' | 'realized';
 
 export interface PortfolioGoalAnalysis {
   targetAmount: number;
@@ -36,7 +37,10 @@ export function analyzePortfolioGoal(
   totalValue: number,
   totalCost: number,
   portfolioStartDate: string | null,
-  now: Date = new Date()
+  now: Date = new Date(),
+  // CAGR ที่วัดได้จากการขายจริง — ถ้ามี จะถูกใช้ก่อนเลขที่ผู้ใช้ตั้งเอง
+  // เพราะ "ของจริงที่วัดได้" เชื่อถือได้กว่า "ที่หวังไว้"
+  realizedAnnualReturnPercent: number | null = null
 ): PortfolioGoalAnalysis | null {
   if (goal.targetAmount <= 0) return null;
 
@@ -61,10 +65,14 @@ export function analyzePortfolioGoal(
     }
   }
 
-  // อัตราที่ใช้ประมาณ: ผู้ใช้ตั้งเองก่อน (ถ้าใส่และ > 0) ไม่งั้นใช้พาซจริง
+  // ลำดับความน่าเชื่อถือ: ขายจริง > ผู้ใช้ตั้งเอง > CAGR ของพอร์ตที่ยังไม่ขาย
+  // ตั้งใจให้ "ขายจริง" ชนะเลขที่ผู้ใช้ตั้งเอง — ถ้าฝีมือจริงต่างจากที่หวัง ควรเห็นความจริง
   let projectionRatePercent: number | null = null;
   let projectionSource: ProjectionSource | null = null;
-  if (goal.expectedAnnualReturnPercent != null && goal.expectedAnnualReturnPercent > 0) {
+  if (realizedAnnualReturnPercent != null && realizedAnnualReturnPercent > 0) {
+    projectionRatePercent = realizedAnnualReturnPercent;
+    projectionSource = 'realized';
+  } else if (goal.expectedAnnualReturnPercent != null && goal.expectedAnnualReturnPercent > 0) {
     projectionRatePercent = goal.expectedAnnualReturnPercent;
     projectionSource = 'user';
   } else if (actualAnnualReturnPercent != null && actualAnnualReturnPercent > 0) {

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  Image,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -39,8 +40,13 @@ return (
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.card}>
-        <Text style={styles.logo}>NARIX</Text>
-        <Text style={styles.subtitle}>Personal Finance Tracker</Text>
+        <Image
+          source={require('../../assets/icon.png')}
+          style={styles.logoMark}
+          resizeMode="contain"
+        />
+        <Text style={styles.logo}>Pakmut Wealth</Text>
+        <Text style={styles.subtitle}>วางแผนการเงินและติดตามพอร์ตลงทุน</Text>
 
         <TouchableOpacity
           style={[styles.googleButton, loading && styles.buttonDisabled]}
@@ -76,13 +82,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+  logoMark: {
+    width: 96,
+    height: 96,
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
   logo: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
     textAlign: 'center',
-    letterSpacing: 4,
+    letterSpacing: 1,
     marginBottom: 4,
   },
   subtitle: {
