@@ -47,6 +47,21 @@ async function getExchangeRates(): Promise<{ [key: string]: number }> {
   }
 }
 
+// 1 หน่วยของสกุลนั้น = กี่บาท — ใช้เติมช่อง "เรตต่อบาท" ในหน้าจัดการสกุลเงิน
+// getExchangeRates() ฐานเป็น USD เลยต้องหารข้ามสกุลเอง
+export async function getRateToTHB(code: string): Promise<number | null> {
+  const c = (code || '').toUpperCase();
+  if (!c) return null;
+  if (c === 'THB') return 1;
+  const rates = await getExchangeRates();
+  const thb = rates['THB'];
+  if (!thb) return null;
+  if (c === 'USD') return thb;
+  const perUsd = rates[c];
+  if (!perUsd) return null;
+  return thb / perUsd;
+}
+
 export async function getUsdToThbRate(): Promise<number> {
   const rates = await getExchangeRates();
   return rates['THB'] ?? 35;

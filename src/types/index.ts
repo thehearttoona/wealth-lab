@@ -78,7 +78,9 @@ export interface TradingOrder {
 }
 
 export type RootStackParamList = {
-  Main: undefined;
+  // ชื่อ route ของแท็บหลัก = ชื่อแบรนด์ เพราะปุ่ม back ของหน้าลูกอ่านชื่อนี้ไปโชว์
+  'Pakmut Wealth': undefined;
+  ManageCatalog: undefined;
   Home: { returnDate?: string } | undefined;
   AddExpense: { type: 'daily' | 'recurring'; expense?: Expense; bill?: RecurringBill; date?: string };
   ExpenseList: undefined;

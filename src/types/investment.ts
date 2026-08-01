@@ -1,6 +1,16 @@
 export type InvestmentType = 'stock_th' | 'stock_foreign' | 'fund' | 'crypto' | 'gold' | 'other';
 
-export type Currency = 'THB' | 'USD' | 'EUR' | 'JPY' | 'CNY';
+// สกุลเงินเป็น string เปล่า ๆ เพราะผู้ใช้เพิ่ม/แก้/ลบเองได้ในหน้า "สกุลเงิน & แพลตฟอร์ม"
+// 5 ตัวข้างล่างเป็นแค่ค่าเริ่มต้นตอน seed ครั้งแรก ไม่ใช่ข้อจำกัดของ type อีกต่อไป
+export type Currency = string;
+
+export const DEFAULT_CURRENCIES: { code: string; symbol: string; rateToTHB: number }[] = [
+  { code: 'THB', symbol: '฿', rateToTHB: 1 },
+  { code: 'USD', symbol: '$', rateToTHB: 35 },
+  { code: 'EUR', symbol: '€', rateToTHB: 38 },
+  { code: 'JPY', symbol: '¥', rateToTHB: 0.24 },
+  { code: 'CNY', symbol: '¥', rateToTHB: 4.8 },
+];
 
 export interface Investment {
   id: string;
@@ -64,7 +74,22 @@ export interface PortfolioSummary {
   };
 }
 
-// แพลตฟอร์มยอดนิยม (เป็นแค่ตัวเลือกช่วยกรอก — พิมพ์เองได้)
+// รายการที่ผู้ใช้จัดการเอง (เก็บใน Supabase) — ดู services/currencyStorage.ts, platformStorage.ts
+export interface UserCurrency {
+  id: string;
+  code: string;        // THB, USD, ...
+  symbol?: string;     // ฿, $, € — ไม่ใส่ก็ได้ จะ fallback เป็นโค้ด
+  rateToTHB?: number;  // 1 หน่วย = กี่บาท (ไม่ตั้ง = คิด 1:1 ยอดรวมจะเพี้ยน)
+  createdAt: string;
+}
+
+export interface UserPlatform {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+// แพลตฟอร์มยอดนิยม — ใช้เป็นค่าเริ่มต้นตอน seed ครั้งแรกเท่านั้น
 export const INVESTMENT_PLATFORMS = [
   'Bitkub', 'Binance', 'Bitazza',
   'Streaming', 'InnovestX', 'Dime!', 'Webull', 'IBKR',

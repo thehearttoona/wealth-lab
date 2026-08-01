@@ -18,6 +18,8 @@ import { RootStackParamList } from '../types';
 import { Account, AccountRole, ACCOUNT_ROLES, ACCOUNT_CURRENCIES } from '../types/account';
 import { Currency, INVESTMENT_PLATFORMS } from '../types/investment';
 import { getAccounts, saveAccount, updateAccount, deleteAccount } from '../services/accountStorage';
+import { getCurrencies } from '../services/currencyStorage';
+import { getPlatforms } from '../services/platformStorage';
 import { COLORS, getCurrencySymbol, formatCurrency } from '../utils/constants';
 
 const roleLabel = (role: AccountRole) =>
@@ -39,6 +41,10 @@ export default function AccountsScreen() {
   const [balanceInput, setBalanceInput] = useState('');
   const [platform, setPlatform] = useState<string>('');
 
+  // ตัวเลือกสกุลเงิน/แพลตฟอร์ม มาจากรายการที่ผู้ใช้จัดการเอง — ว่างเมื่อไหร่ค่อย fallback ค่าเริ่มต้น
+  const [currencyOptions, setCurrencyOptions] = useState<string[]>(ACCOUNT_CURRENCIES);
+  const [platformOptions, setPlatformOptions] = useState<string[]>(INVESTMENT_PLATFORMS);
+
   const load = useCallback(async () => {
     try {
       setAccounts(await getAccounts());
@@ -46,6 +52,13 @@ export default function AccountsScreen() {
       setAccounts([]);
     } finally {
       setLoading(false);
+    }
+    try {
+      const [curList, platList] = await Promise.all([getCurrencies(), getPlatforms()]);
+      if (curList.length > 0) setCurrencyOptions(curList.map((c) => c.code));
+      if (platList.length > 0) setPlatformOptions(platList.map((p) => p.name));
+    } catch {
+      // ใช้ค่าเริ่มต้นต่อไป
     }
   }, []);
 
@@ -209,7 +222,7 @@ export default function AccountsScreen() {
 
             <Text style={styles.modalLabel}>สกุลเงิน</Text>
             <View style={styles.chipRow}>
-              {ACCOUNT_CURRENCIES.map((c) => (
+              {currencyOptions.map((c) => (
                 <TouchableOpacity
                   key={c}
                   style={[styles.chip, currency === c && styles.chipActive]}
@@ -237,7 +250,7 @@ export default function AccountsScreen() {
               <>
                 <Text style={styles.modalLabel}>แพลตฟอร์มที่ผูก (ไม่บังคับ)</Text>
                 <View style={styles.chipRow}>
-                  {INVESTMENT_PLATFORMS.map((p) => (
+                  {platformOptions.map((p) => (
                     <TouchableOpacity
                       key={p}
                       style={[styles.chip, platform === p && styles.chipActive]}

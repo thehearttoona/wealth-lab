@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
 import LoginScreen from '../screens/LoginScreen';
@@ -36,6 +36,8 @@ import InstallmentsScreen from '../screens/InstallmentsScreen';
 import AddInstallmentScreen from '../screens/AddInstallmentScreen';
 import AccountsScreen from '../screens/AccountsScreen';
 import ImportStatementScreen from '../screens/ImportStatementScreen';
+import ManageCatalogScreen from '../screens/ManageCatalogScreen';
+import { refreshCurrencyCache } from '../services/currencyStorage';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
 import AIAssistant from '../components/AIAssistant';
@@ -60,11 +62,12 @@ function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPre
     <View style={sidebarStyles.container}>
       <View style={sidebarStyles.logoSection}>
         <Image
-          source={require('../../assets/icon.png')}
+          source={require('../../assets/brand-pakmutwealth.png')}
           style={sidebarStyles.logoMark}
           resizeMode="contain"
+          alt="Pakmut Wealth"
         />
-        <Text style={sidebarStyles.logoText}>Pakmut Wealth</Text>
+        <Text style={sidebarStyles.logoText}></Text>
       </View>
       <ScrollView style={sidebarStyles.navList}>
         {TAB_ITEMS.map((item) => {
@@ -123,7 +126,7 @@ function MobileTabNavigator() {
           paddingTop: 0,
         },
         tabBarItemStyle: { paddingVertical: 4 },
-        tabBarLabelStyle: { fontSize: 10, fontWeight: '500', marginTop: 2 },
+        tabBarLabelStyle: { fontSize: 10, fontFamily: 'Nunito_600SemiBold', marginTop: 2 },
       }}
     >
       {TAB_ITEMS.map((item) => (
@@ -152,6 +155,11 @@ function TabNavigator() {
 export default function Navigation() {
   const { user, loading } = useAuth();
 
+  // โหลดสกุลเงินที่ผู้ใช้ตั้งเองเข้าแคชของ convertToTHB ก่อนหน้าจอไหนจะคิดมูลค่ารวม
+  useEffect(() => {
+    if (user) refreshCurrencyCache();
+  }, [user]);
+
   if (loading) {
     return (
       <View style={{ flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' }}>
@@ -172,13 +180,15 @@ export default function Navigation() {
             backgroundColor: COLORS.primary,
           },
           headerTintColor: '#ffffff',
+          // ต้องระบุ fontFamily เอง ไม่งั้น header ของ navigator จะตกไปใช้ system font ไม่ตรงกับทั้งแอป
+          // (ใช้ไฟล์ SemiBold ตรง ๆ ห้ามใส่ fontWeight คู่ เดี๋ยวเว็บจะ fake-bold ทับ)
           headerTitleStyle: {
-            fontWeight: 'bold',
+            fontFamily: 'NotoSansThai_600SemiBold',
           },
         }}
       >
         <Stack.Screen
-          name="Main"
+          name="Pakmut Wealth"
           component={TabNavigator}
           options={{ headerShown: false }}
         />
@@ -248,6 +258,18 @@ export default function Navigation() {
           options={{ title: 'บัญชีของฉัน' }}
         />
         <Stack.Screen
+          name="ManageCatalog"
+          component={ManageCatalogScreen}
+          options={({ navigation }) => ({
+            title: 'สกุลเงิน & แพลตฟอร์ม',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
           name="ImportStatement"
           component={ImportStatementScreen}
           options={{ title: 'นำเข้า statement' }}
@@ -275,12 +297,13 @@ const sidebarStyles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   logoMark: {
-    width: 32,
-    height: 32,
+    height: 150,
+    width:200,
+    aspectRatio: 1536 / 1024,
+    flexShrink: 0,
   },
   logoText: {
     fontSize: 16,
-    fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
     letterSpacing: 0.3,
@@ -305,12 +328,12 @@ const sidebarStyles = StyleSheet.create({
   navText: {
     fontSize: 14,
     color: COLORS.textSecondary,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
   },
   navTextActive: {
     color: COLORS.primary,
-    fontWeight: '600',
+    // สลับเป็นไฟล์ SemiBold จริง แทน fontWeight ที่ทำให้เว็บ fake-bold ตัว Light
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
 });
 

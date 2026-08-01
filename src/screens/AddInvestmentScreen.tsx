@@ -13,7 +13,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
-import { Investment, InvestmentType, INVESTMENT_TYPES, INVESTMENT_PLATFORMS, Currency } from '../types/investment';
+import { Investment, InvestmentType, INVESTMENT_TYPES, INVESTMENT_PLATFORMS, DEFAULT_CURRENCIES, Currency } from '../types/investment';
+import { getCurrencies } from '../services/currencyStorage';
+import { getPlatforms } from '../services/platformStorage';
 import { saveInvestment, updateInvestment } from '../services/investmentStorage';
 import { updateInvestmentPrice, searchCryptoList, CryptoSearchResult, searchStockList, StockSearchResult } from '../services/priceApi';
 import { searchFundList, FundCatalogItem } from '../services/fundCatalog';
@@ -49,6 +51,24 @@ export default function AddInvestmentScreen() {
   const [fundSearchResults, setFundSearchResults] = useState<FundCatalogItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
+  // ตัวเลือกสกุลเงิน/แพลตฟอร์ม มาจากรายการที่ผู้ใช้จัดการเองในหน้า "สกุลเงิน & แพลตฟอร์ม"
+  // ถ้ายังไม่ได้รัน SQL หรือรายการว่าง จะ fallback เป็นค่าเริ่มต้นเดิม
+  const [currencyOptions, setCurrencyOptions] = useState<string[]>(
+    DEFAULT_CURRENCIES.map((c) => c.code)
+  );
+  const [platformOptions, setPlatformOptions] = useState<string[]>(INVESTMENT_PLATFORMS);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [curList, platList] = await Promise.all([getCurrencies(), getPlatforms()]);
+        if (curList.length > 0) setCurrencyOptions(curList.map((c) => c.code));
+        if (platList.length > 0) setPlatformOptions(platList.map((p) => p.name));
+      } catch {
+        // ใช้ค่าเริ่มต้นต่อไป
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     if (investment) {
@@ -515,7 +535,7 @@ export default function AddInvestmentScreen() {
           <View style={styles.halfWidth}>
             <Text style={styles.label}>สกุลเงิน</Text>
             <View style={styles.currencyContainer}>
-              {(['THB', 'USD', 'EUR', 'JPY', 'CNY'] as Currency[]).map((curr) => (
+              {currencyOptions.map((curr) => (
                 <TouchableOpacity
                   key={curr}
                   style={[
@@ -591,7 +611,7 @@ export default function AddInvestmentScreen() {
 
         <Text style={styles.label}>แพลตฟอร์มที่ลงทุน</Text>
         <View style={styles.platformChips}>
-          {INVESTMENT_PLATFORMS.map((p) => (
+          {platformOptions.map((p) => (
             <TouchableOpacity
               key={p}
               style={[styles.platformChip, platform === p && styles.platformChipActive]}
@@ -622,12 +642,6 @@ export default function AddInvestmentScreen() {
           numberOfLines={4}
           textAlignVertical="top"
         />
-
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            💡 เคล็ดลับ: ราคาปัจจุบันสามารถอัปเดตภายหลังได้ หรือเชื่อมต่อ API เพื่ออัปเดตอัตโนมัติ
-          </Text>
-        </View>
 
         <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
           <Text style={styles.saveButtonText}>
@@ -788,23 +802,6 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 8,
     lineHeight: 18,
-  },
-  infoBox: {
-    backgroundColor: COLORS.background,
-    borderRadius: 0,
-    padding: 16,
-    marginTop: 24,
-    borderLeftWidth: 3,
-    borderLeftColor: COLORS.accent,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  infoText: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    lineHeight: 18,
-    flex: 1,
   },
   saveButton: {
     backgroundColor: COLORS.primary,
