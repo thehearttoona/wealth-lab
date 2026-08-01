@@ -24,6 +24,9 @@ const mapFromDb = (row: any): RealizedTrade => ({
   sellDate: row.sell_date,
   fees: row.fees != null ? Number(row.fees) : undefined,
   notes: row.notes ?? undefined,
+  // แพลตฟอร์ม: อ่านจากคอลัมน์ก่อน ถ้ายังไม่ได้รัน SQL ก็ยังพอดึงจาก snapshot ได้
+  platform: row.platform ?? row.source_investment?.platform ?? undefined,
+  sourceInvestment: row.source_investment ?? undefined,
 });
 
 const mapToDb = (t: RealizedTrade, userId: string) => ({
@@ -42,10 +45,29 @@ const mapToDb = (t: RealizedTrade, userId: string) => ({
   user_id: userId,
 });
 
+// คอลัมน์ที่เพิ่มทีหลัง (sql/realized_trades_undo.sql) — ยังไม่ได้รัน SQL ก็ต้องขายได้
+// ห้ามให้การบันทึกการขายพังเพราะฟีเจอร์ย้อนคืน แต่ก็ห้ามทิ้งคอลัมน์ที่มีจริงไปด้วย
+// จึงตัดทิ้งทีละคอลัมน์ตามชื่อที่ error ฟ้องมา แล้วลองใหม่
+const OPTIONAL_COLUMNS = ['platform', 'source_investment'] as const;
+
 export const saveRealizedTrade = async (trade: RealizedTrade): Promise<void> => {
   const userId = await getUserId();
-  const { error } = await supabase.from('realized_trades').insert(mapToDb(trade, userId));
-  if (error) throw error;
+  let payload: Record<string, any> = { ...mapToDb(trade, userId) };
+  if (trade.platform) payload.platform = trade.platform;
+  if (trade.sourceInvestment) payload.source_investment = trade.sourceInvestment;
+
+  for (let attempt = 0; attempt <= OPTIONAL_COLUMNS.length; attempt++) {
+    const { error } = await supabase.from('realized_trades').insert(payload);
+    if (!error) return;
+    const missing = OPTIONAL_COLUMNS.find(
+      (c) => c in payload && new RegExp(c, 'i').test(error.message || '')
+    );
+    if (!missing) throw error;
+    const next = { ...payload };
+    delete next[missing];
+    payload = next;
+  }
+  throw new Error('บันทึกการขายไม่สำเร็จ');
 };
 
 export const getRealizedTrades = async (): Promise<RealizedTrade[]> => {

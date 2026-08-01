@@ -84,7 +84,7 @@ export default function ManageCatalogScreen() {
   const load = useCallback(async () => {
     try {
       const [investments, accounts] = await Promise.all([getInvestments(), getAccounts()]);
-      let realized: { currency?: string }[] = [];
+      let realized: { currency?: string; platform?: string }[] = [];
       try {
         realized = await getRealizedTrades();
       } catch {
@@ -105,7 +105,12 @@ export default function ManageCatalogScreen() {
         bump(nextUsage.currency, acc.currency);
         bump(nextUsage.platform, acc.platform);
       });
-      realized.forEach((t) => bump(nextUsage.currency, t.currency));
+      // นับแพลตฟอร์มของรายการที่ขายแล้วด้วย — ยังต้องใช้ตอนกดย้อนคืนให้ของกลับเข้าโบรกเดิม
+      // ถ้าไม่นับ จะดูเหมือนไม่มีใครใช้แล้วเผลอลบทิ้ง กลายเป็นชื่อกำพร้าตอนกู้คืน
+      realized.forEach((t) => {
+        bump(nextUsage.currency, t.currency);
+        bump(nextUsage.platform, t.platform);
+      });
       setUsage(nextUsage);
 
       let [curList, platList] = await Promise.all([getCurrencies(), getPlatforms()]);

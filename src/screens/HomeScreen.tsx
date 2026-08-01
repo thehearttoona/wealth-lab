@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   TouchableOpacity,
   Alert,
@@ -904,7 +905,17 @@ export default function HomeScreen() {
 
         {/* ── Header ── */}
         <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
-          <Text style={styles.topBarLogo}></Text>
+          {/* เดสก์ท็อปมีโลโก้อยู่บน sidebar แล้ว โชว์ซ้ำในนี้จะซ้อนกันเปล่า ๆ */}
+          {!isDesktop ? (
+            <Image
+              source={require('../../assets/brand-pakmutwealth-mark.png')}
+              style={styles.topBarLogo}
+              resizeMode="contain"
+              alt="Pakmut Wealth"
+            />
+          ) : (
+            <View />
+          )}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             {isDesktop && (
               <>
@@ -1243,11 +1254,12 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
+  // โลโก้แนวนอน 444x128 — ต้องระบุ width ด้วย พึ่ง aspectRatio อย่างเดียวไม่ได้
+  // react-native-web ยัดขนาดจริงของไฟล์ (444x128) เข้า style ให้ก่อนเสมอ อะไรที่ไม่เขียนทับค่าเดิมจะรอด
+  // ไม่งั้นได้กล่อง 444x30 แล้ว resizeMode="contain" ย่อโลโก้จิ๋วอยู่กลางกล่อง
   topBarLogo: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.primary,
-    letterSpacing: 4,
+    width: 104, // 30 × (444/128)
+    height: 30,
   },
   topBarLogout: {
     padding: 4,

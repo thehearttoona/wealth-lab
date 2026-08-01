@@ -56,6 +56,14 @@ export interface RealizedTrade {
   sellDate: string;
   fees?: number;           // ค่าธรรมเนียมรวม (ซื้อ+ขาย) เป็น THB
   notes?: string;
+  // แพลตฟอร์ม/โบรกของไม้ที่ขายไป — เป็นส่วนหนึ่งของ "ตัวระบุไม้" ไม่ใช่ข้อมูลประดับ
+  // ตัวเดียวกันคนละโบรก = คนละไม้ ตอนย้อนคืนต้องกลับเข้าแพลตฟอร์มเดิม
+  // (column `platform` — ต้องรัน sql/realized_trades_undo.sql ก่อน)
+  platform?: string;
+  // snapshot ของรายการลงทุนตอนก่อนขาย — มีไว้เพื่อ "ย้อนคืน" ได้ตรงเป๊ะ
+  // (โน้ต/เป้าหมายกำไร ไม่ได้อยู่ในคอลัมน์อื่น ถ้าไม่เก็บไว้จะหายตอนกู้คืน)
+  // เก็บใน column jsonb `source_investment` — ต้องรัน sql/realized_trades_undo.sql ก่อน
+  sourceInvestment?: Investment;
 }
 
 export interface PortfolioSummary {

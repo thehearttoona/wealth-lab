@@ -16,14 +16,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
-import { Investment, PortfolioSummary, INVESTMENT_TYPES, RealizedTrade } from '../types/investment';
-import { getRealizedTrades, saveRealizedTrade } from '../services/realizedStorage';
-import { summarizeRealized } from '../utils/realizedAnalysis';
+import { Investment, InvestmentType, PortfolioSummary, INVESTMENT_TYPES, RealizedTrade } from '../types/investment';
+import { getRealizedTrades, saveRealizedTrade, deleteRealizedTrade } from '../services/realizedStorage';
+import { summarizeRealized, analyzeRealizedTrade } from '../utils/realizedAnalysis';
 import {
   getInvestments,
   deleteInvestment,
   getPortfolioSummary,
   updateInvestment,
+  saveInvestment,
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS, INVEST_EXPENSE_CATEGORY } from '../utils/constants';
 import { investedByMonth, currentMonthKey, setAsideStreak } from '../utils/savingsDiscipline';
@@ -79,12 +80,19 @@ export default function PortfolioScreen() {
   const [simReturn, setSimReturn] = useState(3); // กำไร %/เดือน ที่สมมติ
   // ── การขายจริง: ตัวชี้วัดฝีมือที่วัดได้ (ต่างจากกำไรลอยตัว) ──
   const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
-  const [realizedTableMissing, setRealizedTableMissing] = useState(false); // ยังไม่ได้รัน SQL
   const [sellTarget, setSellTarget] = useState<Investment | null>(null);
   const [sellQtyInput, setSellQtyInput] = useState('');
   const [sellPriceInput, setSellPriceInput] = useState('');
   const [sellDateInput, setSellDateInput] = useState('');
   const [sellFeesInput, setSellFeesInput] = useState('');
+  const [showRealizedList, setShowRealizedList] = useState(false); // กาง/ยุบรายดีลที่ขายแล้ว
+  // ── ตัวกรองรายการลงทุน — ยุบไว้เป็นค่าเริ่มต้น กดกางเมื่อพอร์ตเริ่มเยอะ ──
+  const [showFilter, setShowFilter] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [filterType, setFilterType] = useState<InvestmentType | 'all'>('all');
+  const [filterPlatform, setFilterPlatform] = useState<string>('all');
+  const [filterPnl, setFilterPnl] = useState<'all' | 'profit' | 'loss'>('all');
+  const [sortBy, setSortBy] = useState<'default' | 'value' | 'profit' | 'name' | 'date'>('default');
 
   const loadData = async () => {
     const allInvestments = await getInvestments();
@@ -103,11 +111,10 @@ export default function PortfolioScreen() {
     }
     try {
       setRealizedTrades(await getRealizedTrades());
-      setRealizedTableMissing(false);
     } catch {
-      // ยังไม่ได้รัน sql/realized_trades.sql — โชว์คำแนะนำแทนที่จะเงียบ
+      // ยังไม่ได้รัน sql/realized_trades.sql — การ์ด "ผลงานจริง" จะไม่โชว์เอง
+      // (ถ้ากดขายจริงแล้วตารางยังไม่มี handleConfirmSell จะบอกให้ไปรัน SQL อยู่แล้ว)
       setRealizedTrades([]);
-      setRealizedTableMissing(true);
     }
     try {
       const accs = await getAccounts();
@@ -212,6 +219,10 @@ export default function PortfolioScreen() {
         buyDate: toChristianYear(sellTarget.buyDate || '').slice(0, 10),
         sellDate: date,
         fees: buyFeeShare + sellFee,
+        // แพลตฟอร์มเป็นตัวระบุไม้ ต้องเก็บแยกคอลัมน์ ไม่ฝากไว้ใน snapshot เพียงที่เดียว
+        platform: sellTarget.platform,
+        // เก็บสภาพรายการก่อนขายไว้ เผื่อกดผิดแล้วต้องย้อนคืน
+        sourceInvestment: sellTarget,
       });
       // ขายหมด → ลบรายการทิ้ง ; ขายบางส่วน → ลดจำนวนและค่าธรรมเนียมที่เหลือตามสัดส่วน
       if (qty >= sellTarget.quantity) {
@@ -233,6 +244,109 @@ export default function PortfolioScreen() {
           ? 'ยังไม่ได้สร้างตาราง — เอา sql/realized_trades.sql ไปรันที่ Supabase ก่อน'
           : `บันทึกการขายไม่สำเร็จ: ${msg}`
       );
+    }
+  };
+
+  // ── ย้อนคืนการขาย: กดขายผิด/กรอกเลขผิด ต้องกู้กลับได้ ──
+  // คืนของเข้าพอร์ตก่อน แล้วค่อยลบบันทึกการขาย — ถ้าลำดับกลับกันแล้วพังกลางทาง ของจะหายทั้งสองที่
+  const undoSell = async (trade: RealizedTrade) => {
+    try {
+      // อ่านพอร์ตสด ๆ จาก DB ก่อน ห้ามเชื่อ state ที่อาจค้าง —
+      // update ที่ไม่เจอแถว (เช่นรายการถูกลบไปแล้ว) จะ "ผ่าน" แบบไม่มี error
+      // แล้วเราจะเผลอลบบันทึกการขายทิ้ง = ของหายทั้งสองที่
+      const fresh = await getInvestments();
+      const snap = trade.sourceInvestment;
+      // แพลตฟอร์มของไม้ที่ขายไป — อ่านจากคอลัมน์ platform ก่อน ไม่มีก็เอาจาก snapshot
+      const platform = trade.platform ?? snap?.platform;
+      // ── ห้ามรวมข้ามไม้เด็ดขาด ──
+      // ตัวเดียวกันมีได้หลายไม้ (เช่น INTC ซื้อ 3 รอบ / อยู่คนละโบรก = หลายแถว ต้นทุนต่างกัน)
+      // ถ้าเอาจำนวนไปบวกกับแถวที่แค่ symbol ตรง ต้นทุน/กำไรของแถวนั้นเพี้ยนทั้งแถว
+      // เกณฑ์ "ไม้เดียวกัน": id จาก snapshot ตรง หรือ symbol+ประเภท+แพลตฟอร์ม+ราคาซื้อ ตรงกันหมด
+      // (ราคาซื้อต้องตรงเป๊ะ เพราะถ้าต่างกันแล้วรวม ต้นทุนเฉลี่ยจะเพี้ยนแบบเงียบ ๆ)
+      const samePrice = (p?: number) => p != null && Math.abs(p - trade.buyPrice) < 1e-6;
+      const samePlatform = (p?: string) => (p || '') === (platform || '');
+      const target =
+        fresh.find((i) => !!snap && i.id === snap.id && samePrice(i.buyPrice)) ??
+        fresh.find(
+          (i) =>
+            i.symbol === trade.symbol &&
+            i.type === trade.assetType &&
+            samePlatform(i.platform) &&
+            samePrice(i.buyPrice)
+        );
+      // ค่าธรรมเนียมซื้อที่ปันไปกับก้อนที่ขาย — ไม่มี snapshot ก็ใช้ค่าธรรมเนียมในบันทึกการขายเท่าที่มี
+      const feeShare = snap
+        ? snap.quantity > 0 ? (snap.fees || 0) * (trade.quantity / snap.quantity) : 0
+        : trade.fees || 0;
+
+      let restoredId: string;
+      if (target) {
+        // ขายบางส่วนของไม้นี้ → บวกจำนวนกลับเข้าไม้เดิม (บวกกลับ ไม่ทับค่าเดิม เผื่อขายหลายรอบ)
+        restoredId = target.id;
+        await updateInvestment({
+          ...target,
+          quantity: target.quantity + trade.quantity,
+          fees: (target.fees || 0) + feeShare,
+        });
+      } else {
+        // ไม้เดิมไม่อยู่แล้ว (ขายหมด) หรือพิสูจน์ไม่ได้ว่าเป็นไม้เดียวกัน → สร้างเป็น "แถวใหม่แยกไม้"
+        // ใช้ id เดิมจาก snapshot ได้ถ้ายังไม่มีใครใช้ (คงตัวตนเดิม) ไม่งั้นออก id ใหม่กันชนกัน
+        restoredId = snap && !fresh.some((i) => i.id === snap.id) ? snap.id : Date.now().toString();
+        await saveInvestment(
+          snap
+            // มี snapshot → ได้แพลตฟอร์ม/โน้ต/เป้าหมายกำไรกลับมาครบ
+            ? { ...snap, id: restoredId, quantity: trade.quantity, fees: feeShare, platform }
+            // ไม่มี snapshot (ขายไว้ก่อนมีฟีเจอร์นี้) → ประกอบใหม่เท่าที่ตารางเก็บไว้ + แพลตฟอร์มเดิม
+            : {
+                id: restoredId,
+                type: trade.assetType,
+                symbol: trade.symbol,
+                name: trade.name || trade.symbol,
+                quantity: trade.quantity,
+                buyPrice: trade.buyPrice,
+                currency: trade.currency,
+                buyDate: trade.buyDate,
+                fees: feeShare,
+                platform,
+              }
+        );
+      }
+
+      // ยืนยันจาก DB ว่าของกลับเข้าพอร์ตจริง แล้วค่อยลบบันทึกการขาย
+      const after = await getInvestments();
+      const restored = after.find((i) => i.id === restoredId);
+      if (!restored) {
+        throw new Error('บันทึกกลับเข้าพอร์ตไม่สำเร็จ — ยังเก็บบันทึกการขายไว้ให้ ลองกดย้อนคืนอีกครั้ง');
+      }
+
+      await deleteRealizedTrade(trade.id);
+      // ล้างตัวกรองทิ้ง เผื่อรายการที่กู้กลับมาโดนตัวกรอง/คำค้นซ่อนอยู่จนดูเหมือนไม่กลับมา
+      clearFilters();
+      // บอกให้ชัดว่าไปโผล่ที่ไหน — รวมกลับเข้าไม้เดิม หรือกลายเป็นแถวแยก (กันสับสนว่า "ไม่เห็นกลับมา")
+      const where = restored.platform ? ` ที่ ${restored.platform}` : '';
+      showMsg(
+        target
+          ? `ย้อนคืนแล้ว — ${restored.symbol || restored.name}${where} ไม้เดิมกลับเป็น ${restored.quantity} หน่วย`
+          : `ย้อนคืนแล้ว — ${restored.symbol || restored.name} ${restored.quantity} หน่วย @ ${formatCurrencyWithType(restored.buyPrice, restored.currency)}${where} เพิ่มกลับเป็นรายการแยกไม้`
+      );
+      await loadData();
+    } catch (e: any) {
+      showMsg(`ย้อนคืนไม่สำเร็จ: ${String(e?.message || e)}`);
+      loadData();
+    }
+  };
+
+  const handleUndoSell = (trade: RealizedTrade) => {
+    const at = trade.platform ? ` (${trade.platform})` : '';
+    const label = `${trade.symbol || trade.name}${at} ${trade.quantity} หน่วย`;
+    const msg = `ย้อนคืนการขาย ${label}?\nรายการจะกลับเข้าพอร์ต${at ? ` ที่ ${trade.platform}` : ''} และบันทึกการขายนี้จะถูกลบ`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(msg)) undoSell(trade);
+    } else {
+      Alert.alert('ย้อนคืนการขาย', msg, [
+        { text: 'ยกเลิก', style: 'cancel' },
+        { text: 'ย้อนคืน', onPress: () => undoSell(trade) },
+      ]);
     }
   };
 
@@ -399,16 +513,27 @@ export default function PortfolioScreen() {
     return found ? found.icon : 'cube-outline';
   };
 
-  const renderInvestmentItem = ({ item }: { item: Investment }) => {
-    // ราคาปัจจุบัน (currentPrice) เก็บเป็นสกุลเงินเดียวกับ item.currency (สกุลที่เลือกตอนเพิ่มการลงทุน)
-    // ต้องแปลงเป็น THB ก่อนคำนวณ cost/value/profit เพื่อรวมพอร์ตข้ามสกุลเงินได้
+  // ราคาปัจจุบัน (currentPrice) เก็บเป็นสกุลเงินเดียวกับ item.currency (สกุลที่เลือกตอนเพิ่มการลงทุน)
+  // ต้องแปลงเป็น THB ก่อนคำนวณ cost/value/profit เพื่อรวมพอร์ตข้ามสกุลเงินได้
+  // แยกออกมาเป็นฟังก์ชันเพราะทั้งการ์ดรายการ ตัวกรอง และการเรียงลำดับ ต้องใช้เลขชุดเดียวกัน
+  const calcItemStats = (item: Investment) => {
     const buyPriceInTHB = convertToTHB(item.buyPrice, item.currency);
     const currentPriceNative = item.currentPrice ?? item.buyPrice;
     const currentPriceInTHB = convertToTHB(currentPriceNative, item.currency);
     const cost = buyPriceInTHB * item.quantity + (item.fees || 0);
     const value = currentPriceInTHB * item.quantity;
     const profit = value - cost;
-    const profitPercent = cost > 0 ? (profit / cost) * 100 : 0;
+    return {
+      currentPriceNative,
+      cost,
+      value,
+      profit,
+      profitPercent: cost > 0 ? (profit / cost) * 100 : 0,
+    };
+  };
+
+  const renderInvestmentItem = ({ item }: { item: Investment }) => {
+    const { currentPriceNative, value, profit, profitPercent } = calcItemStats(item);
     const isProfit = profit >= 0;
     // วิเคราะห์รายตัว: โตเฉลี่ย/ปี (จากวันซื้อ) — ข้อมูลจริง ไม่ใช่คำแนะนำให้ขาย
     const growth = getHoldingAnnualGrowth(item.buyDate, item.buyPrice, currentPriceNative);
@@ -491,6 +616,8 @@ export default function PortfolioScreen() {
   // กำไรลอยตัวยังไม่เกิดจริงจนกว่าจะปิดออเดอร์ จึงไม่นับรวมในทุกส่วนของการคำนวณถึงเป้า
   // ผลตอบแทนจริงจากการขาย — ตัวนี้คือ "ฝีมือที่วัดได้" ใช้แทนเลขคาดหวังถ้ามีข้อมูลพอ
   const realized = summarizeRealized(realizedTrades);
+  // รายดีลแยกก้อน — ใช้โชว์ในลิสต์ "ที่ขายแล้ว" พร้อมปุ่มย้อนคืน (เรียงขายล่าสุดก่อนจาก query แล้ว)
+  const realizedResults = realizedTrades.map(analyzeRealizedTrade);
 
   const goalAnalysis: PortfolioGoalAnalysis | null = goal
     ? analyzePortfolioGoal(
@@ -605,6 +732,74 @@ export default function PortfolioScreen() {
     return `อีก ~${Math.ceil(gap / summary.totalProfit)} ครั้ง`;
   })();
 
+  // ── ตัวเลือกของตัวกรอง: สร้างจากของที่ถืออยู่จริง ไม่โชว์ตัวเลือกที่กดแล้วว่างเปล่า ──
+  const typeOptions = INVESTMENT_TYPES.filter((t) => investments.some((i) => i.type === t.value));
+  const platformOptions = Array.from(
+    new Set(investments.map((i) => i.platform).filter((p): p is string => !!p))
+  ).sort((a, b) => a.localeCompare(b, 'th'));
+
+  const activeFilterCount =
+    (searchText.trim() ? 1 : 0) +
+    (filterType !== 'all' ? 1 : 0) +
+    (filterPlatform !== 'all' ? 1 : 0) +
+    (filterPnl !== 'all' ? 1 : 0) +
+    (sortBy !== 'default' ? 1 : 0);
+
+  const clearFilters = () => {
+    setSearchText('');
+    setFilterType('all');
+    setFilterPlatform('all');
+    setFilterPnl('all');
+    setSortBy('default');
+  };
+
+  const visibleInvestments = (() => {
+    const q = searchText.trim().toLowerCase();
+    const list = investments.filter((item) => {
+      if (filterType !== 'all' && item.type !== filterType) return false;
+      if (filterPlatform !== 'all' && (item.platform || '') !== filterPlatform) return false;
+      if (q && !`${item.name} ${item.symbol} ${item.platform || ''}`.toLowerCase().includes(q)) return false;
+      if (filterPnl !== 'all') {
+        const { profit } = calcItemStats(item);
+        if (filterPnl === 'profit' ? profit < 0 : profit >= 0) return false;
+      }
+      return true;
+    });
+    if (sortBy === 'default') return list;
+    return [...list].sort((a, b) => {
+      switch (sortBy) {
+        case 'value':
+          return calcItemStats(b).value - calcItemStats(a).value;
+        case 'profit':
+          return calcItemStats(b).profitPercent - calcItemStats(a).profitPercent;
+        case 'name':
+          return (a.name || a.symbol).localeCompare(b.name || b.symbol, 'th');
+        case 'date':
+          // ใหม่สุดก่อน — เทียบเป็น ค.ศ. เพราะบางรายการเก็บเป็น พ.ศ.
+          return toChristianYear(b.buyDate || '').localeCompare(toChristianYear(a.buyDate || ''));
+        default:
+          return 0;
+      }
+    });
+  })();
+
+  // ยอดรวมของ "เฉพาะที่กรองอยู่" — ประโยชน์ตอนดูรายแพลตฟอร์ม/รายประเภท
+  const visibleTotals = visibleInvestments.reduce(
+    (acc, item) => {
+      const s = calcItemStats(item);
+      return { value: acc.value + s.value, profit: acc.profit + s.profit };
+    },
+    { value: 0, profit: 0 }
+  );
+
+  const sortOptions: { value: typeof sortBy; label: string }[] = [
+    { value: 'default', label: 'ค่าเริ่มต้น' },
+    { value: 'value', label: 'มูลค่ามาก→น้อย' },
+    { value: 'profit', label: 'กำไร %' },
+    { value: 'name', label: 'ชื่อ ก-ฮ' },
+    { value: 'date', label: 'ซื้อล่าสุด' },
+  ];
+
   const listHeaderElement = (
       <View>
         <View style={[
@@ -644,9 +839,6 @@ export default function PortfolioScreen() {
             ) : (
               <Ionicons name="refresh-outline" size={18} color={COLORS.primary} />
             )}
-            <Text style={styles.updateButtonText}>
-              {isUpdatingPrices ? '...' : ''}
-            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.addButton}
@@ -692,7 +884,7 @@ export default function PortfolioScreen() {
 
           {!goalAnalysis ? (
             <Text style={styles.goalCardEmpty}>
-              ปักยอดพอร์ตที่อยากได้ แล้วระบบจะสรุปให้ว่าต้องโตปีละกี่ % (1/3/5/10 ปี) และคาดว่าจะถึงเป้าเมื่อไหร่
+              ปักยอดพอร์ตที่อยากได้ แล้วระบบจะสรุปให้ว่าไปได้กี่ % และต้องลงเดือนละเท่าไหร่ถึงจะทันกรอบเวลา
             </Text>
           ) : (
             <>
@@ -720,44 +912,10 @@ export default function PortfolioScreen() {
                 {!goalAnalysis.reached && ` • ขาดอีก ${formatCurrency(goalAnalysis.remaining)}`}
               </Text>
 
-              {/* ประมาณวันถึงเป้า — จาก % ที่ตั้งเอง หรือพาซจริง */}
-              {!goalAnalysis.reached && (
-                <Text style={styles.goalVerdict}>
-                  {goalAnalysis.projectedYearsToReach != null
-                    ? ` ${
-                        goalAnalysis.projectionSource === 'realized'
-                          ? 'จากการขายจริงโตเฉลี่ยปีละ'
-                          : goalAnalysis.projectionSource === 'user'
-                            ? 'ที่คาดโตปีละ'
-                            : 'พาซปัจจุบันโตเฉลี่ยปีละ'
-                      } ~${goalAnalysis.projectionRatePercent!.toFixed(1)}% → คาดถึงเป้าในอีก ~${goalAnalysis.projectedYearsToReach.toFixed(1)} ปี (≈ ${new Date(goalAnalysis.projectedDate!).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' })})`
-                    : 'ใส่ "คาดโตปีละกี่ %" ในปุ่มแก้ไข เพื่อให้ระบบคำนวณว่าจะถึงเป้าในกี่ปี'}
-                </Text>
-              )}
+              {/* ตั้งใจไม่โชว์ "คาดถึงเป้าในอีกกี่ปี" และแถว KPI คาดการณ์บนการ์ดนี้
+                  — เป็นเลขพยากรณ์ที่ยังไม่เกิดจริง อ่านแล้วเข้าใจผิดว่าถึงเป้าแล้ว
+                  ตัวเลข "ต้องลง/ครั้ง" ตามกรอบเวลายังดูได้ในปุ่ม "ดูรายละเอียดแผน" ด้านล่าง */}
 
-              {/* ตัวเลขที่ต้องรู้วันนี้ — ยุบสาระของหลายการ์ดเหลือแถวเดียว รายละเอียดกางดูด้านล่าง */}
-              <View style={styles.kpiRow}>
-                {!goalAnalysis.reached && (
-                  <View style={styles.kpiCell}>
-                    <Text style={styles.kpiLabel}>
-                      ต้องลง/{dcaRoundsCount ? 'ครั้ง' : 'เดือน'} ({reqHorizon} ปี)
-                    </Text>
-                    <Text style={styles.kpiValue}>
-                      {reqPerRound == null ? '—' : reqPerRound <= 0 ? 'โตเองถึง' : formatCurrency(reqPerRound)}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.kpiCell}>
-                  <Text style={styles.kpiLabel}>ลงได้/ครั้ง</Text>
-                  <Text style={styles.kpiValue}>{perRound == null ? '—' : formatCurrency(perRound)}</Text>
-                </View>
-                <View style={styles.kpiCell}>
-                  <Text style={styles.kpiLabel}>เหลือใช้เดือนนี้</Text>
-                  <Text style={[styles.kpiValue, hasPlanNumbers && leftToSpend < 0 && styles.kpiValueNeg]}>
-                    {hasPlanNumbers ? formatCurrency(leftToSpend) : '—'}
-                  </Text>
-                </View>
-              </View>
               {/* ── วินัยการกันเงิน: จุดที่แผนพังบ่อยสุด — "กันไว้" ไม่เท่ากับ "ลงจริง" ── */}
               {hasPlanNumbers && setAside > 0 && (
                 <View style={styles.disciplineBox}>
@@ -815,22 +973,14 @@ export default function PortfolioScreen() {
           )}
         </View>
 
-        {/* ── ผลงานจริง (realized): กำไรที่ขายแล้วเท่านั้น ไม่นับกำไรลอยตัว ── */}
-        <View style={styles.goalCard}>
-          <Text style={styles.goalCardTitle}>
-            <Ionicons name="ribbon-outline" size={18} color={COLORS.primary} /> ผลงานจริง (ที่ขายแล้ว)
-          </Text>
-          {realizedTableMissing ? (
-            <Text style={styles.goalCardEmpty}>
-              ยังใช้ไม่ได้ — เอาไฟล์ `sql/realized_trades.sql` ไปรันที่ Supabase SQL editor ก่อน 1 ครั้ง แล้วกลับมาหน้านี้
+        {/* ── ผลงานจริง (realized): กำไรที่ขายแล้วเท่านั้น ไม่นับกำไรลอยตัว ──
+            โชว์เฉพาะเมื่อมีการขายบันทึกไว้จริง — ยังไม่มีก็ไม่ต้องมีการ์ดเปล่ามากินที่
+            (ปุ่ม "ย้อนคืน" อยู่ในการ์ดนี้ พอเริ่มบันทึกขาย การ์ดจะโผล่มาเอง) */}
+        {realized.tradeCount > 0 && (
+          <View style={styles.goalCard}>
+            <Text style={styles.goalCardTitle}>
+              <Ionicons name="ribbon-outline" size={18} color={COLORS.primary} /> ผลงานจริง (ที่ขายแล้ว)
             </Text>
-          ) : realized.tradeCount === 0 ? (
-            <Text style={styles.goalCardEmpty}>
-              ยังไม่มีการขายที่บันทึกไว้ — กด "ขาย" ที่รายการลงทุนด้านล่างเมื่อขายจริง
-              {'\n'}ตัวเลขทั้งหมดในหน้านี้ยังเป็น "กำไรลอยตัว" ที่ยังไม่เกิดขึ้นจริง จนกว่าจะมีการขายบันทึกไว้
-            </Text>
-          ) : (
-            <>
               <View style={styles.kpiRow}>
                 <View style={styles.kpiCell}>
                   <Text style={styles.kpiLabel}>กำไรจริง</Text>
@@ -884,9 +1034,64 @@ export default function PortfolioScreen() {
                   {realized.worstTrade.pnlPercent >= 0 ? '+' : ''}{realized.worstTrade.pnlPercent.toFixed(1)}%
                 </Text>
               )}
-            </>
-          )}
-        </View>
+
+              {/* ── รายดีล + ปุ่มย้อนคืน: กดขายผิด/กรอกเลขผิด ต้องกู้กลับได้ ── */}
+              <TouchableOpacity
+                style={styles.detailToggleInline}
+                onPress={() => setShowRealizedList((v) => !v)}
+              >
+                <Ionicons
+                  name={showRealizedList ? 'chevron-up' : 'chevron-down'}
+                  size={14}
+                  color={COLORS.primary}
+                />
+                <Text style={styles.detailToggleText}>
+                  {showRealizedList ? ' ซ่อนรายการที่ขายแล้ว' : ` ดูรายการที่ขายแล้ว (${realized.tradeCount})`}
+                </Text>
+              </TouchableOpacity>
+
+              {showRealizedList &&
+                realizedResults.map((r) => (
+                  <View key={r.trade.id} style={styles.realizedRow}>
+                    <View style={styles.realizedRowLeft}>
+                      <Text style={styles.realizedRowTitle} numberOfLines={1}>
+                        {r.trade.symbol || r.trade.name}
+                      </Text>
+                      <Text style={styles.realizedRowSub}>
+                        {r.trade.quantity} หน่วย • ขาย {fmtDateTH(r.trade.sellDate)} @{' '}
+                        {formatCurrencyWithType(r.trade.sellPrice, r.trade.currency)}
+                        {r.trade.platform ? ` • ${r.trade.platform}` : ''}
+                      </Text>
+                    </View>
+                    <Text
+                      style={[
+                        styles.realizedRowPnl,
+                        { color: r.pnlTHB >= 0 ? COLORS.success : COLORS.error },
+                      ]}
+                    >
+                      {r.pnlTHB >= 0 ? '+' : ''}{formatCurrency(r.pnlTHB)}
+                      {'\n'}
+                      <Text style={styles.realizedRowPnlPct}>
+                        {r.pnlPercent >= 0 ? '+' : ''}{r.pnlPercent.toFixed(1)}%
+                      </Text>
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.undoButton}
+                      onPress={() => handleUndoSell(r.trade)}
+                    >
+                      <Ionicons name="arrow-undo-outline" size={14} color={COLORS.primary} />
+                      <Text style={styles.undoButtonText}> ย้อนคืน</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              {showRealizedList && realizedResults.some((r) => !r.trade.sourceInvestment) && (
+                <Text style={styles.tpSubText}>
+                  * บางรายการยังไม่มีข้อมูลสำรอง (ขายไว้ก่อนมีฟีเจอร์นี้) — ย้อนคืนได้ตามจำนวน/ต้นทุน/แพลตฟอร์ม
+                  แต่โน้ตกับเป้าหมายกำไรจะไม่กลับมา
+                </Text>
+              )}
+          </View>
+        )}
 
         {redAlerts.length > 0 && (
           <View style={styles.losersCard}>
@@ -906,9 +1111,166 @@ export default function PortfolioScreen() {
         )}
 
         <View style={styles.listHeader}>
-          <Text style={styles.listTitle}>รายการลงทุน</Text>
+          <View style={styles.listHeaderRow}>
+            <Text style={styles.listTitle}>รายการลงทุน</Text>
+            {investments.length > 0 && (
+              <TouchableOpacity
+                style={[styles.filterToggle, activeFilterCount > 0 && styles.filterToggleOn]}
+                onPress={() => setShowFilter((v) => !v)}
+              >
+                <Ionicons
+                  name="funnel-outline"
+                  size={14}
+                  color={activeFilterCount > 0 ? '#ffffff' : COLORS.primary}
+                />
+                <Text style={[styles.filterToggleText, activeFilterCount > 0 && styles.filterToggleTextOn]}>
+                  {activeFilterCount > 0 ? ` ตัวกรอง (${activeFilterCount})` : ' ตัวกรอง'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {showFilter && investments.length > 0 && (
+            <View style={styles.filterPanel}>
+              {/* ค้นหาจากชื่อ / ตัวย่อ / แพลตฟอร์ม */}
+              <View style={styles.searchBox}>
+                <Ionicons name="search-outline" size={16} color={COLORS.textSecondary} />
+                <TextInput
+                  style={styles.searchInput}
+                  value={searchText}
+                  onChangeText={setSearchText}
+                  placeholder="ค้นหาชื่อ / ตัวย่อ / แพลตฟอร์ม"
+                  placeholderTextColor={COLORS.textSecondary}
+                />
+                {searchText.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchText('')}>
+                    <Ionicons name="close-circle" size={16} color={COLORS.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {typeOptions.length > 1 && (
+                <>
+                  <Text style={styles.filterGroupLabel}>ประเภท</Text>
+                  <View style={styles.chipWrap}>
+                    <TouchableOpacity
+                      style={[styles.filterChip, filterType === 'all' && styles.filterChipOn]}
+                      onPress={() => setFilterType('all')}
+                    >
+                      <Text style={[styles.filterChipText, filterType === 'all' && styles.filterChipTextOn]}>
+                        ทั้งหมด
+                      </Text>
+                    </TouchableOpacity>
+                    {typeOptions.map((t) => (
+                      <TouchableOpacity
+                        key={t.value}
+                        style={[styles.filterChip, filterType === t.value && styles.filterChipOn]}
+                        onPress={() => setFilterType(t.value)}
+                      >
+                        <Text style={[styles.filterChipText, filterType === t.value && styles.filterChipTextOn]}>
+                          {t.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              {platformOptions.length > 1 && (
+                <>
+                  <Text style={styles.filterGroupLabel}>แพลตฟอร์ม</Text>
+                  <View style={styles.chipWrap}>
+                    <TouchableOpacity
+                      style={[styles.filterChip, filterPlatform === 'all' && styles.filterChipOn]}
+                      onPress={() => setFilterPlatform('all')}
+                    >
+                      <Text style={[styles.filterChipText, filterPlatform === 'all' && styles.filterChipTextOn]}>
+                        ทั้งหมด
+                      </Text>
+                    </TouchableOpacity>
+                    {platformOptions.map((p) => (
+                      <TouchableOpacity
+                        key={p}
+                        style={[styles.filterChip, filterPlatform === p && styles.filterChipOn]}
+                        onPress={() => setFilterPlatform(p)}
+                      >
+                        <Text style={[styles.filterChipText, filterPlatform === p && styles.filterChipTextOn]}>
+                          {p}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              <Text style={styles.filterGroupLabel}>สถานะ</Text>
+              <View style={styles.chipWrap}>
+                {([
+                  { value: 'all', label: 'ทั้งหมด' },
+                  { value: 'profit', label: 'กำไร' },
+                  { value: 'loss', label: 'ขาดทุน' },
+                ] as const).map((o) => (
+                  <TouchableOpacity
+                    key={o.value}
+                    style={[styles.filterChip, filterPnl === o.value && styles.filterChipOn]}
+                    onPress={() => setFilterPnl(o.value)}
+                  >
+                    <Text style={[styles.filterChipText, filterPnl === o.value && styles.filterChipTextOn]}>
+                      {o.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.filterGroupLabel}>เรียงตาม</Text>
+              <View style={styles.chipWrap}>
+                {sortOptions.map((o) => (
+                  <TouchableOpacity
+                    key={o.value}
+                    style={[styles.filterChip, sortBy === o.value && styles.filterChipOn]}
+                    onPress={() => setSortBy(o.value)}
+                  >
+                    <Text style={[styles.filterChipText, sortBy === o.value && styles.filterChipTextOn]}>
+                      {o.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {activeFilterCount > 0 && (
+                <TouchableOpacity style={styles.clearFilterButton} onPress={clearFilters}>
+                  <Ionicons name="close-outline" size={14} color={COLORS.textSecondary} />
+                  <Text style={styles.clearFilterText}> ล้างตัวกรอง</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {activeFilterCount > 0 && (
+            <Text style={styles.filterSummary}>
+              แสดง {visibleInvestments.length} จาก {investments.length} รายการ • มูลค่า{' '}
+              {formatCurrency(visibleTotals.value)} • {visibleTotals.profit >= 0 ? 'กำไร +' : 'ขาดทุน '}
+              {formatCurrency(visibleTotals.profit)}
+            </Text>
+          )}
         </View>
       </View>
+  );
+
+  const emptyListElement = (
+    <View>
+      {investments.length > 0 ? (
+        <>
+          <Text style={styles.emptyText}>ไม่พบรายการที่ตรงกับตัวกรอง</Text>
+          <TouchableOpacity style={styles.clearFilterButton} onPress={clearFilters}>
+            <Ionicons name="close-outline" size={14} color={COLORS.textSecondary} />
+            <Text style={styles.clearFilterText}> ล้างตัวกรอง</Text>
+          </TouchableOpacity>
+        </>
+      ) : (
+        <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
+      )}
+    </View>
   );
 
   // ── ชุดวางแผนถึงเป้า → ย้ายมาต่อท้ายรายการหุ้น (footer) เพื่อให้ "พอร์ต+หุ้นที่ถือ" ขึ้นก่อน ──
@@ -1265,7 +1627,7 @@ export default function PortfolioScreen() {
       ]}>
         {isDesktop ? (
           <FlatList
-            data={investments}
+            data={visibleInvestments}
             renderItem={renderInvestmentItem}
             keyExtractor={(item) => item.id}
             numColumns={2}
@@ -1275,9 +1637,7 @@ export default function PortfolioScreen() {
             contentContainerStyle={styles.listContent}
             ListHeaderComponent={listHeaderElement}
             ListFooterComponent={planningFooterElement}
-            ListEmptyComponent={
-              <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
-            }
+            ListEmptyComponent={emptyListElement}
           />
         ) : (
           <ScrollView
@@ -1287,10 +1647,10 @@ export default function PortfolioScreen() {
           >
             {listHeaderElement}
             <View style={styles.listcontainer}>
-            {investments.length === 0 ? (
-              <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
+            {visibleInvestments.length === 0 ? (
+              emptyListElement
             ) : (
-              investments.map((item) => (
+              visibleInvestments.map((item) => (
                 <View key={item.id}>{renderInvestmentItem({ item })}</View>
               ))
             )}
@@ -1642,13 +2002,6 @@ const styles = StyleSheet.create({
   goalFill: {
     height: 8,
     borderRadius: 4,
-  },
-  goalVerdict: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.text,
-    marginTop: 12,
-    lineHeight: 18,
   },
   // แถวตัวเลขสำคัญในการ์ดสรุป — ยุบสาระของหลายการ์ดเหลือแถวเดียว
   kpiRow: {
@@ -2129,6 +2482,163 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
+  },
+  listHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  filterToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.surface,
+  },
+  filterToggleOn: {
+    backgroundColor: COLORS.primary,
+  },
+  filterToggleText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.primary,
+  },
+  filterToggleTextOn: {
+    color: '#ffffff',
+  },
+  filterPanel: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: Platform.OS === 'web' ? 8 : 4,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' as any } : {}),
+  },
+  filterGroupLabel: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  filterChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  filterChipOn: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
+  },
+  filterChipTextOn: {
+    color: '#ffffff',
+  },
+  clearFilterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  clearFilterText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+  },
+  filterSummary: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.accent,
+    marginTop: 8,
+  },
+  // ── รายดีลที่ขายแล้ว + ปุ่มย้อนคืน ──
+  detailToggleInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  realizedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  realizedRowLeft: {
+    flex: 1,
+  },
+  realizedRowTitle: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  realizedRowSub: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  realizedRowPnl: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    textAlign: 'right',
+  },
+  realizedRowPnlPct: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+  },
+  undoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.surface,
+  },
+  undoButtonText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.primary,
   },
   list: {
     flex: 1,

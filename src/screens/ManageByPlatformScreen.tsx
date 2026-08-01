@@ -21,6 +21,7 @@ import {
   Currency,
   INVESTMENT_TYPES,
   INVESTMENT_PLATFORMS,
+  DEFAULT_CURRENCIES,
 } from '../types/investment';
 import {
   getInvestments,
@@ -29,13 +30,45 @@ import {
   updateInvestmentsPlatform,
   deleteInvestments,
 } from '../services/investmentStorage';
-import { updateInvestmentPrice } from '../services/priceApi';
+import { updateInvestmentPrice, searchCryptoList, searchStockList } from '../services/priceApi';
+import { searchFundList } from '../services/fundCatalog';
+import { getPlatforms } from '../services/platformStorage';
+import { getCurrencies } from '../services/currencyStorage';
 import { formatCurrencyWithType, COLORS } from '../utils/constants';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'ManageByPlatform'>;
 
 const UNASSIGNED = 'ไม่ระบุแพลตฟอร์ม';
 const FETCHABLE: InvestmentType[] = ['crypto', 'stock_th', 'stock_foreign', 'gold'];
+// ประเภทที่ค้นชื่อเต็มจากตัวย่อได้ (crypto/หุ้น = API ค้นหา, กองทุน = แคตตาล็อก funds.json)
+const SEARCHABLE: InvestmentType[] = ['crypto', 'stock_th', 'stock_foreign', 'fund'];
+
+// ผลค้นหาแบบรวมทุกประเภทให้หน้าจอใช้เหมือนกันหมด
+interface SymbolHit {
+  symbol: string;
+  name: string;
+  currency?: string;
+}
+
+// ค้นตัวย่อ → ชื่อเต็ม ตามประเภทของแถวนั้น (ใช้ตัวเดียวกับหน้า "เพิ่มการลงทุน" ทีละรายการ)
+const searchByType = async (type: InvestmentType, query: string): Promise<SymbolHit[]> => {
+  const q = query.trim();
+  if (!q) return [];
+  if (type === 'crypto') {
+    return (await searchCryptoList(q)).map((c) => ({ symbol: c.symbol.toUpperCase(), name: c.name }));
+  }
+  if (type === 'stock_th' || type === 'stock_foreign') {
+    return (await searchStockList(q, type === 'stock_th' ? 'th' : 'foreign')).map((s) => ({
+      symbol: s.symbol,
+      name: s.name,
+      currency: s.currency,
+    }));
+  }
+  if (type === 'fund') {
+    return (await searchFundList(q)).map((f) => ({ symbol: f.abbr || f.id, name: f.name }));
+  }
+  return [];
+};
 
 // แถวสำหรับ "เพิ่มหลายรายการ"
 interface AddRow {
@@ -48,6 +81,8 @@ interface AddRow {
   currency: Currency;
   currentPrice: string;
   fetching?: boolean;
+  searching?: boolean;
+  hits?: SymbolHit[];   // ผลค้นหาที่ยังไม่ได้เลือก
 }
 
 const alertMsg = (msg: string) => {
@@ -95,6 +130,13 @@ export default function ManageByPlatformScreen() {
   const [addPlatform, setAddPlatform] = useState('');
   const [addRows, setAddRows] = useState<AddRow[]>(() => [emptyRow()]);
 
+  // ตัวเลือกแพลตฟอร์ม/สกุลเงิน = ของที่ผู้ใช้ตั้งไว้ในหน้า "สกุลเงิน & แพลตฟอร์ม" (ไม่ hardcode)
+  // ยังไม่ได้รัน SQL หรือแคตตาล็อกว่าง → fallback เป็นค่าเริ่มต้นเดิม เพื่อไม่ให้หน้าใช้ไม่ได้
+  const [platformOptions, setPlatformOptions] = useState<string[]>(INVESTMENT_PLATFORMS);
+  const [currencyOptions, setCurrencyOptions] = useState<string[]>(
+    DEFAULT_CURRENCIES.map((c) => c.code)
+  );
+
   const load = async () => {
     try {
       setInvestments(await getInvestments());
@@ -102,6 +144,13 @@ export default function ManageByPlatformScreen() {
       setInvestments([]);
     } finally {
       setLoading(false);
+    }
+    try {
+      const [platList, curList] = await Promise.all([getPlatforms(), getCurrencies()]);
+      if (platList.length > 0) setPlatformOptions(platList.map((p) => p.name));
+      if (curList.length > 0) setCurrencyOptions(curList.map((c) => c.code));
+    } catch {
+      // ใช้ค่าเริ่มต้นต่อไป
     }
   };
 
@@ -205,24 +254,85 @@ export default function ManageByPlatformScreen() {
   const removeRow = (key: string) =>
     setAddRows((rows) => (rows.length <= 1 ? [emptyRow()] : rows.filter((r) => r.key !== key)));
 
-  const handleRowFetch = async (key: string) => {
+  // ค้นตัวย่อของแถวนั้น → โชว์รายการให้เลือก (ได้ทั้งตัวย่อจริงและชื่อเต็ม ไม่ต้องพิมพ์เอง)
+  const handleRowSearch = async (key: string) => {
     const r = addRows.find((x) => x.key === key);
     if (!r) return;
-    if (!r.symbol.trim()) {
+    const q = r.symbol.trim();
+    if (!q) {
+      alertMsg('พิมพ์ตัวย่อหรือชื่อที่อยากค้นก่อน');
+      return;
+    }
+    updateRow(key, { searching: true, hits: [] });
+    try {
+      const hits = await searchByType(r.type, q);
+      updateRow(key, { searching: false, hits });
+      if (hits.length === 0) alertMsg('ไม่พบรายการที่ค้น — พิมพ์ชื่อเต็มเองได้');
+    } catch {
+      updateRow(key, { searching: false, hits: [] });
+      alertMsg('ค้นหาไม่สำเร็จ (เน็ต/โควตา API) — พิมพ์ชื่อเต็มเองได้');
+    }
+  };
+
+  // เลือกจากผลค้นหา → เติมตัวย่อ/ชื่อเต็ม/สกุลเงิน แล้วดึงราคาต่อให้เลย ไม่ต้องกดซ้ำ
+  const pickHit = async (key: string, hit: SymbolHit) => {
+    const currency = hit.currency && currencyOptions.includes(hit.currency) ? hit.currency : undefined;
+    const patch: Partial<AddRow> = {
+      symbol: hit.symbol,
+      name: hit.name,
+      hits: [],
+      ...(currency ? { currency } : {}),
+    };
+    updateRow(key, patch);
+    await fetchRowData(key, patch);
+  };
+
+  // ดึงข้อมูลของแถว: ชื่อเต็ม (ถ้ายังว่าง) + ราคาปัจจุบัน
+  // override = ค่าที่เพิ่ง set ไปในจังหวะเดียวกัน (state ยังไม่อัปเดตทัน) ต้องส่งมาเองไม่งั้นอ่านค่าเก่า
+  const fetchRowData = async (key: string, override?: Partial<AddRow>) => {
+    const base = addRows.find((x) => x.key === key);
+    if (!base) return;
+    const r = { ...base, ...override };
+    const sym = r.symbol.trim();
+    if (!sym) {
       alertMsg('กรอกตัวย่อ/รหัสก่อน');
       return;
     }
     updateRow(key, { fetching: true });
     try {
-      const p = await updateInvestmentPrice(r.type, r.symbol.trim().toUpperCase(), r.currency);
-      if (p !== null && p > 0) updateRow(key, { currentPrice: p.toString(), fetching: false });
-      else {
-        updateRow(key, { fetching: false });
-        alertMsg('ดึงราคาไม่ได้ กรุณาตรวจสอบตัวย่อหรือกรอกเอง');
+      // ชื่อเต็ม: เอาจากผลค้นหาที่ตัวย่อตรงที่สุด — ไม่ต้องพิมพ์เอง
+      let name = r.name;
+      if (!name.trim() && SEARCHABLE.includes(r.type)) {
+        try {
+          const hits = await searchByType(r.type, sym);
+          const exact = hits.find((h) => h.symbol.toUpperCase() === sym.toUpperCase()) ?? hits[0];
+          if (exact) name = exact.name;
+        } catch {
+          // ค้นชื่อไม่ได้ก็ไม่เป็นไร ยังดึงราคาต่อได้
+        }
+      }
+      const price = FETCHABLE.includes(r.type)
+        ? await updateInvestmentPrice(r.type, sym.toUpperCase(), r.currency)
+        : null;
+      updateRow(key, {
+        fetching: false,
+        name,
+        currentPrice: price !== null && price > 0 ? price.toString() : r.currentPrice,
+      });
+      const gotName = !!name.trim() && !r.name.trim();
+      const gotPrice = price !== null && price > 0;
+      if (!gotPrice && FETCHABLE.includes(r.type)) {
+        alertMsg(
+          gotName
+            ? `ได้ชื่อ "${name}" แล้ว แต่ดึงราคาไม่ได้ — กรอกราคาปัจจุบันเอง`
+            : 'ดึงข้อมูลไม่ได้ — ตรวจตัวย่อหรือกรอกเอง'
+        );
+      } else if (!gotPrice && !gotName && !r.name.trim()) {
+        alertMsg('ประเภทนี้ไม่มีราคาอัตโนมัติ — กรอกชื่อกับราคาเอง');
       }
     } catch {
       updateRow(key, { fetching: false });
-      alertMsg('ดึงราคาไม่ได้');
+      alertMsg('ดึงข้อมูลไม่ได้');
     }
   };
 
@@ -411,7 +521,7 @@ export default function ManageByPlatformScreen() {
         <ScrollView style={styles.body} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <Text style={styles.label}>แพลตฟอร์มของทั้งชุดนี้</Text>
           <View style={styles.chips}>
-            {INVESTMENT_PLATFORMS.map((p) => (
+            {platformOptions.map((p) => (
               <TouchableOpacity
                 key={p}
                 style={[styles.chip, addPlatform === p && styles.chipActive]}
@@ -456,17 +566,51 @@ export default function ManageByPlatformScreen() {
                 <TextInput
                   style={[styles.input, styles.flex1]}
                   value={r.symbol}
-                  onChangeText={(v) => updateRow(r.key, { symbol: v })}
-                  placeholder="ตัวย่อ เช่น PTT"
+                  onChangeText={(v) => updateRow(r.key, { symbol: v, hits: [] })}
+                  placeholder="ตัวย่อ/ชื่อ เช่น PTT"
                   placeholderTextColor={COLORS.textSecondary}
                   autoCapitalize="characters"
+                  returnKeyType="search"
+                  onSubmitEditing={() => handleRowSearch(r.key)}
                 />
+                {/* ค้นตัวย่อ → ได้ชื่อเต็มมาให้เลือก ไม่ต้องพิมพ์ชื่อเอง */}
+                {SEARCHABLE.includes(r.type) && (
+                  <TouchableOpacity
+                    style={styles.fetchBtn}
+                    onPress={() => handleRowSearch(r.key)}
+                    disabled={r.searching}
+                  >
+                    {r.searching ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Ionicons name="search-outline" size={16} color="#ffffff" />
+                    )}
+                  </TouchableOpacity>
+                )}
               </View>
+              {/* ผลค้นหา — กดแล้วเติมตัวย่อ/ชื่อ/สกุลเงิน แล้วดึงราคาต่อให้เอง */}
+              {(r.hits?.length ?? 0) > 0 && (
+                <View style={styles.hitBox}>
+                  {r.hits!.slice(0, 8).map((h, hi) => (
+                    <TouchableOpacity
+                      key={`${h.symbol}-${hi}`}
+                      style={styles.hitRow}
+                      onPress={() => pickHit(r.key, h)}
+                    >
+                      <Text style={styles.hitSymbol}>{h.symbol}</Text>
+                      <Text style={styles.hitName} numberOfLines={1}>
+                        {h.name}
+                        {h.currency ? ` · ${h.currency}` : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
               <TextInput
                 style={styles.input}
                 value={r.name}
                 onChangeText={(v) => updateRow(r.key, { name: v })}
-                placeholder="ชื่อเต็ม"
+                placeholder="ชื่อเต็ม (กดค้นหาแล้วจะเติมให้)"
                 placeholderTextColor={COLORS.textSecondary}
               />
               <View style={styles.addRowFields}>
@@ -488,7 +632,7 @@ export default function ManageByPlatformScreen() {
                 />
               </View>
               <View style={styles.currencyRow}>
-                {(['THB', 'USD', 'EUR', 'JPY', 'CNY'] as Currency[]).map((c) => (
+                {currencyOptions.map((c) => (
                   <TouchableOpacity
                     key={c}
                     style={[styles.curBtn, r.currency === c && styles.chipActive]}
@@ -507,16 +651,19 @@ export default function ManageByPlatformScreen() {
                   placeholderTextColor={COLORS.textSecondary}
                   keyboardType="numeric"
                 />
-                {FETCHABLE.includes(r.type) && (
+                {(FETCHABLE.includes(r.type) || SEARCHABLE.includes(r.type)) && (
                   <TouchableOpacity
-                    style={styles.fetchBtn}
-                    onPress={() => handleRowFetch(r.key)}
+                    style={styles.fetchBtnWide}
+                    onPress={() => fetchRowData(r.key)}
                     disabled={r.fetching}
                   >
                     {r.fetching ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Ionicons name="refresh-outline" size={16} color="#ffffff" />
+                      <>
+                        <Ionicons name="cloud-download-outline" size={14} color="#ffffff" />
+                        <Text style={styles.fetchBtnText}> ดึงข้อมูล</Text>
+                      </>
                     )}
                   </TouchableOpacity>
                 )}
@@ -545,7 +692,7 @@ export default function ManageByPlatformScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>ย้าย {selected.length} รายการไปที่</Text>
             <View style={styles.chips}>
-              {INVESTMENT_PLATFORMS.map((p) => (
+              {platformOptions.map((p) => (
                 <TouchableOpacity
                   key={p}
                   style={[styles.chip, movePlatform === p && styles.chipActive]}
@@ -756,6 +903,37 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.accent,
     height: 44,
+  },
+  fetchBtnWide: {
+    backgroundColor: COLORS.accent,
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    height: 44,
+  },
+  fetchBtnText: { fontSize: 12, fontFamily: 'NotoSansThai_600SemiBold', color: '#ffffff' },
+  // ── ผลค้นหาตัวย่อ (ชื่อเต็มมาจาก API/แคตตาล็อก ไม่ต้องพิมพ์เอง) ──
+  hitBox: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    marginBottom: 8,
+  },
+  hitRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  hitSymbol: { fontSize: 13, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  hitName: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+    marginTop: 2,
   },
   addRowBtn: {
     flexDirection: 'row',

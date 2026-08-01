@@ -63,7 +63,9 @@
       "Bash(sed -i \"s|eq\\('CAGR ดีลเดียว 1 ปี +20%', s1.annualReturnPercent, 20\\);|eqTol\\('CAGR ดีลเดียว 1 ปี ≈+20% \\(365 วัน vs ปี 365.25 วัน\\)', s1.annualReturnPercent, 20, 0.05\\);|\" t.js)",
       "Bash(sed -i \"s|^const eq = |const eqTol = \\(name, got, want, tol\\) => { const ok = Math.abs\\(got-want\\) < tol; console.log\\(\\\\`\\\\${ok?'PASS':'FAIL'}  \\\\${name}  got=\\\\${got.toFixed\\(4\\)} want≈\\\\${want}\\\\`\\); ok?pass++:fail++; };\\\\nconst eq = |\" t.js)",
       "Bash(node t.js)",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "PowerShell(git *)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 20)"
     ]
   }
 }

@@ -62,7 +62,7 @@ function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPre
     <View style={sidebarStyles.container}>
       <View style={sidebarStyles.logoSection}>
         <Image
-          source={require('../../assets/brand-pakmutwealth.png')}
+          source={require('../../assets/brand-pakmutwealth-mark.png')}
           style={sidebarStyles.logoMark}
           resizeMode="contain"
           alt="Pakmut Wealth"
@@ -297,7 +297,7 @@ const sidebarStyles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   logoMark: {
-    height: 150,
+    height: 95,
     width:200,
     aspectRatio: 1536 / 1024,
     flexShrink: 0,
