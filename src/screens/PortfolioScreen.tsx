@@ -16,7 +16,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
-import { Investment, InvestmentType, PortfolioSummary, INVESTMENT_TYPES, RealizedTrade } from '../types/investment';
+import {
+  Investment,
+  InvestmentType,
+  PortfolioSummary,
+  INVESTMENT_TYPES,
+  RealizedTrade,
+  DEFAULT_CURRENCIES,
+} from '../types/investment';
+import { getCurrencies } from '../services/currencyStorage';
 import { getRealizedTrades, saveRealizedTrade, deleteRealizedTrade } from '../services/realizedStorage';
 import { summarizeRealized, analyzeRealizedTrade } from '../utils/realizedAnalysis';
 import {
@@ -26,14 +34,17 @@ import {
   updateInvestment,
   saveInvestment,
 } from '../services/investmentStorage';
-import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS, INVEST_EXPENSE_CATEGORY } from '../utils/constants';
-import { investedByMonth, currentMonthKey, setAsideStreak } from '../utils/savingsDiscipline';
+import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
 import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
-import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis, monthsToReachGoal, monthlyToAnnualPercent, GOAL_HORIZONS, requiredMonthlyContribution } from '../utils/investmentGoals';
+import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
-import { getInvestmentPlan, saveInvestmentPlan, deleteInvestmentPlan, InvestmentPlan } from '../services/investmentPlanStorage';
-import { getIncomes } from '../services/incomeStorage';
-import { getExpenses } from '../services/storage';
+import {
+  getInvestmentPlan,
+  saveInvestmentPlan,
+  InvestmentPlan,
+  DryPowderItem,
+  sumDryPowderItems,
+} from '../services/investmentPlanStorage';
 import { getAccounts } from '../services/accountStorage';
 import { Account } from '../types/account';
 import { getHoldingAnnualGrowth } from '../utils/holdingAnalysis';
@@ -62,22 +73,24 @@ export default function PortfolioScreen() {
   const [goalTargetInput, setGoalTargetInput] = useState('');
   const [goalExpectedInput, setGoalExpectedInput] = useState('');
   const [plan, setPlan] = useState<InvestmentPlan | null>(null);
-  const [planModalVisible, setPlanModalVisible] = useState(false);
-  const [planPercentInput, setPlanPercentInput] = useState('');
-  const [planRoundsInput, setPlanRoundsInput] = useState('');
-  const [planIncomeInput, setPlanIncomeInput] = useState('');
-  const [planPowderInput, setPlanPowderInput] = useState('');   // เงินรอลงทุนที่จดเอง
   const [powderMonths, setPowderMonths] = useState(1);          // จะกระจายเงินก้อนนี้กี่เดือน
-  const [monthSalary, setMonthSalary] = useState(0);   // เงินเดือนที่บันทึกในเดือนปัจจุบัน
-  const [monthExpense, setMonthExpense] = useState(0); // รายจ่ายรวมในเดือนปัจจุบัน (ไม่รวมหมวด "ลงทุน")
-  const [monthInvestLogged, setMonthInvestLogged] = useState(0); // ที่บันทึกเป็นรายจ่ายหมวด "ลงทุน" เดือนนี้
+  // จดยอดเงินรอลงทุน — จดแยกได้หลายรายการ (แหล่งเงิน/โบรก) ยอดรวมคือผลบวกของทุกแถว
+  const [powderModalVisible, setPowderModalVisible] = useState(false);
+  const [powderRows, setPowderRows] = useState<
+    { id: string; label: string; amount: string; currency: string }[]
+  >([]);
+  // ตัวเลือกสกุลเงิน = ของที่ตั้งไว้ในหน้า "สกุลเงิน & แพลตฟอร์ม" (ไม่ hardcode)
+  const [currencyOptions, setCurrencyOptions] = useState<string[]>(
+    DEFAULT_CURRENCIES.map((c) => c.code)
+  );
   const [reserveAccounts, setReserveAccounts] = useState<Account[]>([]); // บัญชีบทบาท "รอลงทุน"
-  const [redAlerts, setRedAlerts] = useState<{ symbol: string; name: string; dropPercent: number; count: number }[]>([]);
-  const [reqHorizon, setReqHorizon] = useState(5); // กรอบเวลาที่เลือกในการ์ด "เดือนละเท่าไหร่ถึงเป้า" (ปี)
-  const [showPlanDetail, setShowPlanDetail] = useState(false); // กาง/ยุบรายละเอียดแผน — เริ่มต้นยุบไว้ให้หน้าไม่ยาว
-  // ตัวจำลอง "ปรับ 2 ตัว → คำตอบเดียว" แทนตาราง what-if 3 ตัว (null = ยังไม่แตะ ใช้ % จากแผนที่ตั้งไว้)
-  const [simPct, setSimPct] = useState<number | null>(null);
-  const [simReturn, setSimReturn] = useState(3); // กำไร %/เดือน ที่สมมติ
+  // แท่งแดงติดกันเป็นเลขคู่ (2/4/6…) = สัญญาณลงไม้ตามกฎ "ลงทุก  2 แท่งแดง"
+  const [redAlerts, setRedAlerts] = useState<
+    { type: InvestmentType; symbol: string; name: string; dropPercent: number; count: number }[]
+  >([]);
+  // เช็คเสร็จหรือยัง — ต้องบอกให้รู้ว่า "เช็คแล้วไม่มี" ต่างจาก "ยังไม่ได้เช็ค/เช็คไม่ได้"
+  const [redChecking, setRedChecking] = useState(false);
+  const [redCheckedCount, setRedCheckedCount] = useState(0);
   // ── การขายจริง: ตัวชี้วัดฝีมือที่วัดได้ (ต่างจากกำไรลอยตัว) ──
   const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
   const [sellTarget, setSellTarget] = useState<Investment | null>(null);
@@ -85,6 +98,8 @@ export default function PortfolioScreen() {
   const [sellPriceInput, setSellPriceInput] = useState('');
   const [sellDateInput, setSellDateInput] = useState('');
   const [sellFeesInput, setSellFeesInput] = useState('');
+  const [sellNotesInput, setSellNotesInput] = useState('');   // ขายเพราะอะไร — ไว้ทบทวนฝีมือย้อนหลัง
+  const [sellToPowder, setSellToPowder] = useState(true);     // เงินที่ขายได้ → เข้าเงินรอลงทุนเลย
   const [showRealizedList, setShowRealizedList] = useState(false); // กาง/ยุบรายดีลที่ขายแล้ว
   // ── ตัวกรองรายการลงทุน — ยุบไว้เป็นค่าเริ่มต้น กดกางเมื่อพอร์ตเริ่มเยอะ ──
   const [showFilter, setShowFilter] = useState(false);
@@ -123,40 +138,20 @@ export default function PortfolioScreen() {
       setReserveAccounts([]);
     }
     try {
-      // เดือนปัจจุบันเป็น YYYY-MM แล้วกรองเฉพาะรายการของเดือนนี้ (แปลง พ.ศ.→ค.ศ. ก่อน)
-      const now = new Date();
-      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const inThisMonth = (dateStr: string) => toChristianYear(dateStr || '').slice(0, 7) === monthKey;
-
-      const [incomes, expenses] = await Promise.all([getIncomes(), getExpenses()]);
-      setMonthSalary(
-        incomes
-          .filter((i) => i.category === 'เงินเดือน' && inThisMonth(i.date))
-          .reduce((s, i) => s + i.amount, 0)
-      );
-      // กันหมวด "ลงทุน" ออกจากงบใช้จ่าย — เงินที่โอนไปลงทุนคือการออม ไม่ใช่เงินที่ใช้หมดไป
-      // ถ้านับรวม จะดูเหมือนใช้เกินงบทั้งที่จริง ๆ คือทำตามแผน
-      const monthExpenses = expenses.filter((e) => e.type !== 'income' && inThisMonth(e.date));
-      setMonthExpense(
-        monthExpenses
-          .filter((e) => e.category !== INVEST_EXPENSE_CATEGORY)
-          .reduce((s, e) => s + e.amount, 0)
-      );
-      setMonthInvestLogged(
-        monthExpenses
-          .filter((e) => e.category === INVEST_EXPENSE_CATEGORY)
-          .reduce((s, e) => s + e.amount, 0)
-      );
+      // สกุลเงินที่ตั้งไว้เอง — ใช้เป็นตัวเลือกตอนจดเงินรอลงทุน
+      const curList = await getCurrencies();
+      if (curList.length > 0) setCurrencyOptions(curList.map((c) => c.code));
     } catch {
-      setMonthSalary(0);
-      setMonthInvestLogged(0);
-      setMonthExpense(0);
+      // ยังไม่ได้รัน SQL แคตตาล็อก → ใช้ค่าเริ่มต้น
     }
+    // (เลิกดึงรายรับ/รายจ่ายมาที่หน้านี้แล้ว — งบรายเดือนดูที่หน้าหลัก)
 
     // เช็คแดงติดกันเป็นเลขคู่ (2/4/6…) เฉพาะ crypto/หุ้น — ทำแบบ background ไม่บล็อกการโหลด
     const candleTargets = allInvestments.filter((i) =>
       ['crypto', 'stock_th', 'stock_foreign'].includes(i.type)
     );
+    setRedCheckedCount(candleTargets.length);
+    setRedChecking(candleTargets.length > 0);
     Promise.all(
       candleTargets.map(async (i) => ({ inv: i, alert: await getTwoRedDays(i.type, i.symbol) }))
     )
@@ -165,6 +160,8 @@ export default function PortfolioScreen() {
           results
             .filter((r) => r.alert !== null)
             .map((r) => ({
+              // เก็บ type ไว้ด้วย — ใช้จับคู่กับรายการลงทุนตอนติดป้ายในลิสต์ (symbol เดียวกันข้ามประเภทได้)
+              type: r.inv.type,
               symbol: r.inv.symbol,
               name: r.inv.name,
               dropPercent: r.alert!.dropPercent,
@@ -174,7 +171,8 @@ export default function PortfolioScreen() {
             .sort((a, b) => a.dropPercent - b.dropPercent)
         )
       )
-      .catch(() => {});
+      .catch(() => setRedAlerts([]))
+      .finally(() => setRedChecking(false));
   };
 
   const showMsg = (msg: string) => {
@@ -189,13 +187,17 @@ export default function PortfolioScreen() {
     setSellPriceInput((inv.currentPrice ?? inv.buyPrice).toString());
     setSellDateInput(new Date().toISOString().slice(0, 10));
     setSellFeesInput('');
+    setSellNotesInput('');
+    setSellToPowder(true);
   };
 
   const handleConfirmSell = async () => {
     if (!sellTarget) return;
     const qty = parseFloat(sellQtyInput.replace(/,/g, ''));
     const price = parseFloat(sellPriceInput.replace(/,/g, ''));
-    const date = sellDateInput.trim();
+    // แปลง พ.ศ.→ค.ศ. ก่อนตรวจ/บันทึก — เผลอพิมพ์ 2569 แล้วเก็บดิบ ๆ
+    // อายุถือจะกลายเป็น ~543 ปี แล้ว CAGR/ผลตอบแทนจริงเพี้ยนทั้งการ์ดแบบเงียบ ๆ
+    const date = toChristianYear(sellDateInput.trim()).slice(0, 10);
     const sellFee = parseFloat(sellFeesInput.replace(/,/g, '')) || 0;
     if (!qty || qty <= 0 || qty > sellTarget.quantity) {
       showMsg(`จำนวนที่ขายต้องมากกว่า 0 และไม่เกิน ${sellTarget.quantity}`);
@@ -206,19 +208,25 @@ export default function PortfolioScreen() {
 
     // ค่าธรรมเนียมซื้อ ปันตามสัดส่วนที่ขาย แล้วบวกค่าธรรมเนียมขายที่กรอก
     const buyFeeShare = (sellTarget.fees || 0) * (qty / sellTarget.quantity);
+    const sellCurrency = sellTarget.currency ?? 'THB';
+    // เงินสดที่ได้รับจริง "ในสกุลที่ขาย" — ค่าธรรมเนียมขายกรอกเป็นบาท ต้องหารเรตกลับก่อนหัก
+    // (ค่าธรรมเนียมซื้อจ่ายไปตอนซื้อแล้ว ไม่หักออกจากเงินที่ได้รับรอบนี้)
+    const rateToTHB = convertToTHB(1, sellCurrency) || 1;
+    const netProceedsNative = qty * price - sellFee / rateToTHB;
     try {
       await saveRealizedTrade({
         id: Date.now().toString(),
         symbol: sellTarget.symbol,
         name: sellTarget.name,
         assetType: sellTarget.type,
-        currency: sellTarget.currency ?? 'THB',
+        currency: sellCurrency,
         quantity: qty,
         buyPrice: sellTarget.buyPrice,
         sellPrice: price,
         buyDate: toChristianYear(sellTarget.buyDate || '').slice(0, 10),
         sellDate: date,
         fees: buyFeeShare + sellFee,
+        notes: sellNotesInput.trim() || undefined,
         // แพลตฟอร์มเป็นตัวระบุไม้ ต้องเก็บแยกคอลัมน์ ไม่ฝากไว้ใน snapshot เพียงที่เดียว
         platform: sellTarget.platform,
         // เก็บสภาพรายการก่อนขายไว้ เผื่อกดผิดแล้วต้องย้อนคืน
@@ -234,8 +242,50 @@ export default function PortfolioScreen() {
           fees: Math.max(0, (sellTarget.fees || 0) - buyFeeShare),
         });
       }
+
+      // ── เงินที่ขายได้ = เงินรอลงทุนก้อนใหม่ → เพิ่มให้เลยถ้าติ๊กไว้ ──
+      // ปิดวงจร ขาย → มีเงิน → ลงไม้ต่อ ไม่ต้องไปกด "จดยอด" ซ้ำเอง
+      // ล้มที่ขั้นนี้ห้ามทำให้การขายพัง (การขายบันทึกไปแล้ว) — แจ้งให้ไปจดเองแทน
+      let powderWarn = '';
+      if (sellToPowder && netProceedsNative > 0) {
+        try {
+          const base: InvestmentPlan = plan ?? { setAsidePercent: 0, dcaRounds: 0 };
+          const existing = base.dryPowderItems ?? [];
+          // เคยจดเป็นยอดรวมก้อนเดียว → ยกมาเป็นรายการก่อน ไม่ให้ของเดิมหายตอนคิดยอดรวมใหม่
+          const seeded =
+            existing.length === 0 && base.dryPowder && base.dryPowder > 0
+              ? [{ id: `p${Date.now()}-legacy`, label: 'ยอดที่จดไว้เดิม', amount: base.dryPowder, currency: 'THB', asOf: base.dryPowderAsOf }]
+              : existing;
+          const items: DryPowderItem[] = [
+            ...seeded,
+            {
+              id: `p${Date.now()}`,
+              label: `ขาย ${sellTarget.symbol || sellTarget.name}`,
+              amount: netProceedsNative,
+              currency: sellCurrency,
+              asOf: date,
+            },
+          ];
+          const total = sumDryPowderItems(items);
+          const nextPlan: InvestmentPlan = {
+            ...base,
+            dryPowderItems: items,
+            dryPowder: total,
+            dryPowderAsOf: date,
+          };
+          await saveInvestmentPlan(nextPlan);
+          setPlan(nextPlan);
+        } catch {
+          powderWarn = '\n(เพิ่มเข้าเงินรอลงทุนไม่สำเร็จ — ไปกด "จดยอด" เพิ่มเองได้)';
+        }
+      }
+
       setSellTarget(null);
-      showMsg('บันทึกการขายแล้ว');
+      showMsg(
+        (sellToPowder && netProceedsNative > 0
+          ? `บันทึกการขายแล้ว · เพิ่มเข้าเงินรอลงทุน ${formatCurrencyWithType(netProceedsNative, sellCurrency)}`
+          : 'บันทึกการขายแล้ว') + powderWarn
+      );
       loadData();
     } catch (e: any) {
       const msg = String(e?.message || e);
@@ -383,56 +433,109 @@ export default function PortfolioScreen() {
     }
   };
 
-  const openPlanModal = () => {
-    setPlanPercentInput(plan?.setAsidePercent?.toString() || '');
-    setPlanRoundsInput(plan?.dcaRounds?.toString() || '');
-    // pre-fill เงินเดือนคาดหวัง: ใช้ค่าที่ตั้งไว้ก่อน ไม่งั้น fallback เป็นเงินเดือนล่าสุดของเดือนนี้
-    setPlanIncomeInput(
-      (plan?.expectedIncome || monthSalary || '').toString().replace(/^0$/, '')
-    );
-    setPlanPowderInput(plan?.dryPowder ? plan.dryPowder.toString() : '');
-    setPlanModalVisible(true);
+  // ── แบ่งลงกี่ครั้งต่อเดือน: ปรับตรงในการ์ด ไม่มี modal แผนแล้ว ──
+  // เลิกใช้ "กันเงินเดือนกี่ % / เงินเดือนคาดหวัง" — ไม่มีอะไรอ่านค่า 2 ตัวนั้นบนหน้าจอแล้ว
+  // เหลือแค่จำนวนครั้ง ซึ่งใช้หารเงินรอลงทุนอย่างเดียว จึงปรับด้วยปุ่ม −/+ พอ
+  // กดถี่ ๆ ไม่ยิง DB ทุกครั้ง — อัปเดตจอทันที แล้วค่อยเซฟหลังหยุดกด
+  const roundsSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const changeDcaRounds = (delta: number) => {
+    const base: InvestmentPlan = plan ?? { setAsidePercent: 0, dcaRounds: 0 };
+    const next = Math.max(0, Math.min(60, base.dcaRounds + delta));
+    const nextPlan: InvestmentPlan = { ...base, dcaRounds: next };
+    setPlan(nextPlan);
+    if (roundsSaveTimer.current) clearTimeout(roundsSaveTimer.current);
+    roundsSaveTimer.current = setTimeout(() => {
+      saveInvestmentPlan(nextPlan).catch(() => showMsg('บันทึกจำนวนครั้งไม่สำเร็จ'));
+    }, 700);
   };
 
-  const handleSavePlan = async () => {
-    const percent = parseFloat(planPercentInput.replace(/,/g, ''));
-    const rounds = parseInt(planRoundsInput, 10);
-    const income = parseFloat(planIncomeInput.replace(/,/g, ''));
-    if (!percent || percent <= 0 || percent > 100) { showMsg('กรุณากรอก % ที่กันไว้ (1-100)'); return; }
-    if (!rounds || rounds <= 0) { showMsg('กรุณากรอกจำนวนครั้งที่ถูกต้อง'); return; }
-    // เงินเดือนไม่บังคับ — ถ้าเว้นว่าง ระบบจะใช้เงินเดือนที่ import มาแทน
-    const powder = parseFloat(planPowderInput.replace(/,/g, ''));
-    const powderValue = Number.isFinite(powder) && powder >= 0 ? powder : undefined;
-    // แตะยอดเงินรอลงทุนเมื่อไหร่ ให้ประทับวันที่ใหม่ — ไว้เตือนว่าซื้อไปกี่รายการหลังจากจด
-    const powderChanged = powderValue !== plan?.dryPowder;
-    try {
-      const newPlan: InvestmentPlan = {
-        setAsidePercent: percent,
-        dcaRounds: rounds,
-        expectedIncome: Number.isFinite(income) && income > 0 ? income : undefined,
-        dryPowder: powderValue,
-        dryPowderAsOf:
-          powderValue == null
-            ? undefined
-            : powderChanged
-              ? new Date().toISOString().slice(0, 10)
-              : plan?.dryPowderAsOf,
-      };
-      await saveInvestmentPlan(newPlan);
-      setPlan(newPlan);
-      setPlanModalVisible(false);
-    } catch {
-      showMsg('บันทึกแผนไม่สำเร็จ');
+  // ── จดยอดเงินรอลงทุน ──
+  // สกุลเริ่มต้นของแถวใหม่ = ตัวแรกในแคตตาล็อก (ปกติคือ THB)
+  const newPowderRow = (seed = 0) => ({
+    id: `p${Date.now()}-${seed}`,
+    label: '',
+    amount: '',
+    currency: currencyOptions[0] || 'THB',
+  });
+
+  const openPowderModal = () => {
+    const items = plan?.dryPowderItems;
+    if (items && items.length > 0) {
+      setPowderRows(
+        items.map((i) => ({
+          id: i.id,
+          label: i.label || '',
+          amount: i.amount ? i.amount.toString() : '',
+          currency: i.currency || 'THB',
+        }))
+      );
+    } else if (plan?.dryPowder && plan.dryPowder > 0) {
+      // เคยจดเป็นยอดรวมก้อนเดียว (เก็บเป็น THB) → ยกมาเป็นรายการแรก ของเดิมไม่หาย
+      setPowderRows([
+        { id: `p${Date.now()}-0`, label: '', amount: plan.dryPowder.toString(), currency: 'THB' },
+      ]);
+    } else {
+      setPowderRows([newPowderRow()]);
     }
+    setPowderModalVisible(true);
   };
 
-  const handleDeletePlan = async () => {
+  const updatePowderRow = (
+    id: string,
+    patch: Partial<{ label: string; amount: string; currency: string }>
+  ) => setPowderRows((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const removePowderRow = (id: string) =>
+    setPowderRows((rows) => (rows.length <= 1 ? [newPowderRow()] : rows.filter((r) => r.id !== id)));
+
+  const parseAmount = (s: string) => parseFloat(s.replace(/,/g, '').trim());
+
+  const handleSavePowder = async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const prevById = new Map((plan?.dryPowderItems || []).map((i) => [i.id, i]));
+    const items: DryPowderItem[] = [];
+    for (const r of powderRows) {
+      const raw = r.amount.replace(/,/g, '').trim();
+      // แถวที่ไม่ได้กรอกอะไรเลย = ข้ามไป (ลบรายการได้ด้วยการล้างค่าให้ว่าง)
+      if (raw === '' && !r.label.trim()) continue;
+      const amount = parseAmount(r.amount);
+      if (!Number.isFinite(amount) || amount < 0) {
+        showMsg(`ยอดของ "${r.label.trim() || 'รายการที่ยังไม่มีชื่อ'}" ต้องเป็นตัวเลขไม่ติดลบ`);
+        return;
+      }
+      const prev = prevById.get(r.id);
+      const currency = r.currency || 'THB';
+      items.push({
+        id: r.id,
+        label: r.label.trim(),
+        amount,
+        currency,
+        // ยอด/สกุลเดิมไม่เปลี่ยน = คงวันที่จดเดิม เปลี่ยนแล้วถึงประทับวันใหม่
+        asOf:
+          prev && prev.amount === amount && (prev.currency ?? 'THB') === currency
+            ? prev.asOf ?? today
+            : today,
+      });
+    }
+    const total = sumDryPowderItems(items);
     try {
-      await deleteInvestmentPlan();
-      setPlan(null);
-      setPlanModalVisible(false);
+      // ยังไม่มีแถวในตาราง = สร้างขึ้นมาใหม่โดยไม่ต้องให้กรอกแผนก่อน (setAsidePercent เลิกใช้แล้ว)
+      const base: InvestmentPlan = plan ?? { setAsidePercent: 0, dcaRounds: 0 };
+      const next: InvestmentPlan = {
+        ...base,
+        dryPowderItems: items.length > 0 ? items : undefined,
+        // dryPowder = ยอดรวมเสมอ ส่วนที่คำนวณต่อ (ลงได้ครั้งละ/คำเตือน) จึงใช้ตัวเดิมได้ไม่ต้องแก้
+        dryPowder: total > 0 ? total : undefined,
+        // แตะยอดรวมเมื่อไหร่ = ประทับวันที่ใหม่ ไว้เตือนว่าซื้อไปกี่รายการหลังจด
+        dryPowderAsOf:
+          total <= 0 ? undefined : total !== base.dryPowder ? today : base.dryPowderAsOf,
+      };
+      await saveInvestmentPlan(next);
+      setPlan(next);
+      setPowderModalVisible(false);
     } catch {
-      showMsg('ลบแผนไม่สำเร็จ');
+      showMsg('จดยอดไม่สำเร็จ — ถ้ายังไม่ได้รัน sql/investment_plan_dry_powder.sql ให้รันก่อน');
     }
   };
 
@@ -532,11 +635,16 @@ export default function PortfolioScreen() {
     };
   };
 
+  // ตารางค้นสัญญาณแดงคู่ ต่อ 1 รายการลงทุน — สร้างครั้งเดียว ไม่ต้องวนหาในทุกแถว
+  const redAlertByKey = new Map(redAlerts.map((a) => [`${a.type}:${a.symbol}`, a]));
+
   const renderInvestmentItem = ({ item }: { item: Investment }) => {
     const { currentPriceNative, value, profit, profitPercent } = calcItemStats(item);
     const isProfit = profit >= 0;
     // วิเคราะห์รายตัว: โตเฉลี่ย/ปี (จากวันซื้อ) — ข้อมูลจริง ไม่ใช่คำแนะนำให้ขาย
     const growth = getHoldingAnnualGrowth(item.buyDate, item.buyPrice, currentPriceNative);
+    // แดงติดกันครบคู่ = ถึงคิวลงไม้ตามกฎ "ลงทุก 2 แท่งแดง" — ต้องเห็นที่ตัวหุ้น ไม่ใช่แค่การ์ดสรุป
+    const redAlert = redAlertByKey.get(`${item.type}:${item.symbol}`);
 
     return (
       <View style={[
@@ -558,6 +666,15 @@ export default function PortfolioScreen() {
                 </Text>
               </View>
             </View>
+            {/* ป้ายสัญญาณลงไม้: แดงติดกันครบคู่เท่านั้น (2/4/6…) เลขคี่ไม่ขึ้น */}
+            {redAlert && (
+              <View style={styles.redBadge}>
+                <Ionicons name="trending-down" size={12} color={COLORS.error} />
+                <Text style={styles.redBadgeText}>
+                  {' '}แดง {redAlert.count} แท่ง {redAlert.dropPercent.toFixed(1)}% · ถึงคิวลงไม้
+                </Text>
+              </View>
+            )}
             <View style={styles.investmentDetails}>
               <Text style={styles.investmentQuantity}>
                 {item.quantity} หน่วย @ {formatCurrencyWithType(item.buyPrice, item.currency)}
@@ -630,41 +747,37 @@ export default function PortfolioScreen() {
       )
     : null;
 
-  // ── ตัวเลขแผนเติมเงิน: คำนวณครั้งเดียวที่นี่ ใช้ทั้งการ์ดสรุปด้านบนและรายละเอียดด้านล่าง ──
-  // ฐานที่นิ่ง = เงินเดือนคาดหวังที่ตั้งไว้ (ถ้ายังไม่ตั้ง fallback เป็นเงินเดือนที่บันทึกเดือนนี้)
-  const baseIncome = plan?.expectedIncome && plan.expectedIncome > 0 ? plan.expectedIncome : monthSalary;
-  const hasPlanNumbers = !!plan && baseIncome > 0;
-  const setAside = plan ? baseIncome * (plan.setAsidePercent / 100) : 0; // จ่ายตัวเองก่อน (ไม่หักรายจ่าย)
   // เดือน = รอบบัญชี (ฐานคำนวณ) แต่หน่วยที่ผู้ใช้ลงมือจริงคือ "ครั้ง" — ทุกตัวเลขบนจอจึงหารเป็นต่อครั้ง
+  // เหลือใช้ตัวเดียวจากแผน: จำนวนครั้งต่อเดือน (ใช้หารเงินรอลงทุน)
+  // งบรายเดือน/วินัยการกันเงิน เอาออกจากหน้านี้แล้ว — ดูที่หน้าหลัก
   const dcaRoundsCount = plan?.dcaRounds && plan.dcaRounds > 0 ? plan.dcaRounds : null;
-  const perRound = plan && plan.dcaRounds > 0 ? setAside / plan.dcaRounds : null;
-  const spendBudget = baseIncome - setAside;      // งบใช้จ่าย = กันลงทุนก่อนแล้วเหลือเท่านี้
-  const leftToSpend = spendBudget - monthExpense; // เหลือใช้ได้อีก (< 0 = ใช้เกินงบ)
 
-  // ── วินัยการกันเงิน: "กันไว้" กับ "ลงจริง" ตรงกันหรือเปล่า ──
-  // อ่านจากรายการลงทุนที่บันทึกไว้แล้ว ไม่ต้องให้กรอกอะไรเพิ่ม
-  const investedPerMonth = investedByMonth(investments, realizedTrades);
-  const investedThisMonth = investedPerMonth[currentMonthKey()] ?? 0;
-  const investProgress = setAside > 0 ? Math.min(1, investedThisMonth / setAside) : 0;
-  const investShortfall = Math.max(0, setAside - investedThisMonth);
-  const streakMonths = setAsideStreak(investedPerMonth, setAside);
-  // แปลงเงินที่ลงไปแล้ว/ที่ยังขาด เป็นจำนวน "ครั้ง" — ลงแล้วกี่ไม้ เหลืออีกกี่ไม้
-  const roundsDone =
-    perRound && perRound > 0 ? Math.min(dcaRoundsCount ?? 0, Math.floor(investedThisMonth / perRound)) : 0;
-  const roundsLeft = perRound && perRound > 0 ? Math.ceil(investShortfall / perRound) : null;
-  // เงินที่ต้องเติมต่อเดือนของกรอบเวลาที่เลือก — null = คำนวณไม่ได้, 0 = ปล่อยให้โตเองก็ถึง
-  const reqMonthly =
-    goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0 && goalAnalysis.projectionRatePercent
-      ? requiredMonthlyContribution(
-          goalAnalysis.currentValue,
-          goalAnalysis.targetAmount,
-          goalAnalysis.projectionRatePercent,
-          reqHorizon
-        )
-      : null;
+  // ── "ถ้าขายตอนนี้ ต้องทำกำไรก้อนนี้ซ้ำอีกกี่รอบถึงเป้า" ──
+  // สมมติฐานตรงไปตรงมา: ขายได้เงินก้อนนี้แล้วเอาลงทุนซ้ำทั้งก้อน รอบต่อไปได้กำไร % เท่าเดิม
+  // → ทุกรอบคูณด้วย (1 + กำไร%) จึงเป็นทบต้น ไม่ใช่บวกกำไรก้อนเดิมซ้ำ ๆ
+  //   n = ln(เป้า / มูลค่าปัจจุบัน) / ln(1 + กำไร%)
+  const roundsToGoal = (() => {
+    const target = goal?.targetAmount;
+    if (!target || target <= 0 || summary.totalValue <= 0) return null;
+    if (summary.totalValue >= target) return { reached: true, rounds: 0 };
+    const r = summary.totalProfitPercent / 100;
+    if (r <= 0) return null; // ยังไม่มีกำไร คำนวณไม่ได้
+    return {
+      reached: false,
+      rounds: Math.ceil(Math.log(target / summary.totalValue) / Math.log(1 + r)),
+    };
+  })();
+
+  // ยอดรวมสด ๆ ของแถวที่กำลังกรอกใน modal (เป็น THB) — โชว์ให้เห็นก่อนกดจด
+  const powderRowsTotal = powderRows.reduce((s, r) => {
+    const n = parseFloat(r.amount.replace(/,/g, ''));
+    return s + (Number.isFinite(n) && n > 0 ? convertToTHB(n, r.currency || 'THB') : 0);
+  }, 0);
+
   // ── เงินรอลงทุน (จดเอง) → ลงได้ครั้งละเท่าไหร่ ──
   // ตั้งใจไม่หักอัตโนมัติ: ผู้ใช้กรอกยอดจริงทับเมื่อไหร่ก็ได้ ระบบแค่เตือนถ้ามีการซื้อหลังวันที่จด
   const dryPowder = plan?.dryPowder && plan.dryPowder > 0 ? plan.dryPowder : 0;
+  const powderItemCount = plan?.dryPowderItems?.length ?? 0;
   const powderTotalRounds = dcaRoundsCount ? dcaRoundsCount * powderMonths : null;
   const powderPerRound = powderTotalRounds && dryPowder > 0 ? dryPowder / powderTotalRounds : null;
   const powderEveryDays = dcaRoundsCount ? 30 / dcaRoundsCount : null;
@@ -688,49 +801,8 @@ export default function PortfolioScreen() {
   const fmtDateTH = (iso: string): string =>
     new Date(iso).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
 
-  // เงินที่ต้องเติม "ต่อครั้ง" — เลขคณิตเดิม แค่หารด้วยจำนวนครั้งที่ตั้งไว้
-  const reqPerRound = reqMonthly != null && dcaRoundsCount ? reqMonthly / dcaRoundsCount : reqMonthly;
-  // ต้องโตปีละกี่ % ของกรอบเวลาที่เลือก (แบบไม่เติมเงินเพิ่ม)
-  const horizonRate =
-    goalAnalysis?.requiredByHorizon.find((h) => h.years === reqHorizon)?.annualReturnPercent ?? null;
-
-  // ── ตัวจำลอง: กัน % + กำไร %/เดือน → ถึงเป้าในกี่เดือน (คำตอบเดียว แทนตาราง what-if 3 ตัว) ──
-  const simPctValue = simPct ?? plan?.setAsidePercent ?? 20;
-  const simContribution = baseIncome > 0 ? baseIncome * (simPctValue / 100) : 0;
-  const simMonths =
-    goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0
-      ? monthsToReachGoal(goalAnalysis.currentValue, goalAnalysis.targetAmount, simReturn, simContribution)
-      : null;
-  const fmtMonthsAnswer = (n: number | null): string => {
-    if (n == null) return 'ไปไม่ถึง';
-    const m = Math.round(n);
-    if (m < 1) return 'ถึงแล้ว';
-    if (m < 24) return `${m} เดือน`;
-    return `${(n / 12).toFixed(1)} ปี`;
-  };
-
-  // สัดส่วน 3 กลุ่มตามต้นทุนที่ถืออยู่ — ยังไม่มีพอร์ตให้แบ่งเท่ากัน
-  const shares = (() => {
-    const cTH = summary.byType.stock_th?.cost ?? 0;
-    const cFR = summary.byType.stock_foreign?.cost ?? 0;
-    const cCR = summary.byType.crypto?.cost ?? 0;
-    const s3 = cTH + cFR + cCR;
-    const pick = (c: number) => (s3 > 0 ? c / s3 : 1 / 3);
-    return [
-      { key: 'stock_th', label: 'หุ้นไทย', share: pick(cTH) },
-      { key: 'stock_foreign', label: 'หุ้นต่างประเทศ', share: pick(cFR) },
-      { key: 'crypto', label: 'คริปโต', share: pick(cCR) },
-    ];
-  })();
-
-  // ทำกำไรก้อนนี้อีกกี่ครั้งถึงเป้า — ยุบการ์ดเดิมเหลือข้อความบรรทัดเดียว (อิงมูลค่าตลาด)
-  const profitTimesText: string | null = (() => {
-    if (!goalAnalysis) return null;
-    const gap = goalAnalysis.targetAmount - summary.totalValue;
-    if (gap <= 0) return 'มูลค่าถึงเป้าแล้ว 🎉';
-    if (summary.totalProfit <= 0) return 'ยังไม่มีกำไร';
-    return `อีก ~${Math.ceil(gap / summary.totalProfit)} ครั้ง`;
-  })();
+  // (เอาการ์ด "วางแผนถึงเป้า" ออกทั้งก้อน — ตัวจำลอง / กรอบเวลา 1/3/5/10 ปี / สัดส่วนแบ่งไม้
+  //  ทั้งหมดเป็นเลขคาดการณ์ที่ไม่ได้ใช้ตัดสินใจตอนกดซื้อ จึงลบทั้งการคำนวณและ UI ทิ้ง)
 
   // ── ตัวเลือกของตัวกรอง: สร้างจากของที่ถืออยู่จริง ไม่โชว์ตัวเลือกที่กดแล้วว่างเปล่า ──
   const typeOptions = INVESTMENT_TYPES.filter((t) => investments.some((i) => i.type === t.value));
@@ -912,65 +984,26 @@ export default function PortfolioScreen() {
                 {!goalAnalysis.reached && ` • ขาดอีก ${formatCurrency(goalAnalysis.remaining)}`}
               </Text>
 
+              {/* ถ้าขายตอนนี้แล้วลงทุนซ้ำทั้งก้อน ต้องทำกำไร % เท่านี้อีกกี่รอบถึงเป้า (ทบต้น) */}
+              {roundsToGoal && (
+                <Text style={styles.tpSubText}>
+                  {roundsToGoal.reached
+                    ? 'ถ้าขายตอนนี้ มูลค่าถึงเป้าแล้ว 🎉'
+                    : `ถ้าขายตอนนี้ (+${summary.totalProfitPercent.toFixed(2)}% = ${formatCurrency(summary.totalProfit)}) แล้วลงทุนซ้ำทั้งก้อนได้ % เท่าเดิม → อีก ~${roundsToGoal.rounds} รอบถึงเป้า`}
+                </Text>
+              )}
+
               {/* ตั้งใจไม่โชว์ "คาดถึงเป้าในอีกกี่ปี" และแถว KPI คาดการณ์บนการ์ดนี้
                   — เป็นเลขพยากรณ์ที่ยังไม่เกิดจริง อ่านแล้วเข้าใจผิดว่าถึงเป้าแล้ว
                   ตัวเลข "ต้องลง/ครั้ง" ตามกรอบเวลายังดูได้ในปุ่ม "ดูรายละเอียดแผน" ด้านล่าง */}
 
-              {/* ── วินัยการกันเงิน: จุดที่แผนพังบ่อยสุด — "กันไว้" ไม่เท่ากับ "ลงจริง" ── */}
-              {hasPlanNumbers && setAside > 0 && (
-                <View style={styles.disciplineBox}>
-                  <View style={styles.planLine}>
-                    <Text style={styles.planLineLabel}>
-                      {dcaRoundsCount ? 'ลงแล้วเดือนนี้ (ครั้ง)' : 'เดือนนี้ลงจริง / กันไว้'}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.planLineValue,
-                        { color: investShortfall > 0 ? COLORS.warning : COLORS.success },
-                      ]}
-                    >
-                      {dcaRoundsCount
-                        ? `${roundsDone} / ${dcaRoundsCount} ครั้ง`
-                        : `${formatCurrency(investedThisMonth)} / ${formatCurrency(setAside)}`}
-                    </Text>
-                  </View>
-                  <View style={styles.goalTrack}>
-                    <View
-                      style={[
-                        styles.goalFill,
-                        {
-                          width: `${investProgress * 100}%`,
-                          backgroundColor: investShortfall > 0 ? COLORS.warning : COLORS.success,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.tpSubText}>
-                    {investShortfall > 0
-                      ? dcaRoundsCount && perRound
-                        ? `เหลืออีก ${roundsLeft} ครั้ง · ครั้งละ ${formatCurrency(perRound)} (รวม ${formatCurrency(investShortfall)})`
-                        : `ยังต้องโอนเข้าลงทุนอีก ${formatCurrency(investShortfall)} (ทำได้ ${(investProgress * 100).toFixed(0)}%)`
-                      : dcaRoundsCount
-                        ? '✓ ลงครบทุกครั้งแล้วเดือนนี้'
-                        : '✓ กันเงินครบแล้วเดือนนี้'}
-                    {streakMonths > 0
-                      ? ` • ทำครบติดกัน ${streakMonths} เดือน`
-                      : ' • ยังไม่มีเดือนที่ทำครบติดกัน'}
-                  </Text>
-                </View>
-              )}
-
-              {hasPlanNumbers && leftToSpend < 0 ? (
-                <Text style={[styles.tpSubText, { color: COLORS.error }]}>
-                  ⚠ เดือนนี้ใช้เกินงบไป {formatCurrency(-leftToSpend)} — กระทบเงินที่กันไว้ลงทุน
-                </Text>
-              ) : !hasPlanNumbers ? (
-                <Text style={styles.tpSubText}>
-                  * ยังไม่ได้ตั้งแผนเติมเงิน/เงินเดือน — กด "ดูรายละเอียดแผน" ด้านล่างเพื่อตั้งค่า
-                </Text>
-              ) : null}
+              {/* งบใช้จ่ายรายเดือน (เงินเดือน/ใช้ไปแล้ว/เหลือใช้ได้อีก) เอาออกจากหน้านี้แล้ว
+                  — ดูที่หน้าหลักได้อยู่แล้ว (Income / Expense / Balance) ไม่ต้องมีซ้ำ */}
             </>
           )}
+
+          {/* เงินรอลงทุนไม่โชว์ซ้ำที่นี่ — การ์ดเต็ม (จดยอด/แบ่งกี่ครั้ง/รายการย่อย)
+              อยู่ถัดลงไปก่อน "รายการลงทุน" แล้ว */}
         </View>
 
         {/* ── ผลงานจริง (realized): กำไรที่ขายแล้วเท่านั้น ไม่นับกำไรลอยตัว ──
@@ -1062,6 +1095,12 @@ export default function PortfolioScreen() {
                         {formatCurrencyWithType(r.trade.sellPrice, r.trade.currency)}
                         {r.trade.platform ? ` • ${r.trade.platform}` : ''}
                       </Text>
+                      {/* เหตุผลที่ขาย — ตัวที่ทำให้ประวัติกลายเป็นสมุดทบทวนฝีมือ ไม่ใช่แค่ตารางเลข */}
+                      {r.trade.notes ? (
+                        <Text style={styles.realizedRowNote} numberOfLines={2}>
+                          “{r.trade.notes}”
+                        </Text>
+                      ) : null}
                     </View>
                     <Text
                       style={[
@@ -1093,12 +1132,23 @@ export default function PortfolioScreen() {
           </View>
         )}
 
-        {redAlerts.length > 0 && (
+        {/* การ์ดนี้โชว์ตลอดถ้ามีของที่เช็คแท่งเทียนได้ (คริปโต/หุ้น) —
+            เมื่อก่อนซ่อนทั้งการ์ดตอนไม่มีสัญญาณ ทำให้แยกไม่ออกว่า "เช็คแล้วไม่มี" หรือ "พัง/ไม่ได้เช็ค" */}
+        {redCheckedCount > 0 && (
           <View style={styles.losersCard}>
             <View style={styles.cardTitleRow}>
               <Ionicons name="warning" size={16} color={COLORS.error} />
-              <Text style={styles.losersTitle}>ราคาลงแดงติดกัน (2/4/6 แท่ง)</Text>
+              <Text style={styles.losersTitle}>ถึงคิวลงไม้ — แดงติดกันครบคู่ (2/4/6 แท่ง)</Text>
             </View>
+            {redChecking ? (
+              <Text style={styles.tpSubText}>กำลังเช็คแท่งเทียนของ {redCheckedCount} ตัว…</Text>
+            ) : redAlerts.length === 0 ? (
+              <Text style={styles.tpSubText}>
+                เช็ค {redCheckedCount} ตัวแล้ว — ยังไม่มีตัวไหนแดงติดกันครบคู่ (นับเฉพาะแท่งที่ปิดแล้ว
+                · แดงเลขคี่ยังไม่นับ){'\n'}
+                หมายเหตุ: หุ้นเช็คได้เฉพาะบนเว็บที่ deploy แล้ว (ต้องใช้ /api/yahoo-quote) — คริปโตเช็คได้ทุกที่
+              </Text>
+            ) : null}
             {redAlerts.map((a) => (
               <View key={a.symbol} style={styles.loserRow}>
                 <Text style={styles.loserName} numberOfLines={1}>
@@ -1109,6 +1159,104 @@ export default function PortfolioScreen() {
             ))}
           </View>
         )}
+
+        {/* ── การ์ด "เงินรอลงทุน" — อยู่ก่อนรายการลงทุน ──
+            ต้องเห็นก่อนเลื่อนดูหุ้น: มีเงินพร้อมลงเท่าไหร่ / ลงได้ครั้งละเท่าไหร่ แล้วค่อยไปเลือกตัว
+            (เดิมอยู่ท้ายสุดหลังรายการหุ้น ต้องเลื่อนผ่านทั้งพอร์ตก่อนจะเจอ) */}
+        <View style={styles.goalCard}>
+          <View style={styles.goalCardHeader}>
+            <Text style={styles.goalCardTitle}>
+              <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> เงินรอลงทุน · แบ่งลงกี่ครั้ง
+            </Text>
+            <TouchableOpacity onPress={openPowderModal}>
+              <Text style={styles.goalCardEdit}>{dryPowder > 0 ? 'แก้ยอด' : 'จดยอด'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* แบ่งลงกี่ครั้ง/เดือน — ปรับตรงนี้ ไม่มี modal แผนแยกแล้ว (เหลือค่านี้ค่าเดียวที่ยังใช้) */}
+          <View style={styles.roundsRow}>
+            <Text style={styles.planLineLabel}>แบ่งลงกี่ครั้ง / เดือน</Text>
+            <View style={styles.roundsStepper}>
+              <TouchableOpacity style={styles.roundsBtn} onPress={() => changeDcaRounds(-1)}>
+                <Ionicons name="remove" size={16} color={COLORS.primary} />
+              </TouchableOpacity>
+              <Text style={styles.roundsValue}>{dcaRoundsCount ?? '—'}</Text>
+              <TouchableOpacity style={styles.roundsBtn} onPress={() => changeDcaRounds(1)}>
+                <Ionicons name="add" size={16} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.roundsHint}>
+              {powderEveryDays ? `~${Math.max(1, Math.round(powderEveryDays))} วัน/ครั้ง` : 'ยังไม่ตั้ง'}
+            </Text>
+          </View>
+
+          {dryPowder <= 0 ? (
+            <Text style={styles.goalCardEmpty}>
+              กด "จดยอด" ใส่เงินที่พร้อมลงตอนนี้ → ระบบจะบอกว่าลงได้ครั้งละเท่าไหร่ ทุกกี่วัน
+            </Text>
+          ) : !dcaRoundsCount ? (
+            <Text style={styles.goalCardEmpty}>
+              มีเงินรอลงทุน {formatCurrency(dryPowder)} — กด + ตั้ง "แบ่งลงกี่ครั้ง/เดือน" ก่อน ถึงจะหารให้ได้
+            </Text>
+          ) : (
+            <>
+              <View style={styles.chipRow}>
+                {[1, 3, 6, 12].map((m) => (
+                  <TouchableOpacity
+                    key={m}
+                    style={[styles.chip, m === powderMonths && styles.chipActive]}
+                    onPress={() => setPowderMonths(m)}
+                  >
+                    <Text style={[styles.chipText, m === powderMonths && styles.chipTextActive]}>
+                      {m} เดือน
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {/* รายการย่อยที่จดไว้ — แยกตามแหล่งเงิน/โบรก (ถ้าจดแบบยอดรวมก้อนเดียวจะไม่มีบรรทัดนี้) */}
+              {(plan?.dryPowderItems || []).map((it) => (
+                <View key={it.id} style={styles.planLine}>
+                  <Text style={styles.planLineLabel}>
+                    {it.label || 'ไม่ระบุชื่อ'}
+                    {it.asOf ? ` · ${fmtDateTH(it.asOf)}` : ''}
+                  </Text>
+                  <Text style={styles.planLineValue}>
+                    {formatCurrencyWithType(it.amount, it.currency ?? 'THB')}
+                    {(it.currency ?? 'THB') !== 'THB'
+                      ? ` (${formatCurrency(convertToTHB(it.amount, it.currency))})`
+                      : ''}
+                  </Text>
+                </View>
+              ))}
+              <View style={styles.planLine}>
+                <Text style={styles.planLineLabel}>
+                  เงินรอลงทุนที่จดไว้
+                  {powderItemCount > 0 ? ` (รวม ${powderItemCount} รายการ)` : ''}
+                </Text>
+                <Text style={styles.planLineValue}>{formatCurrency(dryPowder)}</Text>
+              </View>
+              <View style={[styles.planLine, styles.reserveTotalRow]}>
+                <Text style={styles.reserveTotalLabel}>
+                  ลงได้ครั้งละ ({dcaRoundsCount} ครั้ง/ด. × {powderMonths} ด. = {powderTotalRounds} ครั้ง)
+                </Text>
+                <Text style={styles.reserveTotalValue}>
+                  {powderPerRound == null ? '—' : formatCurrency(powderPerRound)}
+                </Text>
+              </View>
+              {/* "ซื้อทุก ๆ กี่วัน" ไม่ต้องมีบรรทัดแยก — โชว์อยู่ข้างปุ่ม −/+ ด้านบนแล้ว */}
+              {boughtSincePowder ? (
+                <Text style={[styles.tpSubText, { color: COLORS.warning }]}>
+                  ⚠ ซื้อไป {boughtSincePowder.count} รายการ (~{formatCurrency(boughtSincePowder.cost)}) หลังจดยอดเมื่อ{' '}
+                  {fmtDateTH(boughtSincePowder.asOf)} — กด "แก้ยอด" อัปเดตเงินรอลงทุนให้ตรงจริง
+                </Text>
+              ) : plan?.dryPowderAsOf ? (
+                <Text style={styles.tpSubText}>
+                  จดยอดไว้เมื่อ {fmtDateTH(plan.dryPowderAsOf)} · ยังไม่มีการซื้อหลังจากนั้น
+                </Text>
+              ) : null}
+            </>
+          )}
+        </View>
 
         <View style={styles.listHeader}>
           <View style={styles.listHeaderRow}>
@@ -1273,257 +1421,10 @@ export default function PortfolioScreen() {
     </View>
   );
 
-  // ── ชุดวางแผนถึงเป้า → ย้ายมาต่อท้ายรายการหุ้น (footer) เพื่อให้ "พอร์ต+หุ้นที่ถือ" ขึ้นก่อน ──
+  // ── ท้ายรายการหุ้น: เหลือแค่การ์ดสำรอง (ปิดไว้) ──
+  // การ์ด "เงินรอลงทุน" ย้ายขึ้นไปอยู่ก่อน "รายการลงทุน" แล้ว — ต้องเห็นก่อนเลื่อนดูหุ้น
   const planningFooterElement = (
     <View>
-        {/* ── ปุ่มกาง/ยุบ: ค่าเริ่มต้นยุบไว้ ให้หน้าเหลือแค่การ์ดสรุปด้านบน ไม่ต้องเลื่อนผ่านตารางเยอะ ── */}
-        <TouchableOpacity style={styles.detailToggle} onPress={() => setShowPlanDetail((v) => !v)}>
-          <Ionicons
-            name={showPlanDetail ? 'chevron-up' : 'chevron-down'}
-            size={16}
-            color={COLORS.primary}
-          />
-          <Text style={styles.detailToggleText}>
-            {showPlanDetail ? ' ซ่อนแผน' : ' วางแผนถึงเป้า'}
-          </Text>
-        </TouchableOpacity>
-        {!showPlanDetail && (
-          <Text style={styles.detailToggleHint}>ลองปรับ % ที่กัน / กำไรที่ทำได้ → ดูว่าถึงเป้าเร็วแค่ไหน</Text>
-        )}
-
-        {showPlanDetail && (
-          <View style={styles.goalCard}>
-            <Text style={styles.goalCardTitle}>
-              <Ionicons name="options-outline" size={18} color={COLORS.primary} /> วางแผนถึงเป้า
-            </Text>
-
-            {goalAnalysis && !goalAnalysis.reached && goalAnalysis.currentValue > 0 ? (
-              <>
-                {/* กรอบเวลา — ชิปแถวเดียว แทนตาราง 1/3/5/10 ปี */}
-                <View style={styles.chipRow}>
-                  {GOAL_HORIZONS.map((y) => (
-                    <TouchableOpacity
-                      key={y}
-                      style={[styles.chip, y === reqHorizon && styles.chipActive]}
-                      onPress={() => setReqHorizon(y)}
-                    >
-                      <Text style={[styles.chipText, y === reqHorizon && styles.chipTextActive]}>{y} ปี</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>
-                    ต้องลง/{dcaRoundsCount ? 'ครั้ง' : 'เดือน'} (โต {(goalAnalysis.projectionRatePercent ?? 0).toFixed(0)}%/ปี)
-                  </Text>
-                  <Text style={styles.planLineValue}>
-                    {reqPerRound == null
-                      ? '—'
-                      : reqPerRound <= 0
-                        ? 'โตเองถึง'
-                        : `${formatCurrency(reqPerRound)}${dcaRoundsCount ? ` × ${dcaRoundsCount} ครั้ง` : ''}`}
-                  </Text>
-                </View>
-                <View style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>ถ้าไม่เติมเงินเลย ต้องโตปีละ</Text>
-                  <Text style={styles.planLineValue}>{horizonRate == null ? '—' : `${horizonRate.toFixed(1)}%`}</Text>
-                </View>
-                {profitTimesText != null && (
-                  <View style={styles.planLine}>
-                    <Text style={styles.planLineLabel}>ทำกำไรก้อนนี้อีกกี่ครั้งถึงเป้า</Text>
-                    <Text style={styles.planLineValue}>{profitTimesText}</Text>
-                  </View>
-                )}
-
-                {/* ลองปรับดู — ปุ่ม 2 ตัว → คำตอบเดียว แทนตารางจำลอง 3 ตัว (18 แถว) */}
-                <View style={styles.simDivider} />
-                <Text style={styles.horizonHeader}>ลองปรับดู</Text>
-                <View style={styles.stepRow}>
-                  <Text style={styles.stepLabel}>กันเงินลงทุน</Text>
-                  <View style={styles.stepControl}>
-                    <TouchableOpacity style={styles.stepBtn} onPress={() => setSimPct(Math.max(0, simPctValue - 5))}>
-                      <Ionicons name="remove" size={15} color={COLORS.primary} />
-                    </TouchableOpacity>
-                    <Text style={styles.stepValue}>{simPctValue}%</Text>
-                    <TouchableOpacity style={styles.stepBtn} onPress={() => setSimPct(Math.min(90, simPctValue + 5))}>
-                      <Ionicons name="add" size={15} color={COLORS.primary} />
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.stepHint}>
-                    {simContribution <= 0
-                      ? 'ไม่มีฐานเงินได้'
-                      : dcaRoundsCount
-                        ? `${formatCurrency(simContribution / dcaRoundsCount)}/ครั้ง`
-                        : `${formatCurrency(simContribution)}/ด.`}
-                  </Text>
-                </View>
-                <View style={styles.stepRow}>
-                  <Text style={styles.stepLabel}>กำไร/เดือน</Text>
-                  <View style={styles.stepControl}>
-                    <TouchableOpacity style={styles.stepBtn} onPress={() => setSimReturn(Math.max(0, simReturn - 1))}>
-                      <Ionicons name="remove" size={15} color={COLORS.primary} />
-                    </TouchableOpacity>
-                    <Text style={styles.stepValue}>{simReturn}%</Text>
-                    <TouchableOpacity style={styles.stepBtn} onPress={() => setSimReturn(Math.min(20, simReturn + 1))}>
-                      <Ionicons name="add" size={15} color={COLORS.primary} />
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.stepHint}>≈ {monthlyToAnnualPercent(simReturn).toFixed(0)}%/ปี</Text>
-                </View>
-                <View style={styles.answerBox}>
-                  <Text style={styles.answerLabel}>ถึงเป้าใน</Text>
-                  <Text style={styles.answerBig}>{fmtMonthsAnswer(simMonths)}</Text>
-                </View>
-
-                {/* แบ่งไม้จากเงินที่กันไว้จริง — บรรทัดละกลุ่ม ไม่ใช่ตาราง 4 คอลัมน์ */}
-                {simContribution > 0 && (
-                  <>
-                    <View style={styles.simDivider} />
-                    <Text style={styles.horizonHeader}>
-                      แบ่งไม้จาก {formatCurrency(simContribution)}/เดือน
-                      {dcaRoundsCount ? ` · ${dcaRoundsCount} ครั้ง` : ''}
-                    </Text>
-                    {shares.map(({ key, label, share }) => {
-                      const amt = simContribution * share;
-                      const perTradeAmt = dcaRoundsCount ? simContribution / dcaRoundsCount : null;
-                      const trades = perTradeAmt && perTradeAmt > 0 ? Math.round(amt / perTradeAmt) : null;
-                      return (
-                        <View key={key} style={styles.planLine}>
-                          <Text style={styles.planLineLabel}>{label} {(share * 100).toFixed(0)}%</Text>
-                          <Text style={styles.planLineValue}>
-                            {formatCurrency(amt)}{trades != null ? ` · ${trades} ไม้` : ''}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                  </>
-                )}
-              </>
-            ) : (
-              <Text style={styles.goalCardEmpty}>
-                {!goalAnalysis
-                  ? 'ตั้งเป้าหมายพอร์ตก่อน (ปุ่ม "ตั้งเป้า" ด้านบน) ระบบถึงจะวางแผนให้ได้'
-                  : goalAnalysis.reached
-                    ? 'ถึงเป้าแล้ว 🎉 ตั้งเป้าใหม่ที่สูงขึ้นได้เลย'
-                    : 'ยังไม่มีต้นทุนในพอร์ต — เพิ่มการลงทุนก่อน'}
-              </Text>
-            )}
-
-            {/* เงินรอลงทุนที่จดเอง → แบ่งเป็นครั้ง (คนละก้อนกับ % เงินเดือน) */}
-            <View style={styles.simDivider} />
-            <View style={styles.goalCardHeader}>
-              <Text style={styles.horizonHeader}>เงินรอลงทุน · แบ่งลงกี่ครั้ง</Text>
-              <TouchableOpacity onPress={openPlanModal}>
-                <Text style={styles.goalCardEdit}>{dryPowder > 0 ? 'แก้ยอด' : 'กรอกยอด'}</Text>
-              </TouchableOpacity>
-            </View>
-            {dryPowder <= 0 ? (
-              <Text style={styles.goalCardEmpty}>
-                กรอก "เงินรอลงทุนที่มีตอนนี้" ในปุ่มด้านบน → ระบบจะบอกว่าลงได้ครั้งละเท่าไหร่ ทุกกี่วัน
-              </Text>
-            ) : !dcaRoundsCount ? (
-              <Text style={styles.goalCardEmpty}>
-                มีเงินรอลงทุน {formatCurrency(dryPowder)} — ตั้ง "แบ่งลงกี่ครั้งต่อเดือน" ก่อน ถึงจะหารให้ได้
-              </Text>
-            ) : (
-              <>
-                <View style={styles.chipRow}>
-                  {[1, 3, 6, 12].map((m) => (
-                    <TouchableOpacity
-                      key={m}
-                      style={[styles.chip, m === powderMonths && styles.chipActive]}
-                      onPress={() => setPowderMonths(m)}
-                    >
-                      <Text style={[styles.chipText, m === powderMonths && styles.chipTextActive]}>
-                        {m} เดือน
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>เงินรอลงทุนที่จดไว้</Text>
-                  <Text style={styles.planLineValue}>{formatCurrency(dryPowder)}</Text>
-                </View>
-                <View style={[styles.planLine, styles.reserveTotalRow]}>
-                  <Text style={styles.reserveTotalLabel}>
-                    ลงได้ครั้งละ ({dcaRoundsCount} ครั้ง/ด. × {powderMonths} ด. = {powderTotalRounds} ครั้ง)
-                  </Text>
-                  <Text style={styles.reserveTotalValue}>
-                    {powderPerRound == null ? '—' : formatCurrency(powderPerRound)}
-                  </Text>
-                </View>
-                <View style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>ซื้อทุก ๆ</Text>
-                  <Text style={styles.planLineValue}>
-                    {powderEveryDays == null ? '—' : `~${Math.max(1, Math.round(powderEveryDays))} วัน`}
-                  </Text>
-                </View>
-                {boughtSincePowder ? (
-                  <Text style={[styles.tpSubText, { color: COLORS.warning }]}>
-                    ⚠ ซื้อไป {boughtSincePowder.count} รายการ (~{formatCurrency(boughtSincePowder.cost)}) หลังจดยอดเมื่อ{' '}
-                    {fmtDateTH(boughtSincePowder.asOf)} — กด "แก้ยอด" อัปเดตเงินรอลงทุนให้ตรงจริง
-                  </Text>
-                ) : plan?.dryPowderAsOf ? (
-                  <Text style={styles.tpSubText}>
-                    จดยอดไว้เมื่อ {fmtDateTH(plan.dryPowderAsOf)} · ยังไม่มีการซื้อหลังจากนั้น
-                  </Text>
-                ) : null}
-              </>
-            )}
-
-            {/* งบเดือนนี้ (จ่ายตัวเองก่อน) — ยุบ envelope 5 แถว + DCA 2 แถว เหลือ 5 บรรทัด */}
-            <View style={styles.simDivider} />
-            <View style={styles.goalCardHeader}>
-              <Text style={styles.horizonHeader}>งบเดือนนี้ · จ่ายตัวเองก่อน</Text>
-              <TouchableOpacity onPress={openPlanModal}>
-                <Text style={styles.goalCardEdit}>{plan ? 'แก้ไข' : 'ตั้งแผน'}</Text>
-              </TouchableOpacity>
-            </View>
-            {!hasPlanNumbers ? (
-              <Text style={styles.goalCardEmpty}>
-                ตั้ง "เงินเดือนต่อเดือน" + "กันกี่ %" + จำนวนครั้ง → ระบบจะบอกงบใช้จ่าย เหลือใช้ได้อีกเท่าไหร่ และลงได้ครั้งละเท่าไหร่
-              </Text>
-            ) : (
-              <>
-                <View style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>เงินเดือน (ฐาน)</Text>
-                  <Text style={styles.planLineValue}>{formatCurrency(baseIncome)}</Text>
-                </View>
-                <View style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>กันลงทุน ({plan!.setAsidePercent}%)</Text>
-                  <Text style={styles.planLineValue}>−{formatCurrency(setAside)}</Text>
-                </View>
-                <View style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>ใช้ไปแล้ว (งบ {formatCurrency(spendBudget)})</Text>
-                  <Text style={styles.planLineValue}>−{formatCurrency(monthExpense)}</Text>
-                </View>
-                {monthInvestLogged > 0 && (
-                  <View style={styles.planLine}>
-                    <Text style={styles.planLineLabel}>
-                      หมวด "ลงทุน" เดือนนี้ (กันออกจากงบใช้จ่ายแล้ว)
-                    </Text>
-                    <Text style={styles.planLineValue}>{formatCurrency(monthInvestLogged)}</Text>
-                  </View>
-                )}
-                <View style={[styles.planLine, styles.reserveTotalRow]}>
-                  <Text style={styles.reserveTotalLabel}>เหลือใช้ได้อีก</Text>
-                  <Text style={[styles.reserveTotalValue, leftToSpend < 0 && { color: COLORS.error }]}>
-                    {formatCurrency(leftToSpend)}
-                  </Text>
-                </View>
-                <View style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>
-                    ลงได้ต่อครั้ง ({plan!.dcaRounds} ครั้ง · {Math.max(1, investments.length)} ตัว)
-                  </Text>
-                  <Text style={styles.planLineValue}>
-                    {perRound == null
-                      ? '—'
-                      : `${formatCurrency(perRound)} · ${formatCurrency(perRound / Math.max(1, investments.length))}/ตัว`}
-                  </Text>
-                </View>
-              </>
-            )}
-          </View>
-        )}
 
         {/* ── การ์ดเงินรอลงทุน (สำรอง) หลายสกุล + สมการความมั่งคั่ง ── */}
         {/* ซ่อนไว้ชั่วคราวตามที่ผู้ใช้ต้องการ — เปลี่ยน false กลับเป็น true เพื่อโชว์อีกครั้ง */}
@@ -1685,6 +1586,9 @@ export default function PortfolioScreen() {
                 convertToTHB(price, sellTarget.currency) * qty - (buyFeeShare + sellFee);
               const pnl = proceeds - cost;
               const pct = cost > 0 ? (pnl / cost) * 100 : 0;
+              // เงินสดที่ได้รับจริงในสกุลที่ขาย (ค่าธรรมเนียมขายกรอกเป็นบาท → หารเรตกลับก่อนหัก)
+              const rate = convertToTHB(1, sellTarget.currency ?? 'THB') || 1;
+              const netNative = qty * price - sellFee / rate;
               return (
                 <>
                   <Text style={styles.goalCardSub}>
@@ -1728,6 +1632,14 @@ export default function PortfolioScreen() {
                     placeholder="0"
                     placeholderTextColor={COLORS.textSecondary}
                   />
+                  <Text style={styles.modalLabel}>ขายเพราะอะไร (ไม่บังคับ)</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={sellNotesInput}
+                    onChangeText={setSellNotesInput}
+                    placeholder="เช่น ถึงเป้ากำไรที่ตั้งไว้ / ตัดขาดทุน / ต้องใช้เงิน"
+                    placeholderTextColor={COLORS.textSecondary}
+                  />
                   {qty > 0 && price > 0 && (
                     <View style={styles.answerBox}>
                       <Text style={styles.answerLabel}>กำไร/ขาดทุนจริงที่จะบันทึก</Text>
@@ -1736,6 +1648,23 @@ export default function PortfolioScreen() {
                         {pct.toFixed(1)}%)
                       </Text>
                     </View>
+                  )}
+                  {/* เงินที่ขายได้ = เงินรอลงทุนก้อนใหม่ — ติ๊กไว้ให้ ไม่ต้องไปกด "จดยอด" ซ้ำ */}
+                  {netNative > 0 && (
+                    <TouchableOpacity
+                      style={styles.sellToPowderRow}
+                      onPress={() => setSellToPowder((v) => !v)}
+                    >
+                      <Ionicons
+                        name={sellToPowder ? 'checkbox' : 'square-outline'}
+                        size={18}
+                        color={sellToPowder ? COLORS.primary : COLORS.textSecondary}
+                      />
+                      <Text style={styles.sellToPowderText}>
+                        {' '}เพิ่มเข้าเงินรอลงทุน {formatCurrencyWithType(netNative, sellTarget.currency ?? 'THB')}
+                        {sellTarget.platform ? ` · ${sellTarget.platform}` : ''}
+                      </Text>
+                    </TouchableOpacity>
                   )}
                   {qty >= sellTarget.quantity && (
                     <Text style={styles.tpSubText}>
@@ -1804,67 +1733,83 @@ export default function PortfolioScreen() {
         </View>
       </Modal>
 
-      {/* ── Modal ตั้ง/แก้แผนเติมเงิน ── */}
+      {/* modal "แผนเติมเงิน" เอาออกแล้ว — เหลือค่าเดียวที่ยังใช้ (แบ่งลงกี่ครั้ง/เดือน)
+          ปรับด้วยปุ่ม −/+ ในการ์ด "เงินรอลงทุน" ได้เลย ไม่ต้องเปิดฟอร์ม */}
+
+      {/* ── Modal จดยอดเงินรอลงทุน — จดแยกได้หลายรายการ ยอดรวมคือผลบวกของทุกแถว ── */}
       <Modal
-        visible={planModalVisible}
+        visible={powderModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setPlanModalVisible(false)}
+        onRequestClose={() => setPowderModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>
-              <Ionicons name="wallet-outline" size={18} color={COLORS.primary} /> แผนเติมเงินต่อครั้ง
+              <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> จดยอดเงินรอลงทุน
             </Text>
-            <Text style={styles.modalLabel}>เงินเดือน/เงินได้ต่อเดือน (โดยประมาณ)</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={planIncomeInput}
-              onChangeText={setPlanIncomeInput}
-              keyboardType="numeric"
-              placeholder="เช่น 50000 — ใช้เป็นฐานคำนวณที่นิ่งทั้งเดือน"
-              placeholderTextColor={COLORS.textSecondary}
-            />
-            <Text style={styles.modalLabel}>กันเงินเดือนไปลงทุนกี่ % </Text>
-            <TextInput
-              style={styles.modalInput}
-              value={planPercentInput}
-              onChangeText={setPlanPercentInput}
-              keyboardType="numeric"
-              placeholder="เช่น 20"
-              placeholderTextColor={COLORS.textSecondary}
-            />
-            <Text style={styles.modalLabel}>แบ่งลงกี่ครั้งต่อเดือน</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={planRoundsInput}
-              onChangeText={setPlanRoundsInput}
-              keyboardType="numeric"
-              placeholder="เช่น 10"
-              placeholderTextColor={COLORS.textSecondary}
-            />
-            <Text style={styles.modalLabel}>เงินรอลงทุนที่มีตอนนี้ (จดเอง · ไม่บังคับ)</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={planPowderInput}
-              onChangeText={setPlanPowderInput}
-              keyboardType="numeric"
-              placeholder="เช่น 50000 — ยอดคงเหลือที่พร้อมลงทุน"
-              placeholderTextColor={COLORS.textSecondary}
-            />
+            <Text style={styles.modalLabel}>เงินที่พร้อมลงทุนตอนนี้ — จดแยกรายการได้</Text>
+            {powderRows.map((r, idx) => (
+              <View key={r.id} style={styles.powderItemBox}>
+                <View style={styles.powderRow}>
+                <TextInput
+                  style={[styles.modalInput, styles.powderRowLabel]}
+                  value={r.label}
+                  onChangeText={(v) => updatePowderRow(r.id, { label: v })}
+                  placeholder={idx === 0 ? 'ชื่อ/แหล่งเงิน เช่น Dime' : 'ชื่อ/แหล่งเงิน'}
+                  placeholderTextColor={COLORS.textSecondary}
+                />
+                <TextInput
+                  style={[styles.modalInput, styles.powderRowAmount]}
+                  value={r.amount}
+                  onChangeText={(v) => updatePowderRow(r.id, { amount: v })}
+                  keyboardType="numeric"
+                  placeholder="ยอด"
+                  placeholderTextColor={COLORS.textSecondary}
+                />
+                <TouchableOpacity style={styles.powderRowDelete} onPress={() => removePowderRow(r.id)}>
+                  <Ionicons name="close-circle" size={20} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+                </View>
+                {/* สกุลเงินของแถวนี้ — ตัวเลือกมาจากหน้า "สกุลเงิน & แพลตฟอร์ม" ที่ตั้งไว้ */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.powderCurrencyRow}
+                >
+                  {currencyOptions.map((c) => (
+                    <TouchableOpacity
+                      key={c}
+                      style={[styles.powderCurBtn, r.currency === c && styles.chipActive]}
+                      onPress={() => updatePowderRow(r.id, { currency: c })}
+                    >
+                      <Text style={[styles.chipText, r.currency === c && styles.chipTextActive]}>{c}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            ))}
+            <TouchableOpacity
+              style={styles.powderAddBtn}
+              onPress={() => setPowderRows((rows) => [...rows, newPowderRow(rows.length)])}
+            >
+              <Ionicons name="add" size={16} color={COLORS.primary} />
+              <Text style={styles.powderAddBtnText}> เพิ่มรายการ</Text>
+            </TouchableOpacity>
+            <View style={[styles.planLine, styles.reserveTotalRow]}>
+              <Text style={styles.reserveTotalLabel}>ยอดรวมที่จะจด (แปลงเป็น THB)</Text>
+              <Text style={styles.reserveTotalValue}>{formatCurrency(powderRowsTotal)}</Text>
+            </View>
             <Text style={styles.modalHint}>
-              ยอดนี้ไม่หักอัตโนมัติ — ซื้อเสร็จแล้วกลับมากรอกยอดจริงทับได้เลย ระบบจะเตือนให้เองถ้ามีการซื้อหลังวันที่จด
+              ยอดนี้ไม่หักอัตโนมัติ — ซื้อเสร็จแล้วกลับมาแก้ยอดของรายการนั้นได้เลย
+              (ล้างทั้งชื่อและยอดของแถว = ลบรายการนั้นทิ้ง)
+              {plan?.dryPowderAsOf ? ` · จดล่าสุด ${fmtDateTH(plan.dryPowderAsOf)}` : ''}
             </Text>
-            <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePlan}>
-              <Text style={styles.modalSaveBtnText}>บันทึกแผน</Text>
+            <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePowder}>
+              <Text style={styles.modalSaveBtnText}>จดยอด ({formatCurrency(powderRowsTotal)})</Text>
             </TouchableOpacity>
             <View style={styles.modalBottomRow}>
-              {plan && (
-                <TouchableOpacity onPress={handleDeletePlan}>
-                  <Text style={styles.modalDeleteText}>ลบแผน</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity onPress={() => setPlanModalVisible(false)}>
+              <TouchableOpacity onPress={() => setPowderModalVisible(false)}>
                 <Text style={styles.modalCancelText}>ยกเลิก</Text>
               </TouchableOpacity>
             </View>
@@ -1977,6 +1922,37 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.primary,
   },
+  // ── ตัวปรับ "แบ่งลงกี่ครั้ง/เดือน" ในการ์ดเงินรอลงทุน (แทน modal แผนที่เอาออก) ──
+  roundsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 6,
+  },
+  roundsStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  roundsBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  roundsValue: {
+    minWidth: 34,
+    textAlign: 'center',
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  roundsHint: {
+    width: 92,
+    textAlign: 'right',
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
   goalCardEmpty: {
     fontSize: 12,
     fontFamily: 'NotoSansThai_300Light',
@@ -2029,41 +2005,13 @@ const styles = StyleSheet.create({
   kpiValueNeg: {
     color: COLORS.error,
   },
-  // บล็อกวินัยการกันเงิน — "กันไว้" vs "ลงจริง" เดือนนี้
-  disciplineBox: {
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  // ปุ่มกาง/ยุบรายละเอียดแผน
-  detailToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 16,
-    marginTop: 4,
-    marginBottom: 8,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-  },
+  // ปุ่มกาง/ยุบ (เหลือใช้ที่ลิสต์ "ที่ขายแล้ว")
   detailToggleText: {
     fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
   },
-  detailToggleHint: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    marginHorizontal: 16,
-    marginBottom: 16,
-    lineHeight: 16,
-  },
-  // ── การ์ด "วางแผนถึงเป้า": ทุกอย่างเป็นบรรทัด ป้าย-ซ้าย ค่า-ขวา ไม่มีตารางหลายคอลัมน์ ──
+  // ── การ์ดตัวเลขแบบบรรทัด: ป้าย-ซ้าย ค่า-ขวา ไม่มีตารางหลายคอลัมน์ ──
   planLine: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2083,12 +2031,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textAlign: 'right',
   },
-  simDivider: {
-    height: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 12,
-  },
-  // ชิปเลือกกรอบเวลา 1/3/5/10 ปี
+  // ชิปเลือก "แบ่งลงกี่เดือน" ของเงินรอลงทุน
   chipRow: {
     flexDirection: 'row',
     gap: 6,
@@ -2115,44 +2058,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontFamily: 'NotoSansThai_600SemiBold',
   },
-  // ปุ่ม −/+ ปรับสมมติฐาน
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 5,
-    gap: 8,
-  },
-  stepLabel: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-  },
-  stepControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  stepBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  stepValue: {
-    minWidth: 46,
-    textAlign: 'center',
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  stepHint: {
-    width: 92,
-    textAlign: 'right',
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-  },
-  // คำตอบเดียวตัวใหญ่ — แทนตาราง what-if
+  // ตัวเลขเด่นในกล่องสรุป (ใช้ในกล่องยืนยันการขาย)
   answerBox: {
     marginTop: 10,
     backgroundColor: `${COLORS.primary}0D`,
@@ -2224,14 +2130,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
     paddingTop: 10,
-  },
-  horizonHeader: {
-    fontSize: 10,
-    fontFamily: 'NotoSansThai_400Regular',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    color: COLORS.textSecondary,
-    marginBottom: 6,
   },
   horizonRow: {
     flexDirection: 'row',
@@ -2329,6 +2227,45 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 6,
     lineHeight: 16,
+  },
+  // ── แถวจดเงินรอลงทุน: ชื่อ/แหล่งเงิน + ยอด + ปุ่มลบ + สกุลเงิน ──
+  powderItemBox: {
+    marginBottom: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  powderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  powderCurrencyRow: { flexGrow: 0 },
+  powderCurBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  powderRowLabel: { flex: 3, padding: 10, fontSize: 14 },
+  powderRowAmount: { flex: 2, padding: 10, fontSize: 14, textAlign: 'right' },
+  powderRowDelete: { paddingHorizontal: 2, paddingVertical: 6 },
+  powderAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  powderAddBtnText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
   },
   modalSaveBtn: {
     backgroundColor: COLORS.primary,
@@ -2617,6 +2554,12 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 2,
   },
+  realizedRowNote: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.primary,
+    marginTop: 2,
+  },
   realizedRowPnl: {
     fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
@@ -2699,6 +2642,35 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     marginTop: 2,
+  },
+  // ── ติ๊ก "เพิ่มเข้าเงินรอลงทุน" ในฟอร์มขาย ──
+  sellToPowderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingVertical: 6,
+  },
+  sellToPowderText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
+  },
+  // ── ป้าย "แดงติดกันครบคู่ = ถึงคิวลงไม้" บนการ์ดหุ้น ──
+  redBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: COLORS.error,
+  },
+  redBadgeText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.error,
   },
   investmentDetails: {
     marginLeft: 32,

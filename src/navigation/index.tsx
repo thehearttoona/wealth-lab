@@ -297,7 +297,7 @@ const sidebarStyles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   logoMark: {
-    height: 95,
+    height: 60,
     width:200,
     aspectRatio: 1536 / 1024,
     flexShrink: 0,
@@ -317,6 +317,7 @@ const sidebarStyles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 20,
+    
     gap: 12,
     marginHorizontal: 8,
     marginVertical: 2,
