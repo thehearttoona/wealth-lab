@@ -36,6 +36,7 @@ import ManageCatalogScreen from '../screens/ManageCatalogScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import StatisticsScreen from '../screens/StatisticsScreen';
+import TaxScreen from '../screens/TaxScreen';
 import { refreshCurrencyCache } from '../services/currencyStorage';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
@@ -285,6 +286,11 @@ export default function Navigation() {
           name="Statistics"
           component={StatisticsScreen}
           options={{ title: 'สถิติ & ข้อสังเกต' }}
+        />
+        <Stack.Screen
+          name="Tax"
+          component={TaxScreen}
+          options={{ title: 'ภาษี' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

@@ -850,6 +850,9 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
+    // <input> บนเว็บมีความกว้างในตัว ~20 ตัวอักษร และ flex item ได้ min-width:auto
+    // ไม่ใส่ minWidth:0 ช่องค้นหาจะดันปุ่ม "ค้นหา" ล้นออกนอกจอบนมือถือ
+    minWidth: 0,
   },
   searchButton: {
     backgroundColor: COLORS.accent,

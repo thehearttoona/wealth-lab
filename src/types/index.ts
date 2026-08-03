@@ -57,5 +57,6 @@ export type RootStackParamList = {
   AddInstallment: { plan?: InstallmentPlan };
   Accounts: undefined;
   ImportStatement: undefined;
+  Tax: undefined;
 };
 

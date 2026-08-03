@@ -586,7 +586,8 @@ const styles = StyleSheet.create({
   },
   modalHint: { fontSize: 11, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary, marginTop: 6, lineHeight: 16 },
   rateRow: { flexDirection: 'row', gap: 8, alignItems: 'stretch' },
-  rateInput: { flex: 1 },
+  // minWidth:0 ไม่งั้น <input> ย่อไม่ลง แล้วปุ่ม "ดึงเรต" จะถูกดันล้นการ์ด modal บนมือถือ
+  rateInput: { flex: 1, minWidth: 0 },
   rateBtn: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -50,6 +50,7 @@ Every data domain has a `src/services/*Storage.ts` module wrapping Supabase. The
 Two responsive traps that already bit once:
 - **Don't gate "stack it vertically" on `isMobile`** — the 768–1023 tablet band is neither `isMobile` nor `isDesktop`, so those rows stay side-by-side and get crushed. Branch on `!isDesktop`.
 - **`alignSelf: 'center'` + `width: '100%'` does nothing without a `maxWidth`.** Any desktop wrapper needs all three, or the page just stretches across a 2560px monitor.
+- **A `TextInput` in a flex row needs `minWidth: 0` on top of `flex: n`.** On web it renders as `<input>`, whose intrinsic width (~20 chars) becomes its automatic minimum size, so `flexShrink` can't shrink it. Measured: two inputs at `flex: 3` / `flex: 2` in a 279px card each stayed 192px wide — 141px of overflow — and dropped to 141/102 with `minWidth: 0`. Native doesn't show this, so it only appears on the deployed web app.
 
 Every `Modal` card must be a `ScrollView` with `maxHeight: '100%'` + `flexGrow: 0` (padding goes on `contentContainerStyle`). `public/index.html` sets `body { overflow: hidden }`, so a modal taller than the viewport doesn't just look bad — its save button becomes unreachable.
 

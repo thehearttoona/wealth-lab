@@ -847,7 +847,9 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 8,
   },
-  flex1: { flex: 1 },
+  // ใช้กับ TextInput ในแถวเดียวกับปุ่ม — minWidth:0 จำเป็นเพราะ <input> บนเว็บ
+  // มีความกว้างในตัว ~20 ตัวอักษร แล้ว min-width:auto ของ flex item ทำให้ย่อไม่ลง → แถวล้น
+  flex1: { flex: 1, minWidth: 0 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   chip: {
     paddingHorizontal: 12,

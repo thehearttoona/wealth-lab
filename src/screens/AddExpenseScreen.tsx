@@ -596,7 +596,9 @@ const styles = StyleSheet.create({
 
   // month amount row
   monthAmountRow: { flexDirection: 'row', gap: 8, marginBottom: 16, alignItems: 'stretch' },
-  monthAmountInput: { flex: 1 },
+  // minWidth:0 — <input> บนเว็บมีความกว้างในตัว ~20 ตัวอักษร + flex item ได้ min-width:auto
+  // ถ้าไม่ใส่ ช่องนี้จะดันปุ่ม "บันทึกยอดเดือนนี้" ล้นออกนอกจอบนมือถือ
+  monthAmountInput: { flex: 1, minWidth: 0 },
   saveMonthBtn: {
     backgroundColor: COLORS.primary, paddingHorizontal: 20,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
@@ -638,7 +640,7 @@ const styles = StyleSheet.create({
   },
   timeIcon: { paddingHorizontal: 16 },
   timeInput: {
-    flex: 1, padding: 16, fontSize: 16,
+    flex: 1, minWidth: 0, padding: 16, fontSize: 16,
     fontFamily: 'NotoSansThai_300Light', color: COLORS.text,
   },
 

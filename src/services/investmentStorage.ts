@@ -127,6 +127,23 @@ export const updateInvestment = async (investment: Investment): Promise<void> =>
   );
 };
 
+// อัปเดตเฉพาะ "ราคาปัจจุบัน" ของหลายรายการ — ใช้กับปุ่มรีเฟรชและ auto refresh ทุก 5 นาที
+// จงใจไม่เรียก updateInvestment ทีละตัว เพราะนั่นส่งทั้งแถวขึ้นไป (ค่าที่ค้างใน memory ของหน้าจอ
+// จะทับสิ่งที่อาจถูกแก้จากอีกเครื่อง/อีกแท็บ) และเรียงคิวทีละ request จนรอบหนึ่งกินเวลาเป็นนาที
+// ที่นี่แตะแค่ current_price แล้วยิงขนาน — Supabase ไม่มี bulk update ที่ค่าต่างกันต่อแถว
+export const updateInvestmentPrices = async (
+  updates: { id: string; currentPrice: number }[]
+): Promise<void> => {
+  if (updates.length === 0) return;
+  const results = await Promise.all(
+    updates.map(({ id, currentPrice }) =>
+      supabase.from('investments').update({ current_price: currentPrice }).eq('id', id)
+    )
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) throw failed.error;
+};
+
 // เพิ่มหลายรายการพร้อมกัน (bulk insert) — ใช้ในหน้า "จัดการตามแพลตฟอร์ม"
 export const saveInvestments = async (investments: Investment[]): Promise<void> => {
   if (investments.length === 0) return;
@@ -194,44 +211,49 @@ export const getTransactionsByInvestment = async (investmentId: string): Promise
 };
 
 // Portfolio Summary
+// คิดยอดรวมจาก array ที่มีอยู่ในมือ ไม่แตะ DB — หน้าพอร์ตใช้ตอน auto refresh ราคา
+// เพื่อคำนวณยอดใหม่ทันทีโดยไม่ต้องโหลดทุกอย่างซ้ำ (แยกออกมาให้สูตรอยู่ที่เดียว
+// ไม่ให้หน้าจอไปเขียนสูตรคิดกำไรของตัวเองแล้วเพี้ยนไม่ตรงกับหน้าอื่น)
+export const summarizeInvestments = (investments: Investment[]): PortfolioSummary => {
+  let totalValue = 0;
+  let totalCost = 0;
+  const byType: PortfolioSummary['byType'] = {};
+
+  investments.forEach((inv) => {
+    // currentPrice เก็บเป็นสกุลเงินเดียวกับ inv.currency ต้องแปลงเป็น THB ก่อนรวมพอร์ต
+    const buyPriceInTHB = convertToTHB(inv.buyPrice, inv.currency);
+    const currentPriceInTHB = convertToTHB(inv.currentPrice ?? inv.buyPrice, inv.currency);
+    const cost = buyPriceInTHB * inv.quantity + (inv.fees || 0);
+    const value = currentPriceInTHB * inv.quantity;
+    const profit = value - cost;
+
+    totalCost += cost;
+    totalValue += value;
+
+    if (!byType[inv.type]) {
+      byType[inv.type] = { value: 0, cost: 0, profit: 0, profitPercent: 0, count: 0 };
+    }
+
+    byType[inv.type]!.value += value;
+    byType[inv.type]!.cost += cost;
+    byType[inv.type]!.profit += profit;
+    byType[inv.type]!.count += 1;
+  });
+
+  Object.keys(byType).forEach((type) => {
+    const d = byType[type as InvestmentType]!;
+    d.profitPercent = d.cost > 0 ? (d.profit / d.cost) * 100 : 0;
+  });
+
+  const totalProfit = totalValue - totalCost;
+  const totalProfitPercent = totalCost > 0 ? (totalProfit / totalCost) * 100 : 0;
+
+  return { totalValue, totalCost, totalProfit, totalProfitPercent, byType };
+};
+
 export const getPortfolioSummary = async (): Promise<PortfolioSummary> => {
   try {
-    const investments = await getInvestments();
-
-    let totalValue = 0;
-    let totalCost = 0;
-    const byType: PortfolioSummary['byType'] = {};
-
-    investments.forEach((inv) => {
-      // currentPrice เก็บเป็นสกุลเงินเดียวกับ inv.currency ต้องแปลงเป็น THB ก่อนรวมพอร์ต
-      const buyPriceInTHB = convertToTHB(inv.buyPrice, inv.currency);
-      const currentPriceInTHB = convertToTHB(inv.currentPrice ?? inv.buyPrice, inv.currency);
-      const cost = buyPriceInTHB * inv.quantity + (inv.fees || 0);
-      const value = currentPriceInTHB * inv.quantity;
-      const profit = value - cost;
-
-      totalCost += cost;
-      totalValue += value;
-
-      if (!byType[inv.type]) {
-        byType[inv.type] = { value: 0, cost: 0, profit: 0, profitPercent: 0, count: 0 };
-      }
-
-      byType[inv.type]!.value += value;
-      byType[inv.type]!.cost += cost;
-      byType[inv.type]!.profit += profit;
-      byType[inv.type]!.count += 1;
-    });
-
-    Object.keys(byType).forEach((type) => {
-      const d = byType[type as InvestmentType]!;
-      d.profitPercent = d.cost > 0 ? (d.profit / d.cost) * 100 : 0;
-    });
-
-    const totalProfit = totalValue - totalCost;
-    const totalProfitPercent = totalCost > 0 ? (totalProfit / totalCost) * 100 : 0;
-
-    return { totalValue, totalCost, totalProfit, totalProfitPercent, byType };
+    return summarizeInvestments(await getInvestments());
   } catch (error) {
     console.error('Error calculating portfolio summary:', error);
     return { totalValue: 0, totalCost: 0, totalProfit: 0, totalProfitPercent: 0, byType: {} };

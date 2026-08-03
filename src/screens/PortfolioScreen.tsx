@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
+  AppState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -34,12 +35,14 @@ import {
   getInvestments,
   deleteInvestment,
   getPortfolioSummary,
+  summarizeInvestments,
   updateInvestment,
+  updateInvestmentPrices,
   saveInvestment,
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
-import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
+import { fetchPricesForItems, isPriceRefreshable, getTwoRedDays } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
 import {
@@ -51,11 +54,24 @@ import {
 } from '../services/investmentPlanStorage';
 import { getHoldingAnnualGrowth } from '../utils/holdingAnalysis';
 import { useResponsive } from '../utils/responsive';
+import { TaxProfile, GAIN_RULE_LABELS, emptyTaxProfile } from '../types/tax';
+import { getTaxProfile } from '../services/taxStorage';
+import { calculateTax, estimateGainTax, taxYearOf } from '../utils/taxCalc';
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
   'Portfolio'
 >;
+
+// รอบ auto refresh ราคา — 5 นาที เท่ากันทุกประเภท
+// ข้อควรรู้: หุ้นต่างประเทศวิ่งผ่าน Twelve Data แผนฟรี (800 request/วัน) รอบ 5 นาที
+// = 12 รอบ/ชม. ต่อ 1 ตัว ถ้ามีหุ้นนอกหลายตัวและเปิดหน้านี้ทิ้งไว้นาน ๆ โควตาจะหมดได้ใน 1 วัน
+// (หมดแล้วจะ fallback ไป Yahoo proxy ให้เอง ราคายังมาแต่ช้าลง) — ตัวกันหลักคือ
+// interval หยุดเมื่อแท็บซ่อน/แอปลงพื้นหลัง/สลับไปหน้าอื่น ดูใน useEffect ด้านล่าง
+const PRICE_REFRESH_MS = 5 * 60 * 1000;
+
+// ปีภาษีปัจจุบันเป็น พ.ศ. — ใช้ทั้งดึง TaxProfile และกรองไม้ที่ขายปีนี้
+const currentTaxYear = new Date().getFullYear() + 543;
 
 export default function PortfolioScreen() {
   const navigation = useNavigation<PortfolioScreenNavigationProp>();
@@ -69,6 +85,14 @@ export default function PortfolioScreen() {
     byType: {},
   });
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+  // เวลาที่ดึงราคาสำเร็จครั้งล่าสุด — โชว์ข้างปุ่มรีเฟรช และใช้ตัดสินว่าราคาเก่าพอจะยิงใหม่หรือยัง
+  const [lastPriceRefresh, setLastPriceRefresh] = useState<Date | null>(null);
+  // หน้านี้กำลังถูกดูอยู่ไหม — auto refresh ต้องหยุดเมื่อสลับไปหน้าอื่น
+  const [screenFocused, setScreenFocused] = useState(false);
+  // refs: ตัว interval อ่านค่าล่าสุดได้โดยไม่ต้องผูก dependency แล้ว re-create interval ทุกครั้งที่ state ขยับ
+  const investmentsRef = useRef<Investment[]>([]);
+  const lastPriceRefreshRef = useRef<Date | null>(null);
+  const refreshInFlight = useRef(false);
   const [goal, setGoal] = useState<PortfolioGoal | null>(null);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [goalTargetInput, setGoalTargetInput] = useState('');
@@ -103,6 +127,8 @@ export default function PortfolioScreen() {
   const [redCheckedCount, setRedCheckedCount] = useState(0);
   // ── การขายจริง: ตัวชี้วัดฝีมือที่วัดได้ (ต่างจากกำไรลอยตัว) ──
   const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
+  // ข้อมูลภาษีปีนี้ — null = ยังไม่ได้ตั้งค่าที่หน้า "ภาษี" (หรือยังไม่ได้รัน SQL)
+  const [taxProfile, setTaxProfile] = useState<TaxProfile | null>(null);
   const [sellTarget, setSellTarget] = useState<Investment | null>(null);
   const [sellQtyInput, setSellQtyInput] = useState('');
   const [sellPriceInput, setSellPriceInput] = useState('');
@@ -147,6 +173,13 @@ export default function PortfolioScreen() {
       if (curList.length > 0) setCurrencyOptions(curList.map((c) => c.code));
     } catch {
       // ยังไม่ได้รัน SQL แคตตาล็อก → ใช้ค่าเริ่มต้น
+    }
+    try {
+      // ข้อมูลภาษีปีนี้ — ใช้ประมาณภาษีตอนขาย ไม่มีก็แค่ไม่โชว์บรรทัดภาษี
+      setTaxProfile(await getTaxProfile(currentTaxYear));
+    } catch {
+      // ยังไม่ได้รัน sql/tax_profiles.sql — การ์ดภาษีจะบอกให้ไปตั้งค่าเอง
+      setTaxProfile(null);
     }
     // (เลิกดึงรายรับ/รายจ่ายมาที่หน้านี้แล้ว — งบรายเดือนดูที่หน้าหลัก)
 
@@ -542,9 +575,16 @@ export default function PortfolioScreen() {
     }
   };
 
+  // ให้ interval อ่านค่าล่าสุดผ่าน ref ได้ ไม่ต้องใส่ investments เป็น dependency
+  // (ไม่งั้นราคาขยับทีเดียว interval ถูกสร้างใหม่ทั้งตัว นาฬิกาเลื่อนไปเรื่อย ๆ ไม่ครบ 5 นาทีจริง)
+  useEffect(() => { investmentsRef.current = investments; }, [investments]);
+  useEffect(() => { lastPriceRefreshRef.current = lastPriceRefresh; }, [lastPriceRefresh]);
+
   useFocusEffect(
     React.useCallback(() => {
       loadData();
+      setScreenFocused(true);
+      return () => setScreenFocused(false);
     }, [])
   );
 
@@ -558,38 +598,132 @@ export default function PortfolioScreen() {
     navigation.navigate('AddInvestment', { investment: item });
   };
 
-  const handleUpdatePrices = async () => {
-    setIsUpdatingPrices(true);
-    let updatedCount = 0;
-
-    try {
-      for (const investment of investments) {
-        // อัปเดตเฉพาะ crypto, stock, gold
-        if (['crypto', 'stock_th', 'stock_foreign', 'gold'].includes(investment.type)) {
-          const newPrice = await updateInvestmentPrice(investment.type, investment.symbol, investment.currency || 'THB');
-
-          if (newPrice !== null && newPrice > 0) {
-            const updatedInvestment = {
-              ...investment,
-              currentPrice: newPrice,
-            };
-            await updateInvestment(updatedInvestment);
-            updatedCount++;
-          }
-        }
+  // แกนกลางของการรีเฟรชราคา ใช้ร่วมกันทั้งปุ่มกดเองและ auto ทุก 5 นาที
+  // - ดึงราคาทุกตัวในรอบเดียว (crypto batch / ทองครั้งเดียว / หุ้นขนานจำกัดคิว)
+  // - อัปเดต state ก่อนเขียน DB เพื่อให้ตัวเลขบนจอขยับทันที ไม่ต้องรอ round-trip
+  // - เขียน DB แค่คอลัมน์ราคา แล้วคำนวณยอดรวมใหม่จากค่าในมือ ไม่ loadData ซ้ำ
+  //   (loadData ยิง query 5-6 ชุด ถ้าเรียกทุก 5 นาทีจะเปลืองเปล่า ๆ)
+  const refreshPrices = useCallback(
+    async (opts: { silent: boolean }) => {
+      // กันรอบ auto ซ้อนกัน (รอบก่อนยังไม่จบ) — แต่ไม่บล็อกการกดปุ่มเอง
+      // ไม่งั้นถ้าเผอิญกดตอน auto กำลังวิ่ง ปุ่มจะเงียบเหมือนเสีย
+      if (opts.silent && refreshInFlight.current) return;
+      const items = investmentsRef.current.filter((i) => isPriceRefreshable(i.type));
+      if (items.length === 0) {
+        if (!opts.silent) notify('ไม่มีรายการที่ดึงราคาอัตโนมัติได้ (กองทุนต้องกรอก NAV เอง)');
+        return;
       }
 
-      await loadData();
+      refreshInFlight.current = true;
+      if (!opts.silent) setIsUpdatingPrices(true);
+      try {
+        const prices = await fetchPricesForItems(
+          items.map((i) => ({ id: i.id, type: i.type, symbol: i.symbol, currency: i.currency || 'THB' }))
+        );
+        const updates = Object.entries(prices).map(([id, currentPrice]) => ({ id, currentPrice }));
 
-      notify(`อัปเดตราคาสำเร็จ ${updatedCount} รายการ`, 'สำเร็จ');
-    } catch (error) {
-      console.error('handleUpdatePrices error:', error);
-      const detail = (error as any)?.message || String(error);
-      notify(`เกิดข้อผิดพลาดในการอัปเดตราคา\n${detail}`, 'ข้อผิดพลาด');
-    } finally {
-      setIsUpdatingPrices(false);
+        if (updates.length > 0) {
+          const next = investmentsRef.current.map((inv) =>
+            prices[inv.id] !== undefined ? { ...inv, currentPrice: prices[inv.id] } : inv
+          );
+          setInvestments(next);
+          setSummary(summarizeInvestments(next));
+          await updateInvestmentPrices(updates);
+        }
+
+        setLastPriceRefresh(new Date());
+        if (!opts.silent) {
+          notify(
+            updates.length === items.length
+              ? `อัปเดตราคาสำเร็จ ${updates.length} รายการ`
+              : `อัปเดตราคาสำเร็จ ${updates.length} จาก ${items.length} รายการ — ที่เหลือดึงไม่ได้ตอนนี้`,
+            'สำเร็จ'
+          );
+        }
+      } catch (error) {
+        console.error('refreshPrices error:', error);
+        // auto ห้ามเด้ง dialog — ผู้ใช้ไม่ได้สั่ง จะกลายเป็น popup โผล่เองระหว่างอ่านหน้าจอ
+        if (!opts.silent) {
+          const detail = (error as any)?.message || String(error);
+          notify(`เกิดข้อผิดพลาดในการอัปเดตราคา\n${detail}`, 'ข้อผิดพลาด');
+        }
+      } finally {
+        refreshInFlight.current = false;
+        if (!opts.silent) setIsUpdatingPrices(false);
+      }
+    },
+    []
+  );
+
+  const handleUpdatePrices = () => refreshPrices({ silent: false });
+
+  // ── Auto refresh ทุก 5 นาที ──
+  // หยุดเมื่อหน้าไม่ได้ถูกดู (แท็บซ่อน / แอปลงพื้นหลัง / เปลี่ยนไปหน้าอื่น) แล้วยิงทันทีตอนกลับมา
+  // ถ้าครบกำหนดแล้ว — แท็บที่เปิดค้างข้ามคืนคือตัวกินโควตา Twelve Data ตัวจริง (800 req/วัน)
+  useEffect(() => {
+    if (!screenFocused) return;
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const isVisible = () =>
+      Platform.OS === 'web'
+        ? typeof document === 'undefined' || document.visibilityState === 'visible'
+        : AppState.currentState === 'active';
+
+    const start = () => {
+      if (timer) return;
+      timer = setInterval(() => {
+        if (isVisible()) refreshPrices({ silent: true });
+      }, PRICE_REFRESH_MS);
+    };
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+
+    // กลับมาดูหน้านี้อีกครั้ง: ยิงเลยถ้าราคาเก่ากว่า 5 นาที ไม่ต้องรอครบรอบถัดไป
+    const refreshIfStale = () => {
+      const last = lastPriceRefreshRef.current;
+      if (!last || Date.now() - last.getTime() >= PRICE_REFRESH_MS) refreshPrices({ silent: true });
+    };
+
+    const onVisibilityChange = () => {
+      if (isVisible()) {
+        refreshIfStale();
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    // ตอน mount ไม่เรียก refreshIfStale ตรงนี้ — useFocusEffect เพิ่งสั่ง loadData() ไป
+    // investmentsRef ยังเป็น [] อยู่ ยิงตอนนี้จะ return ทิ้งเปล่า ๆ
+    // รอบแรกไปยิงใน effect ถัดไปที่รอ investments โหลดเสร็จก่อน
+    if (isVisible()) start();
+
+    if (Platform.OS === 'web') {
+      document.addEventListener('visibilitychange', onVisibilityChange);
+      return () => {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+        stop();
+      };
     }
-  };
+
+    const sub = AppState.addEventListener('change', onVisibilityChange);
+    return () => {
+      sub.remove();
+      stop();
+    };
+  }, [screenFocused, refreshPrices]);
+
+  // รอบแรกหลังข้อมูลโหลดเสร็จ (และตอนเพิ่ม/ลบรายการ) — ยิงถ้าราคาเก่ากว่า 5 นาที
+  // ผูกกับ investments.length ไม่ใช่ตัว array เพราะ refreshPrices เองก็ setInvestments
+  // ถ้าผูกทั้ง array จะวนไม่จบ
+  useEffect(() => {
+    if (!screenFocused || investments.length === 0) return;
+    const last = lastPriceRefreshRef.current;
+    if (!last || Date.now() - last.getTime() >= PRICE_REFRESH_MS) refreshPrices({ silent: true });
+  }, [screenFocused, investments.length, refreshPrices]);
 
   const getTypeIcon = (type: string) => {
     const found = INVESTMENT_TYPES.find((t) => t.value === type);
@@ -728,6 +862,26 @@ export default function PortfolioScreen() {
   // ฐานคำนวณเป้าหมาย = ต้นทุนที่ลงจริง (ไม่รวมกำไรที่ยังไม่ได้ขาย/unrealized)
   // กำไรลอยตัวยังไม่เกิดจริงจนกว่าจะปิดออเดอร์ จึงไม่นับรวมในทุกส่วนของการคำนวณถึงเป้า
   // ผลตอบแทนจริงจากการขาย — ตัวนี้คือ "ฝีมือที่วัดได้" ใช้แทนเลขคาดหวังถ้ามีข้อมูลพอ
+  // ไม้ที่ขายในปีภาษีนี้ — ฐานของทั้งการ์ดภาษีและการประมาณภาษีในฟอร์มขาย
+  const tradesThisTaxYear = useMemo(
+    () => realizedTrades.filter((t) => taxYearOf(t.sellDate) === currentTaxYear),
+    [realizedTrades]
+  );
+
+  // สรุปภาษีจากกำไรที่ขายปีนี้ — null = ปีนี้ยังไม่มีการขาย (ไม่ต้องโชว์การ์ด)
+  // ถ้ายังไม่ได้กรอกเงินเดือน ใช้โปรไฟล์เปล่าไปก่อน: ภาษีจะคิดจากกำไรล้วน ๆ ซึ่งต่ำกว่าจริง
+  // แต่ดีกว่าซ่อนตัวเลข — การ์ดเขียนกำกับไว้ว่ายังไม่ใช่ขั้นจริง
+  const taxThisYear = useMemo(() => {
+    if (tradesThisTaxYear.length === 0) return null;
+    const b = calculateTax(taxProfile ?? emptyTaxProfile(currentTaxYear), realizedTrades);
+    return {
+      grossGain: b.gains.reduce((s, g) => s + g.gain, 0),
+      assessable: b.gainIncome,
+      tax: b.taxFromGains,
+      marginalRate: b.marginalRate,
+    };
+  }, [tradesThisTaxYear, realizedTrades, taxProfile]);
+
   const realized = summarizeRealized(realizedTrades);
   // รายดีลแยกก้อน — ใช้โชว์ในลิสต์ "ที่ขายแล้ว" พร้อมปุ่มย้อนคืน (เรียงขายล่าสุดก่อนจาก query แล้ว)
   const realizedResults = realizedTrades.map(analyzeRealizedTrade);
@@ -905,6 +1059,15 @@ export default function PortfolioScreen() {
                 ? `  ·  ลอยตัว ${summary.totalProfit >= 0 ? '+' : ''}${formatCurrency(summary.totalProfit)} + ขายแล้ว ${realized.totalPnlTHB >= 0 ? '+' : ''}${formatCurrency(realized.totalPnlTHB)}`
                 : '  ·  ยังไม่เคยบันทึกการขาย — พอเริ่มขาย เลขนี้จะไม่ถอยหลังอีก'}
             </Text>
+            {/* ต้องบอกให้รู้ว่าเลขที่เห็นสดแค่ไหน ไม่งั้น auto refresh จะกลายเป็นกล่องดำ
+                ว่าอัปเดตแล้วหรือยัง — และกองทุนที่กรอก NAV เองก็จะเข้าใจผิดว่าค้าง */}
+            <Text style={styles.summaryRefreshedAt}>
+              {isUpdatingPrices
+                ? 'กำลังดึงราคา...'
+                : lastPriceRefresh
+                  ? `ราคาอัปเดต ${lastPriceRefresh.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} · อัตโนมัติทุก 5 นาที`
+                  : 'ยังไม่ได้ดึงราคารอบนี้'}
+            </Text>
           </View>
         </View>
 
@@ -953,6 +1116,40 @@ export default function PortfolioScreen() {
             <Text style={styles.updateButtonText}></Text>
           </TouchableOpacity>
         </View>
+
+        {/* ── การ์ดภาษีจากกำไรที่ขายปีนี้ ──
+            โชว์เฉพาะเมื่อมีไม้ที่ขายในปีภาษีนี้ ไม่งั้นเป็นการ์ดว่างกวนสายตา */}
+        {taxThisYear && (
+          <TouchableOpacity style={styles.goalCard} onPress={() => navigation.navigate('Tax')}>
+            <View style={styles.goalCardHeader}>
+              <Text style={styles.goalCardTitle}>
+                <Ionicons name="receipt-outline" size={18} color={COLORS.primary} /> ภาษีจากกำไรที่ขาย ปี {currentTaxYear}
+              </Text>
+              <Text style={styles.goalCardEdit}>{taxProfile ? 'ดูรายละเอียด' : 'ตั้งค่า'}</Text>
+            </View>
+            <View style={styles.kpiRow}>
+              <View style={styles.kpiCell}>
+                <Text style={styles.kpiLabel}>กำไรที่ขายปีนี้</Text>
+                <Text style={styles.kpiValue}>{formatCurrency(taxThisYear.grossGain)}</Text>
+              </View>
+              <View style={styles.kpiCell}>
+                <Text style={styles.kpiLabel}>เข้าฐานภาษี</Text>
+                <Text style={styles.kpiValue}>{formatCurrency(taxThisYear.assessable)}</Text>
+              </View>
+              <View style={styles.kpiCell}>
+                <Text style={styles.kpiLabel}>ภาษีประมาณ</Text>
+                <Text style={styles.kpiValue}>{formatCurrency(taxThisYear.tax)}</Text>
+              </View>
+            </View>
+            <Text style={styles.goalCardSub}>
+              {!taxProfile
+                ? 'ยังไม่ได้กรอกเงินเดือนที่หน้า "ภาษี" — ภาษีจึงคิดจากกำไรอย่างเดียว ยังไม่ใช่ขั้นจริง'
+                : taxThisYear.assessable === 0
+                  ? 'กำไรปีนี้อยู่ในกลุ่มที่ได้รับยกเว้นทั้งหมด (หุ้นไทย/กองทุนไทย)'
+                  : `คิดบนฐานเงินได้ปีนี้ — กำไรส่วนนี้ตกขั้น ${(taxThisYear.marginalRate * 100).toFixed(0)}%`}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* ── การ์ดเป้าหมายพอร์ตรวม ── */}
         <View style={styles.goalCard}>
@@ -1566,15 +1763,40 @@ export default function PortfolioScreen() {
                     placeholder="เช่น ถึงเป้ากำไรที่ตั้งไว้ / ตัดขาดทุน / ต้องใช้เงิน"
                     placeholderTextColor={COLORS.textSecondary}
                   />
-                  {qty > 0 && price > 0 && (
-                    <View style={styles.answerBox}>
-                      <Text style={styles.answerLabel}>กำไร/ขาดทุนจริงที่จะบันทึก</Text>
-                      <Text style={[styles.answerBig, pnl < 0 && { color: COLORS.error }]}>
-                        {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)} ({pnl >= 0 ? '+' : ''}
-                        {pct.toFixed(1)}%)
-                      </Text>
-                    </View>
-                  )}
+                  {qty > 0 && price > 0 && (() => {
+                    // ภาษีที่จะเพิ่มขึ้นจากการขายก้อนนี้ คิดบนฐานเงินได้ของปีนี้จริง ๆ
+                    // (ไม่ใช่กำไร × อัตราขั้น เพราะกำไรก้อนใหญ่ดันข้ามขั้นได้)
+                    const taxEst = estimateGainTax(
+                      pnl,
+                      sellTarget.type,
+                      taxProfile ?? emptyTaxProfile(currentTaxYear),
+                      tradesThisTaxYear
+                    );
+                    return (
+                      <>
+                        <View style={styles.answerBox}>
+                          <Text style={styles.answerLabel}>กำไร/ขาดทุนจริงที่จะบันทึก</Text>
+                          <Text style={[styles.answerBig, pnl < 0 && { color: COLORS.error }]}>
+                            {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)} ({pnl >= 0 ? '+' : ''}
+                            {pct.toFixed(1)}%)
+                          </Text>
+                          {pnl > 0 && (
+                            <Text style={styles.answerTaxLine}>
+                              {taxEst.rule === 'exempt'
+                                ? `ภาษี: ${GAIN_RULE_LABELS.exempt} (${sellTarget.type === 'stock_th' ? 'หุ้นไทย' : 'ตามกฎที่ตั้งไว้'}) — เหลือเข้ากระเป๋าเต็ม ${formatCurrency(pnl)}`
+                                : `ภาษีประมาณ ${formatCurrency(taxEst.tax)} (${(taxEst.rate * 100).toFixed(1)}% ของกำไร) — เหลือสุทธิ ${formatCurrency(pnl - taxEst.tax)}`}
+                            </Text>
+                          )}
+                        </View>
+                        {pnl > 0 && taxEst.rule !== 'exempt' && !taxProfile && (
+                          <Text style={styles.tpSubText}>
+                            * ยังไม่ได้กรอกเงินเดือนที่หน้า "ภาษี" — ภาษีข้างบนคิดจากกำไรล้วน ๆ
+                            ของจริงจะสูงกว่านี้เพราะต้องรวมกับเงินได้ทั้งปี
+                          </Text>
+                        )}
+                      </>
+                    );
+                  })()}
                   {/* เงินที่ขายได้ = เงินรอลงทุนก้อนใหม่ — ติ๊กไว้ให้ ไม่ต้องไปกด "จดยอด" ซ้ำ */}
                   {netNative > 0 && (
                     <TouchableOpacity
@@ -1834,6 +2056,13 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(255,255,255,0.25)',
     alignSelf: 'stretch',
   },
+  summaryRefreshedAt: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: '#ffffff',
+    opacity: 0.7,
+    marginTop: 6,
+  },
   profitPositive: {
     color: COLORS.success,
   },
@@ -2020,6 +2249,13 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
   },
+  answerTaxLine: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+    marginTop: 6,
+    lineHeight: 16,
+  },
   tpRow: {
     paddingHorizontal: 16,
     paddingBottom: 12,
@@ -2159,8 +2395,11 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     backgroundColor: COLORS.surface,
   },
-  powderRowLabel: { flex: 3, padding: 10, fontSize: 14, fontFamily: 'NotoSansThai_400Regular' },
-  powderRowAmount: { flex: 2, padding: 10, fontSize: 14, textAlign: 'right', fontFamily: 'NotoSansThai_400Regular' },
+  // minWidth: 0 คือหัวใจ — บนเว็บ TextInput กลายเป็น <input> ที่มีความกว้างในตัว ~20 ตัวอักษร (~175px)
+  // และ flex item ได้ min-width:auto มาโดยปริยาย → flexShrink ย่อไม่ลงต่ำกว่านั้น
+  // สองช่องรวมกันเลยกินเกิน 350px ล้นการ์ดกว้าง ~279px บนมือถือ ทั้งที่ flex 3/2 ดูเหมือนถูกแล้ว
+  powderRowLabel: { flex: 3, minWidth: 0, padding: 10, fontSize: 14, fontFamily: 'NotoSansThai_400Regular' },
+  powderRowAmount: { flex: 2, minWidth: 0, padding: 10, fontSize: 14, textAlign: 'right', fontFamily: 'NotoSansThai_400Regular' },
   powderRowDelete: { paddingHorizontal: 2, paddingVertical: 6 },
   powderAddBtn: {
     flexDirection: 'row',
@@ -2297,6 +2536,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
+    minWidth: 0, // <input> บนเว็บย่อไม่ลงถ้าไม่ใส่ (ดูหมายเหตุที่ powderRowLabel)
     fontSize: 13,
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.text,

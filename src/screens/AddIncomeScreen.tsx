@@ -367,6 +367,7 @@ const styles = StyleSheet.create({
   timeIcon: { paddingHorizontal: 16 },
   timeInput: {
     flex: 1,
+    minWidth: 0, // <input> บนเว็บย่อไม่ลงถ้าไม่ใส่ → แถวล้นบนมือถือ
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,

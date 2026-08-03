@@ -26,6 +26,7 @@ const MENU_GROUPS: { title: string; items: MenuItem[] }[] = [
     items: [
       { route: 'Overview', label: 'ภาพรวมการเงิน', hint: 'รายจ่าย + พอร์ต รวมในหน้าเดียว', icon: 'analytics-outline' },
       { route: 'Statistics', label: 'สถิติ & ข้อสังเกต', hint: 'แนวโน้มรายจ่าย และคำเตือนอัตโนมัติ', icon: 'stats-chart-outline' },
+      { route: 'Tax', label: 'ภาษี', hint: 'ประมาณการภาษีจากเงินเดือน + กำไรที่ขายแล้ว', icon: 'receipt-outline' },
     ],
   },
   {

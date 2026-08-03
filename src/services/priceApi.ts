@@ -595,3 +595,91 @@ export async function updateInvestmentPrice(
       return null;
   }
 }
+
+// ========================
+// ดึงราคาหลายรายการในรอบเดียว (ใช้กับปุ่มรีเฟรชและ auto refresh)
+// ========================
+
+// กองทุนไม่มี API ราคาสด (NAV กรอกมือ) — ประเภทอื่นนอกลิสต์นี้ก็ดึงไม่ได้ ข้ามไปเลย
+const REFRESHABLE_TYPES = ['crypto', 'stock_th', 'stock_foreign', 'gold'];
+export const isPriceRefreshable = (type: string): boolean => REFRESHABLE_TYPES.includes(type);
+
+export interface PriceRequestItem {
+  id: string;
+  type: string;
+  symbol: string;
+  currency: string;
+}
+
+// Twelve Data แผนฟรีจำกัด 8 request/นาที — ยิงหุ้นพร้อมกันทั้งพอร์ตจะโดน rate limit
+// แล้วตกไป fallback Yahoo ทั้งชุด (เปลืองกว่าเดิม) เลยจำกัดคิวไว้ทีละ 4
+const STOCK_CONCURRENCY = 4;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      out[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * ดึงราคาปัจจุบันของหลายรายการพร้อมกัน คืน map ของ id -> ราคา (เฉพาะตัวที่ดึงได้)
+ *
+ * ต่างจากการวน updateInvestmentPrice ทีละตัวตรงที่:
+ * - crypto รวมเป็น batch เดียวของ Binance (เหรียญ 20 ตัว = 1 request ไม่ใช่ 20)
+ * - ทอง ดึงราคา GC=F ครั้งเดียวต่อสกุลเงิน แล้วแจกให้ทุกรายการทอง
+ * - หุ้นวิ่งขนานแบบจำกัดคิว ไม่ใช่เรียงทีละตัวจนรอบหนึ่งกินเวลาเป็นนาที
+ */
+export async function fetchPricesForItems(
+  items: PriceRequestItem[]
+): Promise<{ [id: string]: number }> {
+  const targets = items.filter((i) => isPriceRefreshable(i.type) && i.symbol);
+  if (targets.length === 0) return {};
+
+  const prices: { [id: string]: number } = {};
+  const record = (id: string, price: number | null) => {
+    if (price !== null && price > 0) prices[id] = price;
+  };
+
+  // จัดกลุ่มตามสกุลเงินเป้าหมาย เพราะราคาถูกแปลงเป็นสกุลของรายการนั้น ๆ
+  const byCurrency = <T extends PriceRequestItem>(list: T[]) =>
+    list.reduce<{ [cur: string]: T[] }>((acc, item) => {
+      const cur = item.currency || 'THB';
+      (acc[cur] ||= []).push(item);
+      return acc;
+    }, {});
+
+  const cryptos = targets.filter((i) => i.type === 'crypto');
+  const golds = targets.filter((i) => i.type === 'gold');
+  const stocks = targets.filter((i) => i.type === 'stock_th' || i.type === 'stock_foreign');
+
+  await Promise.all([
+    // crypto — batch ต่อสกุลเงิน
+    ...Object.entries(byCurrency(cryptos)).map(async ([cur, list]) => {
+      const bySymbol = await getCryptoPrices(list.map((i) => i.symbol), cur);
+      list.forEach((i) => record(i.id, bySymbol[i.symbol.toUpperCase()] ?? null));
+    }),
+    // ทอง — ราคาเดียวต่อสกุลเงิน แจกให้ทุกรายการ
+    ...Object.entries(byCurrency(golds)).map(async ([cur, list]) => {
+      const price = await getGoldPrice(cur);
+      list.forEach((i) => record(i.id, price));
+    }),
+    // หุ้น — ขนานแบบจำกัดคิว
+    mapWithConcurrency(stocks, STOCK_CONCURRENCY, async (i) => {
+      const price = await getStockPrice(i.symbol, i.currency || 'THB', i.type === 'stock_th');
+      record(i.id, price);
+    }),
+  ]);
+
+  return prices;
+}
