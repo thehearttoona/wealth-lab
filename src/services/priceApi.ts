@@ -30,6 +30,37 @@ async function fetchWithTimeout(url: string, timeout = 8000): Promise<Response> 
   }
 }
 
+// ========================
+// /api/* proxy — ปลายทางต่างกันระหว่าง dev กับ production
+// ========================
+// `/api/yahoo-quote` เป็น Vercel serverless function มีจริงเฉพาะบนโดเมนที่ deploy แล้ว
+// ตอน dev (Metro :8081) ไม่มี route นี้ Metro เลยตอบ index.html กลับมาพร้อม status 200
+// → res.ok เป็น true → res.json() พังเป็น "Unexpected token '<', \"<!DOCTYPE \"..."
+// (เห็นเป็น "Error checking red days for XXX" รัว ๆ ใน console ตอน dev)
+// แก้โดยยิงข้ามไปที่โดเมน production เมื่อไม่ได้รันบนโดเมนนั้น — ฟังก์ชันฝั่งโน้นใส่
+// Access-Control-Allow-Origin: * ไว้แล้ว เรียกข้ามโดเมนได้ไม่ติด CORS
+const PROD_API_ORIGIN = 'https://wealth-lab-omega.vercel.app';
+
+// true = ไม่ได้รันบนโดเมนที่มี /api ให้ใช้ (dev บน localhost/LAN IP หรือ native ที่ไม่มี window.location)
+const needsRemoteApi = (): boolean => {
+  const host = typeof window !== 'undefined' ? window.location?.hostname : undefined;
+  if (!host) return true; // iOS/Android — path เปล่า ๆ ไม่มีความหมาย ต้องเป็น URL เต็ม
+  return host === 'localhost' || host === '127.0.0.1' || /^\d+\.\d+\.\d+\.\d+$/.test(host);
+};
+
+const apiUrl = (path: string): string => (needsRemoteApi() ? `${PROD_API_ORIGIN}${path}` : path);
+
+// อ่าน response เป็น JSON แบบไม่ระเบิด — ถ้าปลายทางตอบ HTML (เช่น หน้า 404 ของ SPA
+// หรือ Metro เสิร์ฟ index.html) จะได้ null กลับไปแทนที่จะ throw SyntaxError กลางคัน
+async function readJson(res: Response): Promise<any | null> {
+  if (!(res.headers.get('content-type') || '').includes('json')) return null;
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 async function getExchangeRates(): Promise<{ [key: string]: number }> {
   if (exchangeRateCache && Date.now() - exchangeRateCache.timestamp < CACHE_DURATION_MS) {
     return exchangeRateCache.rates;
@@ -234,14 +265,16 @@ export async function getCryptoPrices(
 // function instead, which fetches server-side (no CORS restriction there)
 // and adds its own CORS header for us to read.
 
-const TWELVE_DATA_API = 'https://api.twelvedata.com';
-const TWELVE_DATA_API_KEY = '1d533ad623aa46eea821c919e473d051';
+// คีย์ Twelve Data ต้องไม่หลุดมาฝั่ง client (เดิม hardcode ไว้ ใครเปิดเว็บก็อ่านจากบันเดิลไปใช้จนโควตาหมดได้)
+// เลยยิงผ่าน /api/twelve-data แทน แล้วให้ serverless function ใส่คีย์จาก env ให้เอง — ท่าเดียวกับ yahoo-quote
+const twelveDataUrl = (endpoint: 'quote' | 'symbol_search', symbol: string): string =>
+  apiUrl(`/api/twelve-data?endpoint=${endpoint}&symbol=${encodeURIComponent(symbol)}`);
 
 async function fetchYahooChart(symbol: string): Promise<{ price: number; currency: string } | null> {
   try {
-    const response = await fetchWithTimeout(`/api/yahoo-quote?symbol=${encodeURIComponent(symbol)}`);
+    const response = await fetchWithTimeout(apiUrl(`/api/yahoo-quote?symbol=${encodeURIComponent(symbol)}`));
     if (!response.ok) return null;
-    const data = await response.json();
+    const data = await readJson(response);
     const meta = data?.chart?.result?.[0]?.meta;
     if (!meta?.regularMarketPrice || !meta?.currency) return null;
     return { price: meta.regularMarketPrice, currency: meta.currency };
@@ -275,12 +308,10 @@ export async function getStockPrice(
   }
 
   try {
-    const response = await fetchWithTimeout(
-      `${TWELVE_DATA_API}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${TWELVE_DATA_API_KEY}`
-    );
+    const response = await fetchWithTimeout(twelveDataUrl('quote', symbol));
     if (response.ok) {
-      const data = await response.json();
-      if (data.status !== 'error' && data.close) {
+      const data = await readJson(response);
+      if (data && data.status !== 'error' && data.close) {
         const price = parseFloat(data.close);
         if (!isNaN(price)) return await convertCurrency(price, data.currency || 'USD', targetCurrency);
       }
@@ -317,15 +348,18 @@ export async function getGoldPrice(targetCurrency: string = 'THB'): Promise<numb
 // ========================
 
 export interface RedStreakAlert {
-  count: number;        // จำนวนแท่งแดงติดกันล่าสุด (เป็นเลขคู่เสมอ: 2, 4, 6…)
-  dropPercent: number;  // % ที่ลงตลอดสตรีค (open แท่งแรก → close แท่งล่าสุด, ค่าติดลบ)
+  count: number;        // จำนวนแท่งแดงติดกันล่าสุด (0 = แท่งล่าสุดไม่แดง)
+  dropPercent: number;  // % ที่ลงตลอดสตรีค (open แท่งแรก → close แท่งล่าสุด, ค่าติดลบ) — count=0 → 0
+  every: number;        // กฎที่ใช้: ครบทุก ๆ กี่แท่ง
+  met: boolean;         // ครบรอบแล้วหรือยัง (count >= every และหารลงตัว)
 }
 
 // นับ "แท่งแดงติดกันล่าสุด" (แท่งแดง = close < open) จากแท่งท้ายสุดไล่ย้อนขึ้นไป
-// แจ้งเตือนเฉพาะเมื่อจำนวนแท่งแดงติดกันเป็น "เลขคู่" (2, 4, 6…) เท่านั้น
-// เลขคี่ (1, 3, 5…) → คืน null ต่อให้แดงติดกันก็ไม่แจ้ง
+// แจ้งเตือนเฉพาะเมื่อจำนวนแท่งแดงติดกันครบทุก ๆ `every` แท่ง (every, 2×every, 3×every…)
+// ค่าเริ่มต้น every=2 → เตือนที่ 2/4/6 เลขคี่ไม่เตือน (กฎเดิมของแอป)
 // คืน % ที่ลงตลอดสตรีค (ค่าติดลบ) — ไม่เข้าเงื่อนไข → null
-function recentEvenRedStreak(opens: any[], closes: any[]): RedStreakAlert | null {
+function recentEvenRedStreak(opens: any[], closes: any[], every = 2): RedStreakAlert | null {
+  const step = Number.isFinite(every) && every >= 1 ? Math.floor(every) : 2;
   const pairs: [number, number][] = [];
   for (let i = 0; i < opens.length; i++) {
     const o = parseFloat(opens[i]);
@@ -339,28 +373,68 @@ function recentEvenRedStreak(opens: any[], closes: any[]): RedStreakAlert | null
     if (c < o) streak++;
     else break;
   }
-  // ต้องแดงติดกันอย่างน้อย 2 แท่ง และเป็นเลขคู่เท่านั้น
-  if (streak < 2 || streak % 2 !== 0) return null;
+  // คืนสถานะเสมอ แม้ยังไม่ครบรอบ — หน้าจอต้องบอกได้ว่า "กฎมีผลอยู่ แต่ยังไม่ถึงคิว"
+  // ไม่งั้นตั้งกฎแล้วจอเงียบ แยกไม่ออกระหว่าง "ยังไม่ครบ" กับ "ตั้งไม่ติด"
+  const met = streak >= step && streak % step === 0;
+  if (streak === 0 || pairs.length === 0) return { count: 0, dropPercent: 0, every: step, met: false };
   const firstIdx = pairs.length - streak;
   const startOpen = pairs[firstIdx][0];
   const lastClose = pairs[pairs.length - 1][1];
-  return { count: streak, dropPercent: ((lastClose - startOpen) / startOpen) * 100 };
+  return {
+    count: streak,
+    dropPercent: ((lastClose - startOpen) / startOpen) * 100,
+    every: step,
+    met,
+  };
 }
 
-// คืนข้อมูลแดงติดกันเป็นเลขคู่ในช่วงล่าสุด, null = ไม่เข้าเงื่อนไข/เช็คไม่ได้
-// นับเฉพาะ "แท่งที่ปิดแล้วจริง" — ตัดแท่งวันปัจจุบันที่ยังวิ่งอยู่ (intraday) ออกก่อนเสมอ
-export async function getTwoRedDays(type: string, symbol: string): Promise<RedStreakAlert | null> {
+// แปลงกรอบเวลาของแอป → พารามิเตอร์ของแต่ละ API
+// Yahoo ต้องขอ range ยาวขึ้นตามกรอบ ไม่งั้นได้แท่งไม่กี่แท่ง จับสตรีคยาว ๆ ไม่เจอ
+const CANDLE_PARAMS: Record<string, { binance: string; yahoo: string; range: string }> = {
+  day: { binance: '1d', yahoo: '1d', range: '1mo' },
+  week: { binance: '1w', yahoo: '1wk', range: '1y' },
+  month: { binance: '1M', yahoo: '1mo', range: '5y' },
+};
+
+// ต้นคาบ (จันทร์ของสัปดาห์ / วันที่ 1 ของเดือน) — ใช้เทียบว่าแท่งท้ายสุดยังอยู่ในคาบปัจจุบันไหม
+const periodStart = (ms: number, interval: string): number => {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  if (interval === 'month') return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  const dow = (d.getDay() + 6) % 7; // จันทร์ = 0
+  d.setDate(d.getDate() - dow);
+  return d.getTime();
+};
+
+const inCurrentPeriod = (ms: number, interval: string): boolean =>
+  periodStart(ms, interval) === periodStart(Date.now(), interval);
+
+export interface RedStreakOptions {
+  interval?: string; // 'day' | 'week' | 'month' (ไม่ระบุ = day)
+  every?: number;    // เตือนทุก ๆ N แท่ง (ไม่ระบุ = 2)
+}
+
+// คืนข้อมูลแดงติดกันครบรอบในช่วงล่าสุด, null = ไม่เข้าเงื่อนไข/เช็คไม่ได้
+// นับเฉพาะ "แท่งที่ปิดแล้วจริง" — ตัดแท่งปัจจุบันที่ยังวิ่งอยู่ออกก่อนเสมอ
+export async function getTwoRedDays(
+  type: string,
+  symbol: string,
+  opts: RedStreakOptions = {}
+): Promise<RedStreakAlert | null> {
+  const tf = CANDLE_PARAMS[opts.interval || 'day'] || CANDLE_PARAMS.day;
+  const every = opts.every && opts.every >= 1 ? opts.every : 2;
   try {
     if (type === 'crypto') {
       const up = symbol.toUpperCase();
-      // ดึงย้อนหลังมากพอ (15 แท่ง) ให้จับสตรีคคู่ที่ยาวได้ (เช่น 6/8 แท่ง)
-      const res = await fetchWithTimeout(`${BINANCE_API}/klines?symbol=${up}USDT&interval=1d&limit=15`);
+      // ดึงย้อนหลังมากพอ (15 แท่ง) ให้จับสตรีคที่ยาวได้ (เช่น 6/8 แท่ง)
+      const res = await fetchWithTimeout(`${BINANCE_API}/klines?symbol=${up}USDT&interval=${tf.binance}&limit=15`);
       if (!res.ok) return null; // เหรียญไม่มีคู่เทรดบน Binance
       const data: any[] = await res.json(); // [[openTime, open, high, low, close, ..., closeTime, ...], ...]
       // เก็บเฉพาะแท่งที่ปิดแล้ว: closeTime (index 6, ms) ต้องผ่านมาแล้ว
+      // (ใช้ได้กับทุกกรอบเวลา — สัปดาห์/เดือนที่ยังไม่จบก็ถูกตัดด้วยเงื่อนไขเดียวกัน)
       const now = Date.now();
       const closed = data.filter((k) => Number(k[6]) <= now);
-      return recentEvenRedStreak(closed.map((k) => k[1]), closed.map((k) => k[4]));
+      return recentEvenRedStreak(closed.map((k) => k[1]), closed.map((k) => k[4]), every);
     }
     if (type === 'stock_th' || type === 'stock_foreign') {
       const attempts = symbol.includes('.')
@@ -369,25 +443,35 @@ export async function getTwoRedDays(type: string, symbol: string): Promise<RedSt
           ? [`${symbol}.BK`, symbol]
           : [symbol, `${symbol}.BK`];
       for (const s of attempts) {
-        const res = await fetchWithTimeout(`/api/yahoo-quote?symbol=${encodeURIComponent(s)}&range=1mo&interval=1d`);
+        const res = await fetchWithTimeout(apiUrl(`/api/yahoo-quote?symbol=${encodeURIComponent(s)}&range=${tf.range}&interval=${tf.yahoo}`));
         if (!res.ok) continue;
-        const data = await res.json();
+        const data = await readJson(res);
+        if (!data) continue; // ได้ HTML แทน JSON = ปลายทางไม่มี /api ให้ใช้ ลอง symbol ถัดไป
         const result = data?.chart?.result?.[0];
         const q = result?.indicators?.quote?.[0];
         if (!q?.open || !q?.close) continue;
         let opens: any[] = q.open;
         let closes: any[] = q.close;
-        // ตัดแท่งวันปัจจุบันที่ session ยังไม่ปิดออก (ใช้ meta.currentTradingPeriod.regular)
+        // ตัด "แท่งที่ยังไม่ปิด" ออกก่อนนับเสมอ — วิธีเช็คต่างกันตามกรอบเวลา
         const ts: number[] | undefined = result?.timestamp;
-        const reg = result?.meta?.currentTradingPeriod?.regular; // { start, end } (วินาที)
         const lastTs = ts?.[ts.length - 1];
-        const nowSec = Date.now() / 1000;
-        if (reg && lastTs != null && lastTs >= reg.start && nowSec < reg.end) {
-          // แท่งท้ายสุด = session ปัจจุบันที่ยังไม่ปิด → ตัดทิ้ง
+        let dropLast = false;
+        if (lastTs != null) {
+          if (opts.interval === 'week' || opts.interval === 'month') {
+            // แท่งสัปดาห์/เดือนใช้ timestamp = ต้นคาบ ถ้าตกอยู่ในคาบปัจจุบัน = ยังวิ่งอยู่
+            // (เทียบเป็นคาบ ไม่ใช่ตัดแท่งท้ายทิ้งดื้อ ๆ เพราะถ้าคาบปิดไปแล้วจะทำให้สตรีคขาด)
+            dropLast = inCurrentPeriod(lastTs * 1000, opts.interval);
+          } else {
+            // รายวัน: ใช้ session ของตลาดจริง (meta.currentTradingPeriod.regular, หน่วยวินาที)
+            const reg = result?.meta?.currentTradingPeriod?.regular;
+            dropLast = !!reg && lastTs >= reg.start && Date.now() / 1000 < reg.end;
+          }
+        }
+        if (dropLast) {
           opens = opens.slice(0, -1);
           closes = closes.slice(0, -1);
         }
-        return recentEvenRedStreak(opens, closes);
+        return recentEvenRedStreak(opens, closes, every);
       }
       return null;
     }
@@ -445,12 +529,10 @@ export async function searchStockList(
 
     // Twelve Data symbol search — Yahoo Finance's search endpoint doesn't send
     // CORS headers, so it can't be called from a browser at all (tested)
-    const response = await fetchWithTimeout(
-      `${TWELVE_DATA_API}/symbol_search?symbol=${encodeURIComponent(query.trim())}&apikey=${TWELVE_DATA_API_KEY}`
-    );
+    const response = await fetchWithTimeout(twelveDataUrl('symbol_search', query.trim()));
     if (!response.ok) throw new Error('Twelve Data symbol search failed');
 
-    const data = await response.json();
+    const data = await readJson(response);
     const results: any[] = data?.data || [];
 
     // รับหุ้นสามัญ, ETF และ ADR/DR (เช่น TSMC ซื้อได้จริงในรูป ADR "TSM" บน NYSE)

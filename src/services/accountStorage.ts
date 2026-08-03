@@ -1,11 +1,5 @@
 import { Account } from '../types/account';
-import { supabase } from './supabase';
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
+import { supabase, getUserId } from './supabase';
 
 // mapper: accounts (DB snake_case ↔ TS camelCase)
 const mapFromDb = (row: any): Account => ({

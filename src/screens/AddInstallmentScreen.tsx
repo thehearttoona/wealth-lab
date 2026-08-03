@@ -15,6 +15,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, InstallmentPlan } from '../types';
 import { saveInstallmentPlan, updateInstallmentPlan } from '../services/installmentStorage';
 import { EXPENSE_CATEGORIES, COLORS, formatCurrency } from '../utils/constants';
+import { notify } from '../utils/dialog';
 import { getCurrentMonthKey, addMonths } from '../utils/installments';
 import { useResponsive } from '../utils/responsive';
 
@@ -60,11 +61,6 @@ export default function AddInstallmentScreen() {
     }
   }, [totalAmount, totalMonths, isInstallment, monthlyAmountTouched]);
 
-  const showMsg = (msg: string) => {
-    if (Platform.OS === 'web') window.alert(msg);
-    else Alert.alert('', msg);
-  };
-
   const formatMonthLabel = (monthKey: string) => {
     const [y, m] = monthKey.split('-').map(Number);
     return new Date(y, m - 1, 1).toLocaleDateString('th-TH', { year: 'numeric', month: 'long' });
@@ -72,16 +68,16 @@ export default function AddInstallmentScreen() {
 
   const handleSave = async () => {
     const total = parseFloat(totalAmount.replace(/,/g, ''));
-    if (!name.trim()) { showMsg('กรุณากรอกชื่อรายการ'); return; }
-    if (!total || total <= 0) { showMsg('กรุณากรอกยอดเงินที่ถูกต้อง'); return; }
+    if (!name.trim()) { notify('กรุณากรอกชื่อรายการ'); return; }
+    if (!total || total <= 0) { notify('กรุณากรอกยอดเงินที่ถูกต้อง'); return; }
 
     const months = isInstallment ? parseInt(totalMonths, 10) : 1;
     if (isInstallment && (!months || months < 2)) {
-      showMsg('จำนวนงวดผ่อนต้องมากกว่า 1 เดือน');
+      notify('จำนวนงวดผ่อนต้องมากกว่า 1 เดือน');
       return;
     }
     const perMonth = parseFloat(monthlyAmount.replace(/,/g, ''));
-    if (!perMonth || perMonth <= 0) { showMsg('กรุณากรอกยอดต่อเดือนที่ถูกต้อง'); return; }
+    if (!perMonth || perMonth <= 0) { notify('กรุณากรอกยอดต่อเดือนที่ถูกต้อง'); return; }
 
     const planData: InstallmentPlan = {
       id: plan?.id || Date.now().toString(),
@@ -100,10 +96,10 @@ export default function AddInstallmentScreen() {
       } else {
         await saveInstallmentPlan(planData);
       }
-      showMsg(isEditing ? 'แก้ไขรายการแล้ว' : 'บันทึกรายการแล้ว');
+      notify(isEditing ? 'แก้ไขรายการแล้ว' : 'บันทึกรายการแล้ว');
       navigation.goBack();
     } catch {
-      showMsg('บันทึกไม่สำเร็จ กรุณาลองใหม่');
+      notify('บันทึกไม่สำเร็จ กรุณาลองใหม่');
     }
   };
 
@@ -216,7 +212,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   content: { padding: 24 },
   label: {
-    fontSize: 11, fontWeight: '400', fontFamily: 'NotoSansThai_400Regular',
+    fontSize: 11, fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5, textTransform: 'uppercase', color: COLORS.textSecondary,
     marginBottom: 12, marginTop: 24,
   },
@@ -251,7 +247,7 @@ const styles = StyleSheet.create({
   },
   monthNavBtn: { padding: 16 },
   monthNavigatorLabel: {
-    fontSize: 15, fontWeight: '600', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text,
+    fontSize: 15, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text,
   },
 
   summaryHint: {
@@ -264,7 +260,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 40, borderWidth: 1, borderColor: COLORS.primary,
   },
   saveButtonText: {
-    color: '#ffffff', fontSize: 13, fontWeight: '400',
+    color: '#ffffff', fontSize: 13, 
     fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.5, textTransform: 'uppercase',
   },
 });

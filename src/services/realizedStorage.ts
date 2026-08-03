@@ -1,15 +1,9 @@
 import { RealizedTrade } from '../types/investment';
-import { supabase } from './supabase';
+import { supabase, getUserId } from './supabase';
 
 // เก็บ "การขายที่เกิดขึ้นจริง" — ตารางแยกจาก investments โดยตั้งใจ
 // เพราะพอขายหมดแล้วรายการลงทุนจะถูกลบ แต่ประวัติผลตอบแทนจริงต้องอยู่ต่อ
 // (ต้องรัน SQL ใน sql/realized_trades.sql ที่ Supabase console ก่อนใช้งาน)
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
 
 const mapFromDb = (row: any): RealizedTrade => ({
   id: row.id,

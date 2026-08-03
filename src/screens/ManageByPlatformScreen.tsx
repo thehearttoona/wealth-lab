@@ -6,8 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
-  Platform,
   ActivityIndicator,
   Modal,
 } from 'react-native';
@@ -35,6 +33,8 @@ import { searchFundList } from '../services/fundCatalog';
 import { getPlatforms } from '../services/platformStorage';
 import { getCurrencies } from '../services/currencyStorage';
 import { formatCurrencyWithType, COLORS } from '../utils/constants';
+import { notify, confirmAsk } from '../utils/dialog';
+import { useResponsive } from '../utils/responsive';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'ManageByPlatform'>;
 
@@ -85,25 +85,16 @@ interface AddRow {
   hits?: SymbolHit[];   // ผลค้นหาที่ยังไม่ได้เลือก
 }
 
-const alertMsg = (msg: string) => {
-  if (Platform.OS === 'web') window.alert(msg);
-  else Alert.alert('', msg);
-};
-
-const confirmMsg = (msg: string): Promise<boolean> =>
-  new Promise((resolve) => {
-    if (Platform.OS === 'web') {
-      resolve(window.confirm(msg));
-    } else {
-      Alert.alert('ยืนยัน', msg, [
-        { text: 'ยกเลิก', style: 'cancel', onPress: () => resolve(false) },
-        { text: 'ตกลง', style: 'destructive', onPress: () => resolve(true) },
-      ]);
-    }
-  });
+const confirmMsg = (msg: string): Promise<boolean> => confirmAsk('ยืนยัน', msg);
 
 export default function ManageByPlatformScreen() {
   const navigation = useNavigation<Nav>();
+  const { isDesktop, contentMaxWidth } = useResponsive();
+
+  // เนื้อหาคอลัมน์เดียว — บนเดสก์ท็อปคุมความกว้างไว้ ไม่ให้ฟอร์มยืดเต็มจอ
+  const wide = isDesktop
+    ? { maxWidth: contentMaxWidth, width: '100%' as const, alignSelf: 'center' as const }
+    : null;
 
   const [mode, setMode] = useState<'edit' | 'add'>('edit');
   const [investments, setInvestments] = useState<Investment[]>([]);
@@ -198,7 +189,7 @@ export default function ManageByPlatformScreen() {
       setMoveVisible(false);
       setMovePlatform('');
     } catch {
-      alertMsg('ย้ายแพลตฟอร์มไม่สำเร็จ');
+      notify('ย้ายแพลตฟอร์มไม่สำเร็จ');
     } finally {
       setBusy(false);
     }
@@ -220,13 +211,13 @@ export default function ManageByPlatformScreen() {
       }
       await load();
       setSelected([]);
-      alertMsg(
+      notify(
         targets.length === 0
           ? 'รายการที่เลือกดึงราคาอัตโนมัติไม่ได้ (กองทุน/อื่นๆ ต้องกรอกเอง)'
           : `อัปเดตราคาสำเร็จ ${ok}/${targets.length} รายการ`
       );
     } catch {
-      alertMsg('ดึงราคาไม่สำเร็จ');
+      notify('ดึงราคาไม่สำเร็จ');
     } finally {
       setBusy(false);
     }
@@ -241,7 +232,7 @@ export default function ManageByPlatformScreen() {
       await load();
       setSelected([]);
     } catch {
-      alertMsg('ลบไม่สำเร็จ');
+      notify('ลบไม่สำเร็จ');
     } finally {
       setBusy(false);
     }
@@ -260,17 +251,17 @@ export default function ManageByPlatformScreen() {
     if (!r) return;
     const q = r.symbol.trim();
     if (!q) {
-      alertMsg('พิมพ์ตัวย่อหรือชื่อที่อยากค้นก่อน');
+      notify('พิมพ์ตัวย่อหรือชื่อที่อยากค้นก่อน');
       return;
     }
     updateRow(key, { searching: true, hits: [] });
     try {
       const hits = await searchByType(r.type, q);
       updateRow(key, { searching: false, hits });
-      if (hits.length === 0) alertMsg('ไม่พบรายการที่ค้น — พิมพ์ชื่อเต็มเองได้');
+      if (hits.length === 0) notify('ไม่พบรายการที่ค้น — พิมพ์ชื่อเต็มเองได้');
     } catch {
       updateRow(key, { searching: false, hits: [] });
-      alertMsg('ค้นหาไม่สำเร็จ (เน็ต/โควตา API) — พิมพ์ชื่อเต็มเองได้');
+      notify('ค้นหาไม่สำเร็จ (เน็ต/โควตา API) — พิมพ์ชื่อเต็มเองได้');
     }
   };
 
@@ -295,7 +286,7 @@ export default function ManageByPlatformScreen() {
     const r = { ...base, ...override };
     const sym = r.symbol.trim();
     if (!sym) {
-      alertMsg('กรอกตัวย่อ/รหัสก่อน');
+      notify('กรอกตัวย่อ/รหัสก่อน');
       return;
     }
     updateRow(key, { fetching: true });
@@ -322,17 +313,17 @@ export default function ManageByPlatformScreen() {
       const gotName = !!name.trim() && !r.name.trim();
       const gotPrice = price !== null && price > 0;
       if (!gotPrice && FETCHABLE.includes(r.type)) {
-        alertMsg(
+        notify(
           gotName
             ? `ได้ชื่อ "${name}" แล้ว แต่ดึงราคาไม่ได้ — กรอกราคาปัจจุบันเอง`
             : 'ดึงข้อมูลไม่ได้ — ตรวจตัวย่อหรือกรอกเอง'
         );
       } else if (!gotPrice && !gotName && !r.name.trim()) {
-        alertMsg('ประเภทนี้ไม่มีราคาอัตโนมัติ — กรอกชื่อกับราคาเอง');
+        notify('ประเภทนี้ไม่มีราคาอัตโนมัติ — กรอกชื่อกับราคาเอง');
       }
     } catch {
       updateRow(key, { fetching: false });
-      alertMsg('ดึงข้อมูลไม่ได้');
+      notify('ดึงข้อมูลไม่ได้');
     }
   };
 
@@ -342,7 +333,7 @@ export default function ManageByPlatformScreen() {
       (r) => r.symbol.trim() || r.name.trim() || r.quantity.trim() || r.buyPrice.trim()
     );
     if (filled.length === 0) {
-      alertMsg('ยังไม่มีรายการให้บันทึก');
+      notify('ยังไม่มีรายการให้บันทึก');
       return;
     }
     const invs: Investment[] = [];
@@ -354,7 +345,7 @@ export default function ManageByPlatformScreen() {
         !(parseFloat(r.quantity) > 0) ||
         !(parseFloat(r.buyPrice) > 0)
       ) {
-        alertMsg(`แถวที่ ${i + 1} กรอกไม่ครบ (ต้องมีตัวย่อ, ชื่อ, จำนวน, ราคา)`);
+        notify(`แถวที่ ${i + 1} กรอกไม่ครบ (ต้องมีตัวย่อ, ชื่อ, จำนวน, ราคา)`);
         return;
       }
       invs.push({
@@ -375,9 +366,9 @@ export default function ManageByPlatformScreen() {
       await saveInvestments(invs);
       await load();
       setAddRows([emptyRow()]);
-      alertMsg(`บันทึก ${invs.length} รายการเรียบร้อย`);
+      notify(`บันทึก ${invs.length} รายการเรียบร้อย`);
     } catch {
-      alertMsg('บันทึกไม่สำเร็จ');
+      notify('บันทึกไม่สำเร็จ');
     } finally {
       setBusy(false);
     }
@@ -428,7 +419,7 @@ export default function ManageByPlatformScreen() {
         <>
           <ScrollView
             style={styles.body}
-            contentContainerStyle={{ padding: 16, paddingBottom: selected.length > 0 ? 96 : 24 }}
+            contentContainerStyle={[{ padding: 16, paddingBottom: selected.length > 0 ? 96 : 24 }, wide]}
           >
             {groups.length === 0 ? (
               <Text style={styles.empty}>ยังไม่มีการลงทุน{'\n'}ไปที่โหมด "เพิ่มหลายรายการ" เพื่อเริ่มได้เลย</Text>
@@ -518,7 +509,7 @@ export default function ManageByPlatformScreen() {
 
       {/* ═══════════ โหมดเพิ่ม ═══════════ */}
       {mode === 'add' && (
-        <ScrollView style={styles.body} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        <ScrollView style={styles.body} contentContainerStyle={[{ padding: 16, paddingBottom: 40 }, wide]}>
           <Text style={styles.label}>แพลตฟอร์มของทั้งชุดนี้</Text>
           <View style={styles.chips}>
             {platformOptions.map((p) => (
@@ -689,7 +680,11 @@ export default function ManageByPlatformScreen() {
       {/* Modal เลือกแพลตฟอร์มปลายทาง (ย้าย) */}
       <Modal visible={moveVisible} transparent animationType="fade" onRequestClose={() => setMoveVisible(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <ScrollView
+            style={styles.modalCard}
+            contentContainerStyle={styles.modalCardContent}
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalTitle}>ย้าย {selected.length} รายการไปที่</Text>
             <View style={styles.chips}>
               {platformOptions.map((p) => (
@@ -727,7 +722,7 @@ export default function ManageByPlatformScreen() {
                 )}
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -966,9 +961,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'center',
+    alignItems: 'center',
     padding: 24,
   },
-  modalCard: { backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border, padding: 20 },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '100%',
+    flexGrow: 0,
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  modalCardContent: { padding: 20 },
   modalTitle: { fontSize: 15, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, marginBottom: 16 },
   modalBtns: { flexDirection: 'row', gap: 12, marginTop: 8 },
   modalBtn: {

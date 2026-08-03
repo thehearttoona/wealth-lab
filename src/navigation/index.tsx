@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, createContext, useContext, useCallback } from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
 import LoginScreen from '../screens/LoginScreen';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,13 +23,9 @@ function HomeIcon({ size = 24, color = '#000' }: { size?: number; color?: string
 import { RootStackParamList } from '../types';
 import HomeScreen from '../screens/HomeScreen';
 import AddExpenseScreen from '../screens/AddExpenseScreen';
-import RecurringBillsScreen from '../screens/RecurringBillsScreen';
 import PortfolioScreen from '../screens/PortfolioScreen';
 import AddInvestmentScreen from '../screens/AddInvestmentScreen';
 import ManageByPlatformScreen from '../screens/ManageByPlatformScreen';
-import AddTradingOrderScreen from '../screens/AddTradingOrderScreen';
-import ExpenseTrackingScreen from '../screens/ExpenseTrackingScreen';
-import AddMonthlySummaryScreen from '../screens/AddMonthlySummaryScreen';
 import AddIncomeScreen from '../screens/AddIncomeScreen';
 import IncomeScreen from '../screens/IncomeScreen';
 import InstallmentsScreen from '../screens/InstallmentsScreen';
@@ -37,24 +33,34 @@ import AddInstallmentScreen from '../screens/AddInstallmentScreen';
 import AccountsScreen from '../screens/AccountsScreen';
 import ImportStatementScreen from '../screens/ImportStatementScreen';
 import ManageCatalogScreen from '../screens/ManageCatalogScreen';
+import ProfileScreen from '../screens/ProfileScreen';
+import OverviewScreen from '../screens/OverviewScreen';
+import StatisticsScreen from '../screens/StatisticsScreen';
 import { refreshCurrencyCache } from '../services/currencyStorage';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
-import AIAssistant from '../components/AIAssistant';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+// ref ไว้สั่ง "เด้งกลับหน้าแท็บ" ตอนกดไซด์บาร์ขณะเปิดหน้าลูกค้างอยู่
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+// แท็บที่ไซด์บาร์เลือกไว้ — state อยู่เหนือ NavigationContainer (ดู DesktopShell ท้ายไฟล์)
+// จึงต้องส่งลงมาให้ screen ราก (ที่อยู่ข้างใน) ผ่าน context
+const DesktopTabContext = createContext<string>('HomeTab');
+
 const TAB_ITEMS = [
   {
-    name: 'ExpenseTrackingTab',
-    title: 'Home',
+    name: 'HomeTab',
+    title: 'หน้าหลัก',
     icon: 'home',
     iconOutline: 'home-outline',
     customIcon: (size: number, color: string) => <HomeIcon size={size} color={color} />,
-    component: ExpenseTrackingScreen,
+    component: HomeScreen,
   },
-  { name: 'PortfolioTab', title: 'Port', icon: 'briefcase', iconOutline: 'briefcase-outline', customIcon: null, component: PortfolioScreen },
+  { name: 'PortfolioTab', title: 'พอร์ต', icon: 'briefcase', iconOutline: 'briefcase-outline', customIcon: null, component: PortfolioScreen },
+  { name: 'ProfileTab', title: 'โปรไฟล์', icon: 'person', iconOutline: 'person-outline', customIcon: null, component: ProfileScreen },
 ];
 
 function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPress: (name: string) => void }) {
@@ -67,7 +73,6 @@ function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPre
           resizeMode="contain"
           alt="Pakmut Wealth"
         />
-        <Text style={sidebarStyles.logoText}></Text>
       </View>
       <ScrollView style={sidebarStyles.navList}>
         {TAB_ITEMS.map((item) => {
@@ -93,22 +98,12 @@ function DesktopSidebar({ activeTab, onTabPress }: { activeTab: string; onTabPre
   );
 }
 
-function DesktopTabNavigator() {
-  const [activeTab, setActiveTab] = useState('ExpenseTrackingTab');
-  const { sidebarWidth } = useResponsive();
-
-  const ActiveComponent = TAB_ITEMS.find((item) => item.name === activeTab)?.component || ExpenseTrackingScreen;
-
-  return (
-    <View style={[desktopStyles.container]}>
-      <View style={[{ width: sidebarWidth }]}>
-        <DesktopSidebar activeTab={activeTab} onTabPress={setActiveTab} />
-      </View>
-      <View style={desktopStyles.content}>
-        <ActiveComponent />
-      </View>
-    </View>
-  );
+// หน้าจอรากของ Stack บนเดสก์ท็อป — แค่สลับ component ตามแท็บที่ไซด์บาร์เลือก
+// ไซด์บาร์ไม่ได้อยู่ในนี้แล้ว (อยู่นอก NavigationContainer) เพื่อให้ push หน้าลูกแล้วไซด์บาร์ยังอยู่
+function DesktopRootScreen() {
+  const activeTab = useContext(DesktopTabContext);
+  const ActiveComponent = TAB_ITEMS.find((item) => item.name === activeTab)?.component || HomeScreen;
+  return <ActiveComponent />;
 }
 
 function MobileTabNavigator() {
@@ -126,7 +121,7 @@ function MobileTabNavigator() {
           paddingTop: 0,
         },
         tabBarItemStyle: { paddingVertical: 4 },
-        tabBarLabelStyle: { fontSize: 10, fontFamily: 'Nunito_600SemiBold', marginTop: 2 },
+        tabBarLabelStyle: { fontSize: 10, fontFamily: 'NotoSansThai_600SemiBold', marginTop: 2 },
       }}
     >
       {TAB_ITEMS.map((item) => (
@@ -147,20 +142,37 @@ function MobileTabNavigator() {
   );
 }
 
-function TabNavigator() {
-  const { isDesktop } = useResponsive();
-  return isDesktop ? <DesktopTabNavigator /> : <MobileTabNavigator />;
-}
-
 export default function Navigation() {
   const { user, loading } = useAuth();
+  const { isDesktop, sidebarWidth } = useResponsive();
+  const [activeTab, setActiveTab] = useState('HomeTab');
 
-  // โหลดสกุลเงินที่ผู้ใช้ตั้งเองเข้าแคชของ convertToTHB ก่อนหน้าจอไหนจะคิดมูลค่ารวม
+  // กดแท็บบนไซด์บาร์ขณะเปิดหน้าลูกอยู่ (เช่น "บัญชีของฉัน") ต้องเด้งกลับหน้าแท็บก่อน
+  // ไม่งั้นจะกดแล้วเหมือนไม่มีอะไรเกิดขึ้น เพราะหน้าลูกทับอยู่
+  const handleTabPress = useCallback((name: string) => {
+    setActiveTab(name);
+    if (navigationRef.isReady()) navigationRef.navigate('Pakmut Wealth', undefined);
+  }, []);
+
+  // แคชเรตของ convertToTHB เป็นตัวแปรระดับโมดูล ไม่ใช่ state — โหลดเสร็จแล้วไม่มีอะไร re-render
+  // ถ้าปล่อยหน้าจอออกไปก่อน ยอดรวมจะถูกคิดด้วยเรต hardcode (USD 35) แล้วค้างผิดจนกว่าจะเปลี่ยนหน้า
+  // เลยต้อง gate ไว้เหมือนที่ App.tsx รอฟอนต์ ยอมขึ้น spinner แป๊บเดียวดีกว่าโชว์ตัวเลขผิด
+  const [currencyReady, setCurrencyReady] = useState(false);
+
   useEffect(() => {
-    if (user) refreshCurrencyCache();
+    if (!user) {
+      setCurrencyReady(false);
+      return;
+    }
+    let cancelled = false;
+    // refreshCurrencyCache กลืน error เองอยู่แล้ว (ล้มเหลว = ใช้เรตเริ่มต้น) จึงไม่ต้อง catch ซ้ำ
+    refreshCurrencyCache().finally(() => {
+      if (!cancelled) setCurrencyReady(true);
+    });
+    return () => { cancelled = true; };
   }, [user]);
 
-  if (loading) {
+  if (loading || (user && !currencyReady)) {
     return (
       <View style={{ flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator color={COLORS.primary} size="large" />
@@ -172,8 +184,8 @@ export default function Navigation() {
     return <LoginScreen />;
   }
 
-  return (
-    <NavigationContainer>
+  const stack = (
+    <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
         screenOptions={{
           headerStyle: {
@@ -189,7 +201,7 @@ export default function Navigation() {
       >
         <Stack.Screen
           name="Pakmut Wealth"
-          component={TabNavigator}
+          component={isDesktop ? DesktopRootScreen : MobileTabNavigator}
           options={{ headerShown: false }}
         />
         <Stack.Screen
@@ -221,16 +233,6 @@ export default function Navigation() {
               </TouchableOpacity>
             ),
           })}
-        />
-        <Stack.Screen
-          name="AddTradingOrder"
-          component={AddTradingOrderScreen}
-          options={{ title: 'บันทึกออเดอร์' }}
-        />
-        <Stack.Screen
-          name="AddMonthlySummary"
-          component={AddMonthlySummaryScreen}
-          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AddIncome"
@@ -274,8 +276,32 @@ export default function Navigation() {
           component={ImportStatementScreen}
           options={{ title: 'นำเข้า statement' }}
         />
+        <Stack.Screen
+          name="Overview"
+          component={OverviewScreen}
+          options={{ title: 'ภาพรวมการเงิน' }}
+        />
+        <Stack.Screen
+          name="Statistics"
+          component={StatisticsScreen}
+          options={{ title: 'สถิติ & ข้อสังเกต' }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
+  );
+
+  if (!isDesktop) return stack;
+
+  // เดสก์ท็อป: ไซด์บาร์เป็นเปลือกถาวรอยู่นอก Stack — กดเข้าหน้าลูกแล้วเมนูซ้ายไม่หาย
+  return (
+    <DesktopTabContext.Provider value={activeTab}>
+      <View style={desktopStyles.container}>
+        <View style={{ width: sidebarWidth }}>
+          <DesktopSidebar activeTab={activeTab} onTabPress={handleTabPress} />
+        </View>
+        <View style={desktopStyles.content}>{stack}</View>
+      </View>
+    </DesktopTabContext.Provider>
   );
 }
 
@@ -287,26 +313,18 @@ const sidebarStyles = StyleSheet.create({
     borderRightColor: COLORS.border,
   },
   logoSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: 16,
     paddingVertical: 16,
     marginBottom: 8,
-    gap: 10,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  // ยืดตามความกว้างไซด์บาร์ที่เหลือจริง (200/240 − padding) ห้าม fix width
+  // เดิมตั้ง 200 คู่กับ paddingHorizontal 24 → พื้นที่จริง 152px โลโก้เลยถูกตัดทุกครั้ง
+  // resizeMode="contain" จัดสัดส่วนให้เอง ไม่ต้องใส่ aspectRatio มาตีกับ width/height
   logoMark: {
-    height: 60,
-    width:200,
-    aspectRatio: 1536 / 1024,
-    flexShrink: 0,
-  },
-  logoText: {
-    fontSize: 16,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.primary,
-    letterSpacing: 0.3,
+    width: '100%',
+    height: 48,
   },
   navList: {
     flex: 1,

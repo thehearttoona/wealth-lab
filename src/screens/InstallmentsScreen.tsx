@@ -6,6 +6,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, InstallmentPlan } from '../types';
 import { getInstallmentPlans, deleteInstallmentPlan } from '../services/installmentStorage';
 import { formatCurrency, COLORS } from '../utils/constants';
+import { confirmAsk } from '../utils/dialog';
 import {
   getCurrentMonthKey,
   addMonths,
@@ -35,17 +36,9 @@ export default function InstallmentsScreen() {
   );
 
   const handleDelete = async (id: string) => {
-    if (Platform.OS === 'web') {
-      if (window.confirm('คุณต้องการลบรายการนี้ใช่หรือไม่?')) {
-        await deleteInstallmentPlan(id);
-        loadData();
-      }
-    } else {
-      Alert.alert('ลบรายการ', 'คุณต้องการลบรายการนี้ใช่หรือไม่?', [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: 'ลบ', style: 'destructive', onPress: async () => { await deleteInstallmentPlan(id); loadData(); } },
-      ]);
-    }
+    if (!(await confirmAsk('ลบรายการ', 'คุณต้องการลบรายการนี้ใช่หรือไม่?', 'ลบ'))) return;
+    await deleteInstallmentPlan(id);
+    loadData();
   };
 
   const currentMonth = getCurrentMonthKey();
@@ -147,7 +140,9 @@ export default function InstallmentsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  content: { padding: 16, paddingTop: 60 },
+  // paddingTop เดิม 60 เผื่อ status bar สมัยยังไม่มี header — ตอนนี้หน้านี้มี header ของ Stack แล้ว
+  // ค่าเดิมเลยกลายเป็นช่องว่างตายด้านบน (เห็นชัดสุดบนเดสก์ท็อปที่ไม่มี status bar)
+  content: { padding: 16 },
 
   estimateRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   estimateCard: {
@@ -158,14 +153,14 @@ const styles = StyleSheet.create({
     fontSize: 10, letterSpacing: 1, textTransform: 'uppercase',
     fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary, marginBottom: 8,
   },
-  estimateValue: { fontSize: 22, fontWeight: 'bold', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  estimateValue: { fontSize: 22, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
   estimateSub: { fontSize: 11, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary, marginTop: 4 },
 
   addButton: {
     backgroundColor: COLORS.primary, borderRadius: 0, padding: 16,
     alignItems: 'center', flexDirection: 'row', justifyContent: 'center', marginBottom: 20,
   },
-  addButtonText: { color: '#ffffff', fontSize: 16, fontWeight: '600', fontFamily: 'NotoSansThai_600SemiBold' },
+  addButtonText: { color: '#ffffff', fontSize: 16, fontFamily: 'NotoSansThai_600SemiBold' },
 
   sectionTitle: {
     fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase',
@@ -179,11 +174,11 @@ const styles = StyleSheet.create({
   },
   planContent: { flex: 1, padding: 16, flexDirection: 'row', justifyContent: 'space-between' },
   planLeft: { flex: 1 },
-  planName: { fontSize: 16, fontWeight: '600', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, marginBottom: 4 },
+  planName: { fontSize: 16, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, marginBottom: 4 },
   planCategory: { fontSize: 12, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary, marginBottom: 4 },
   planProgress: { fontSize: 12, fontFamily: 'NotoSansThai_300Light', color: COLORS.accent },
   planRight: { alignItems: 'flex-end', justifyContent: 'center' },
-  planAmount: { fontSize: 18, fontWeight: 'bold', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.primary },
+  planAmount: { fontSize: 18, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.primary },
   planAmountSub: { fontSize: 11, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary },
   deleteButton: {
     padding: 16, justifyContent: 'center', alignItems: 'center',

@@ -1,12 +1,6 @@
-import { supabase } from './supabase';
+import { supabase, getUserId } from './supabase';
 import { UserPlatform, INVESTMENT_PLATFORMS } from '../types/investment';
 import { isCatalogTableMissing } from './currencyStorage';
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
 
 const mapFromDb = (row: any): UserPlatform => ({
   id: row.id,

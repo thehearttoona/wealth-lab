@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, getUserId } from './supabase';
 import { convertToTHB } from '../utils/constants';
 
 // เงินรอลงทุน 1 รายการ — จดแยกตามแหล่งเงิน/โบรกได้ (เช่น "Dime 5,000", "โบนัส 20,000")
@@ -28,12 +28,6 @@ export const sumDryPowderItems = (items?: DryPowderItem[]): number =>
     (s, i) => s + (Number.isFinite(i.amount) ? convertToTHB(i.amount, i.currency ?? 'THB') : 0),
     0
   );
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
 
 export const getInvestmentPlan = async (): Promise<InvestmentPlan | null> => {
   const { data, error } = await supabase

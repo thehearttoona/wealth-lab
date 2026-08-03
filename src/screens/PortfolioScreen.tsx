@@ -5,7 +5,6 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Alert,
   ScrollView,
   Platform,
   ActivityIndicator,
@@ -23,6 +22,10 @@ import {
   INVESTMENT_TYPES,
   RealizedTrade,
   DEFAULT_CURRENCIES,
+  RedInterval,
+  RED_INTERVALS,
+  DEFAULT_RED_INTERVAL,
+  DEFAULT_RED_EVERY,
 } from '../types/investment';
 import { getCurrencies } from '../services/currencyStorage';
 import { getRealizedTrades, saveRealizedTrade, deleteRealizedTrade } from '../services/realizedStorage';
@@ -35,6 +38,7 @@ import {
   saveInvestment,
 } from '../services/investmentStorage';
 import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
+import { notify, confirmAsk } from '../utils/dialog';
 import { updateInvestmentPrice, getTwoRedDays } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
@@ -45,11 +49,8 @@ import {
   DryPowderItem,
   sumDryPowderItems,
 } from '../services/investmentPlanStorage';
-import { getAccounts } from '../services/accountStorage';
-import { Account } from '../types/account';
 import { getHoldingAnnualGrowth } from '../utils/holdingAnalysis';
 import { useResponsive } from '../utils/responsive';
-
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -58,7 +59,7 @@ type PortfolioScreenNavigationProp = NativeStackNavigationProp<
 
 export default function PortfolioScreen() {
   const navigation = useNavigation<PortfolioScreenNavigationProp>();
-  const { isDesktop } = useResponsive();
+  const { isDesktop, maxWidth } = useResponsive();
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [summary, setSummary] = useState<PortfolioSummary>({
     totalValue: 0,
@@ -83,10 +84,19 @@ export default function PortfolioScreen() {
   const [currencyOptions, setCurrencyOptions] = useState<string[]>(
     DEFAULT_CURRENCIES.map((c) => c.code)
   );
-  const [reserveAccounts, setReserveAccounts] = useState<Account[]>([]); // บัญชีบทบาท "รอลงทุน"
   // แท่งแดงติดกันเป็นเลขคู่ (2/4/6…) = สัญญาณลงไม้ตามกฎ "ลงทุก  2 แท่งแดง"
   const [redAlerts, setRedAlerts] = useState<
-    { type: InvestmentType; symbol: string; name: string; dropPercent: number; count: number }[]
+    {
+      type: InvestmentType;
+      symbol: string;
+      name: string;
+      dropPercent: number;
+      count: number;
+      interval: RedInterval; // กรอบเวลาที่ใช้นับ — ต้องโชว์ด้วย ไม่งั้น "แดง 2 แท่ง" ของแต่ละตัวคนละความหมาย
+      every: number;
+      met: boolean;          // ครบรอบแล้วหรือยัง — ยังไม่ครบก็เก็บไว้ เพื่อโชว์ความคืบหน้าที่การ์ดรายตัว
+      custom: boolean;       // ตั้งกฎเองไว้ไหม (ไม่ได้ใช้ค่าเริ่มต้น) — ใช้ตัดสินว่าจะโชว์บรรทัดกฎไหม
+    }[]
   >([]);
   // เช็คเสร็จหรือยัง — ต้องบอกให้รู้ว่า "เช็คแล้วไม่มี" ต่างจาก "ยังไม่ได้เช็ค/เช็คไม่ได้"
   const [redChecking, setRedChecking] = useState(false);
@@ -132,12 +142,6 @@ export default function PortfolioScreen() {
       setRealizedTrades([]);
     }
     try {
-      const accs = await getAccounts();
-      setReserveAccounts(accs.filter((a) => a.role === 'reserve'));
-    } catch {
-      setReserveAccounts([]);
-    }
-    try {
       // สกุลเงินที่ตั้งไว้เอง — ใช้เป็นตัวเลือกตอนจดเงินรอลงทุน
       const curList = await getCurrencies();
       if (curList.length > 0) setCurrencyOptions(curList.map((c) => c.code));
@@ -153,7 +157,14 @@ export default function PortfolioScreen() {
     setRedCheckedCount(candleTargets.length);
     setRedChecking(candleTargets.length > 0);
     Promise.all(
-      candleTargets.map(async (i) => ({ inv: i, alert: await getTwoRedDays(i.type, i.symbol) }))
+      candleTargets.map(async (i) => ({
+        inv: i,
+        // กฎรายตัว: ไม่ตั้งไว้ = รายวัน/ทุก 2 แท่ง (พฤติกรรมเดิม)
+        alert: await getTwoRedDays(i.type, i.symbol, {
+          interval: i.redInterval || DEFAULT_RED_INTERVAL,
+          every: i.redEvery || DEFAULT_RED_EVERY,
+        }),
+      }))
     )
       .then((results) =>
         setRedAlerts(
@@ -166,6 +177,10 @@ export default function PortfolioScreen() {
               name: r.inv.name,
               dropPercent: r.alert!.dropPercent,
               count: r.alert!.count,
+              interval: (r.inv.redInterval || DEFAULT_RED_INTERVAL) as RedInterval,
+              every: r.alert!.every,
+              met: r.alert!.met,
+              custom: !!r.inv.redInterval || !!r.inv.redEvery,
             }))
             // เรียงจากลบเยอะสุด → น้อยสุด (dropPercent เป็นค่าลบ)
             .sort((a, b) => a.dropPercent - b.dropPercent)
@@ -173,11 +188,6 @@ export default function PortfolioScreen() {
       )
       .catch(() => setRedAlerts([]))
       .finally(() => setRedChecking(false));
-  };
-
-  const showMsg = (msg: string) => {
-    if (Platform.OS === 'web') window.alert(msg);
-    else Alert.alert('', msg);
   };
 
   // ── บันทึกการขาย: ปลดล็อก "ผลตอบแทนจริง" แทนการเดาเลขคาดหวัง ──
@@ -200,11 +210,11 @@ export default function PortfolioScreen() {
     const date = toChristianYear(sellDateInput.trim()).slice(0, 10);
     const sellFee = parseFloat(sellFeesInput.replace(/,/g, '')) || 0;
     if (!qty || qty <= 0 || qty > sellTarget.quantity) {
-      showMsg(`จำนวนที่ขายต้องมากกว่า 0 และไม่เกิน ${sellTarget.quantity}`);
+      notify(`จำนวนที่ขายต้องมากกว่า 0 และไม่เกิน ${sellTarget.quantity}`);
       return;
     }
-    if (!price || price <= 0) { showMsg('กรุณากรอกราคาขาย'); return; }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { showMsg('วันที่ขายต้องเป็นรูปแบบ YYYY-MM-DD'); return; }
+    if (!price || price <= 0) { notify('กรุณากรอกราคาขาย'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { notify('วันที่ขายต้องเป็นรูปแบบ YYYY-MM-DD'); return; }
 
     // ค่าธรรมเนียมซื้อ ปันตามสัดส่วนที่ขาย แล้วบวกค่าธรรมเนียมขายที่กรอก
     const buyFeeShare = (sellTarget.fees || 0) * (qty / sellTarget.quantity);
@@ -281,7 +291,7 @@ export default function PortfolioScreen() {
       }
 
       setSellTarget(null);
-      showMsg(
+      notify(
         (sellToPowder && netProceedsNative > 0
           ? `บันทึกการขายแล้ว · เพิ่มเข้าเงินรอลงทุน ${formatCurrencyWithType(netProceedsNative, sellCurrency)}`
           : 'บันทึกการขายแล้ว') + powderWarn
@@ -289,7 +299,7 @@ export default function PortfolioScreen() {
       loadData();
     } catch (e: any) {
       const msg = String(e?.message || e);
-      showMsg(
+      notify(
         /realized_trades|does not exist|schema cache/i.test(msg)
           ? 'ยังไม่ได้สร้างตาราง — เอา sql/realized_trades.sql ไปรันที่ Supabase ก่อน'
           : `บันทึกการขายไม่สำเร็จ: ${msg}`
@@ -374,30 +384,23 @@ export default function PortfolioScreen() {
       clearFilters();
       // บอกให้ชัดว่าไปโผล่ที่ไหน — รวมกลับเข้าไม้เดิม หรือกลายเป็นแถวแยก (กันสับสนว่า "ไม่เห็นกลับมา")
       const where = restored.platform ? ` ที่ ${restored.platform}` : '';
-      showMsg(
+      notify(
         target
           ? `ย้อนคืนแล้ว — ${restored.symbol || restored.name}${where} ไม้เดิมกลับเป็น ${restored.quantity} หน่วย`
           : `ย้อนคืนแล้ว — ${restored.symbol || restored.name} ${restored.quantity} หน่วย @ ${formatCurrencyWithType(restored.buyPrice, restored.currency)}${where} เพิ่มกลับเป็นรายการแยกไม้`
       );
       await loadData();
     } catch (e: any) {
-      showMsg(`ย้อนคืนไม่สำเร็จ: ${String(e?.message || e)}`);
+      notify(`ย้อนคืนไม่สำเร็จ: ${String(e?.message || e)}`);
       loadData();
     }
   };
 
-  const handleUndoSell = (trade: RealizedTrade) => {
+  const handleUndoSell = async (trade: RealizedTrade) => {
     const at = trade.platform ? ` (${trade.platform})` : '';
     const label = `${trade.symbol || trade.name}${at} ${trade.quantity} หน่วย`;
     const msg = `ย้อนคืนการขาย ${label}?\nรายการจะกลับเข้าพอร์ต${at ? ` ที่ ${trade.platform}` : ''} และบันทึกการขายนี้จะถูกลบ`;
-    if (Platform.OS === 'web') {
-      if (window.confirm(msg)) undoSell(trade);
-    } else {
-      Alert.alert('ย้อนคืนการขาย', msg, [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: 'ย้อนคืน', onPress: () => undoSell(trade) },
-      ]);
-    }
+    if (await confirmAsk('ย้อนคืนการขาย', msg, 'ย้อนคืน')) undoSell(trade);
   };
 
   const openGoalModal = () => {
@@ -408,7 +411,7 @@ export default function PortfolioScreen() {
 
   const handleSaveGoal = async () => {
     const amount = parseFloat(goalTargetInput.replace(/,/g, ''));
-    if (!amount || amount <= 0) { showMsg('กรุณากรอกยอดเป้าหมายที่ถูกต้อง'); return; }
+    if (!amount || amount <= 0) { notify('กรุณากรอกยอดเป้าหมายที่ถูกต้อง'); return; }
     const expected = parseFloat(goalExpectedInput.replace(/,/g, ''));
     try {
       const newGoal: PortfolioGoal = {
@@ -419,7 +422,7 @@ export default function PortfolioScreen() {
       setGoal(newGoal);
       setGoalModalVisible(false);
     } catch {
-      showMsg('บันทึกเป้าหมายไม่สำเร็จ');
+      notify('บันทึกเป้าหมายไม่สำเร็จ');
     }
   };
 
@@ -429,7 +432,7 @@ export default function PortfolioScreen() {
       setGoal(null);
       setGoalModalVisible(false);
     } catch {
-      showMsg('ลบเป้าหมายไม่สำเร็จ');
+      notify('ลบเป้าหมายไม่สำเร็จ');
     }
   };
 
@@ -446,7 +449,7 @@ export default function PortfolioScreen() {
     setPlan(nextPlan);
     if (roundsSaveTimer.current) clearTimeout(roundsSaveTimer.current);
     roundsSaveTimer.current = setTimeout(() => {
-      saveInvestmentPlan(nextPlan).catch(() => showMsg('บันทึกจำนวนครั้งไม่สำเร็จ'));
+      saveInvestmentPlan(nextPlan).catch(() => notify('บันทึกจำนวนครั้งไม่สำเร็จ'));
     }, 700);
   };
 
@@ -501,7 +504,7 @@ export default function PortfolioScreen() {
       if (raw === '' && !r.label.trim()) continue;
       const amount = parseAmount(r.amount);
       if (!Number.isFinite(amount) || amount < 0) {
-        showMsg(`ยอดของ "${r.label.trim() || 'รายการที่ยังไม่มีชื่อ'}" ต้องเป็นตัวเลขไม่ติดลบ`);
+        notify(`ยอดของ "${r.label.trim() || 'รายการที่ยังไม่มีชื่อ'}" ต้องเป็นตัวเลขไม่ติดลบ`);
         return;
       }
       const prev = prevById.get(r.id);
@@ -535,7 +538,7 @@ export default function PortfolioScreen() {
       setPlan(next);
       setPowderModalVisible(false);
     } catch {
-      showMsg('จดยอดไม่สำเร็จ — ถ้ายังไม่ได้รัน sql/investment_plan_dry_powder.sql ให้รันก่อน');
+      notify('จดยอดไม่สำเร็จ — ถ้ายังไม่ได้รัน sql/investment_plan_dry_powder.sql ให้รันก่อน');
     }
   };
 
@@ -545,25 +548,10 @@ export default function PortfolioScreen() {
     }, [])
   );
 
-  const handleDelete = (id: string, name: string) => {
-    if (Platform.OS === 'web') {
-      const confirmed = window.confirm(`คุณต้องการลบ ${name} ใช่หรือไม่?`);
-      if (confirmed) {
-        deleteInvestment(id).then(() => loadData());
-      }
-    } else {
-      Alert.alert('ลบการลงทุน', `คุณต้องการลบ ${name} ใช่หรือไม่?`, [
-        { text: 'ยกเลิก', style: 'cancel' },
-        {
-          text: 'ลบ',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteInvestment(id);
-            loadData();
-          },
-        },
-      ]);
-    }
+  const handleDelete = async (id: string, name: string) => {
+    if (!(await confirmAsk('ลบการลงทุน', `คุณต้องการลบ ${name} ใช่หรือไม่?`, 'ลบ'))) return;
+    await deleteInvestment(id);
+    loadData();
   };
 
   const handleEdit = (item: Investment) => {
@@ -593,19 +581,11 @@ export default function PortfolioScreen() {
 
       await loadData();
 
-      if (Platform.OS === 'web') {
-        window.alert(`อัปเดตราคาสำเร็จ ${updatedCount} รายการ`);
-      } else {
-        Alert.alert('สำเร็จ', `อัปเดตราคาสำเร็จ ${updatedCount} รายการ`);
-      }
+      notify(`อัปเดตราคาสำเร็จ ${updatedCount} รายการ`, 'สำเร็จ');
     } catch (error) {
       console.error('handleUpdatePrices error:', error);
       const detail = (error as any)?.message || String(error);
-      if (Platform.OS === 'web') {
-        window.alert(`เกิดข้อผิดพลาดในการอัปเดตราคา\n${detail}`);
-      } else {
-        Alert.alert('ข้อผิดพลาด', `เกิดข้อผิดพลาดในการอัปเดตราคา\n${detail}`);
-      }
+      notify(`เกิดข้อผิดพลาดในการอัปเดตราคา\n${detail}`, 'ข้อผิดพลาด');
     } finally {
       setIsUpdatingPrices(false);
     }
@@ -635,8 +615,15 @@ export default function PortfolioScreen() {
     };
   };
 
-  // ตารางค้นสัญญาณแดงคู่ ต่อ 1 รายการลงทุน — สร้างครั้งเดียว ไม่ต้องวนหาในทุกแถว
+  // ตารางค้นสถานะแท่งแดง ต่อ 1 รายการลงทุน — สร้างครั้งเดียว ไม่ต้องวนหาในทุกแถว
+  // (เก็บทุกตัวรวมที่ยังไม่ครบรอบ การ์ดรายตัวเอาไปโชว์ความคืบหน้าได้)
   const redAlertByKey = new Map(redAlerts.map((a) => [`${a.type}:${a.symbol}`, a]));
+  // เฉพาะตัวที่ครบรอบจริง — ใช้ในการ์ดสรุป "ถึงคิวลงไม้"
+  const redAlertsMet = redAlerts.filter((a) => a.met);
+
+  // หน่วยที่ใช้พูดถึงแท่งเทียนตามกรอบเวลา — "แดง 2 วัน" กับ "แดง 2 เดือน" คนละเรื่องกันมาก
+  const redUnit = (interval: RedInterval): string =>
+    RED_INTERVALS.find((r) => r.value === interval)?.unit ?? 'วัน';
 
   const renderInvestmentItem = ({ item }: { item: Investment }) => {
     const { currentPriceNative, value, profit, profitPercent } = calcItemStats(item);
@@ -666,14 +653,23 @@ export default function PortfolioScreen() {
                 </Text>
               </View>
             </View>
-            {/* ป้ายสัญญาณลงไม้: แดงติดกันครบคู่เท่านั้น (2/4/6…) เลขคี่ไม่ขึ้น */}
-            {redAlert && (
+            {/* ป้ายแดง = ครบรอบแล้ว ถึงคิวลงไม้จริง */}
+            {redAlert?.met && (
               <View style={styles.redBadge}>
                 <Ionicons name="trending-down" size={12} color={COLORS.error} />
                 <Text style={styles.redBadgeText}>
-                  {' '}แดง {redAlert.count} แท่ง {redAlert.dropPercent.toFixed(1)}% · ถึงคิวลงไม้
+                  {' '}แดง {redAlert.count} {redUnit(redAlert.interval)} {redAlert.dropPercent.toFixed(1)}% · ถึงคิวลงไม้
                 </Text>
               </View>
+            )}
+            {/* ยังไม่ครบรอบ แต่ตั้งกฎเองไว้ → บอกสถานะแบบเงียบ ๆ
+                ไม่งั้นตั้งกฎแล้วจอไม่ขยับ แยกไม่ออกว่า "ยังไม่ถึงคิว" หรือ "บันทึกไม่ติด"
+                ตัวที่ใช้ค่าเริ่มต้นไม่ต้องโชว์ จะได้ไม่รกทั้งพอร์ต */}
+            {redAlert && !redAlert.met && redAlert.custom && (
+              <Text style={styles.redRuleText}>
+                กฎ: ทุก {redAlert.every} {redUnit(redAlert.interval)}แดงติดกัน · ตอนนี้ {redAlert.count}/
+                {redAlert.every}
+              </Text>
             )}
             <View style={styles.investmentDetails}>
               <Text style={styles.investmentQuantity}>
@@ -735,6 +731,13 @@ export default function PortfolioScreen() {
   const realized = summarizeRealized(realizedTrades);
   // รายดีลแยกก้อน — ใช้โชว์ในลิสต์ "ที่ขายแล้ว" พร้อมปุ่มย้อนคืน (เรียงขายล่าสุดก่อนจาก query แล้ว)
   const realizedResults = realizedTrades.map(analyzeRealizedTrade);
+
+  // ── กำไรสะสม = กำไรลอยตัว (ที่ยังถืออยู่) + กำไรที่ขายแล้ว ──
+  // ขายแล้วกำไรไม่ได้หายไปไหน มันแค่ย้ายจากฝั่งลอยตัวไปฝั่งรับรู้แล้ว 1:1 ผลบวกจึงนิ่ง
+  // (ลดได้เฉพาะค่าธรรมเนียมที่จ่ายจริงตอนขาย) — มีไว้กันภาพลวงตา "ขายทำกำไรแล้วพอร์ตหด"
+  // ซึ่งเกิดเพราะเงินที่ขายได้ออกไปอยู่ในเงินรอลงทุน ไม่ถูกนับใน summary.totalValue
+  // ไม่นับซ้ำตอนเอาเงินไปลงทุนต่อ เพราะไม้ใหม่เริ่มนับกำไรลอยตัวจากศูนย์
+  const lifetimeProfit = summary.totalProfit + realized.totalPnlTHB;
 
   const goalAnalysis: PortfolioGoalAnalysis | null = goal
     ? analyzePortfolioGoal(
@@ -894,6 +897,14 @@ export default function PortfolioScreen() {
               </Text>
             </View>
             <Text style={styles.summaryCost}>ลงทุนไปแล้ว {formatCurrency(summary.totalCost)}</Text>
+            {/* โชว์เสมอ — เคยซ่อนไว้ตอนยังไม่มีการขาย แล้วกลายเป็นว่ามองไม่เห็นว่ามีฟีเจอร์นี้อยู่
+                ยังไม่เคยขาย เลขจะเท่ากับกำไรลอยตัวด้านบน จึงบอกไปตรง ๆ แทนที่จะโชว์ ฿0 เฉย ๆ */}
+            <Text style={styles.summaryLifetime}>
+              กำไรสะสม {lifetimeProfit >= 0 ? '+' : ''}{formatCurrency(lifetimeProfit)}
+              {realized.tradeCount > 0
+                ? `  ·  ลอยตัว ${summary.totalProfit >= 0 ? '+' : ''}${formatCurrency(summary.totalProfit)} + ขายแล้ว ${realized.totalPnlTHB >= 0 ? '+' : ''}${formatCurrency(realized.totalPnlTHB)}`
+                : '  ·  ยังไม่เคยบันทึกการขาย — พอเริ่มขาย เลขนี้จะไม่ถอยหลังอีก'}
+            </Text>
           </View>
         </View>
 
@@ -990,6 +1001,15 @@ export default function PortfolioScreen() {
                   {roundsToGoal.reached
                     ? 'ถ้าขายตอนนี้ มูลค่าถึงเป้าแล้ว 🎉'
                     : `ถ้าขายตอนนี้ (+${summary.totalProfitPercent.toFixed(2)}% = ${formatCurrency(summary.totalProfit)}) แล้วลงทุนซ้ำทั้งก้อนได้ % เท่าเดิม → อีก ~${roundsToGoal.rounds} รอบถึงเป้า`}
+                </Text>
+              )}
+
+              {/* แถบความคืบหน้าคิดจาก "ต้นทุนที่ยังอยู่ในพอร์ต" — ขายแล้วต้นทุนก้อนนั้นออกไป แถบเลยถอย
+                  ทั้งที่เงินยังอยู่กับเรา จงใจไม่เอาไปบวกในแถบ (จะนับซ้ำตอนเอาเงินไปลงไม้ใหม่)
+                  แต่ต้องบอกให้เห็นว่ากำไรที่เก็บไปแล้วมีอยู่จริง ไม่งั้นการขายจะดูเหมือนถอยหลังเปล่า ๆ */}
+              {realized.totalPnlTHB > 0 && (
+                <Text style={styles.tpSubText}>
+                  + เก็บกำไรจริงไปแล้ว {formatCurrency(realized.totalPnlTHB)} จาก {realized.tradeCount} ดีล — เงินก้อนนี้อยู่นอกพอร์ต แถบด้านบนจึงยังไม่นับให้
                 </Text>
               )}
 
@@ -1138,21 +1158,22 @@ export default function PortfolioScreen() {
           <View style={styles.losersCard}>
             <View style={styles.cardTitleRow}>
               <Ionicons name="warning" size={16} color={COLORS.error} />
-              <Text style={styles.losersTitle}>ถึงคิวลงไม้ — แดงติดกันครบคู่ (2/4/6 แท่ง)</Text>
+              <Text style={styles.losersTitle}>ถึงคิวลงไม้ — แดงติดกันครบรอบ</Text>
             </View>
             {redChecking ? (
               <Text style={styles.tpSubText}>กำลังเช็คแท่งเทียนของ {redCheckedCount} ตัว…</Text>
-            ) : redAlerts.length === 0 ? (
+            ) : redAlertsMet.length === 0 ? (
               <Text style={styles.tpSubText}>
-                เช็ค {redCheckedCount} ตัวแล้ว — ยังไม่มีตัวไหนแดงติดกันครบคู่ (นับเฉพาะแท่งที่ปิดแล้ว
-                · แดงเลขคี่ยังไม่นับ){'\n'}
-                หมายเหตุ: หุ้นเช็คได้เฉพาะบนเว็บที่ deploy แล้ว (ต้องใช้ /api/yahoo-quote) — คริปโตเช็คได้ทุกที่
+                เช็ค {redCheckedCount} ตัวแล้ว — ยังไม่มีตัวไหนแดงติดกันครบรอบ (นับเฉพาะแท่งที่ปิดแล้ว){'\n'}
+                สถานะรายตัวดูได้ที่การ์ดของแต่ละรายการด้านล่าง · ตั้งกรอบเวลา (วัน/สัปดาห์/เดือน)
+                และจำนวนแท่งแยกรายตัวได้ที่หน้าแก้ไขการลงทุน
               </Text>
             ) : null}
-            {redAlerts.map((a) => (
-              <View key={a.symbol} style={styles.loserRow}>
+            {redAlertsMet.map((a) => (
+              <View key={`${a.type}:${a.symbol}`} style={styles.loserRow}>
                 <Text style={styles.loserName} numberOfLines={1}>
-                  {a.symbol || a.name} <Text style={styles.tpSubText}>· แดง {a.count} แท่ง</Text>
+                  {a.symbol || a.name}{' '}
+                  <Text style={styles.tpSubText}>· แดง {a.count} {redUnit(a.interval)}ติดกัน</Text>
                 </Text>
                 <Text style={styles.loserPct}>{a.dropPercent.toFixed(2)}%</Text>
               </View>
@@ -1421,110 +1442,11 @@ export default function PortfolioScreen() {
     </View>
   );
 
-  // ── ท้ายรายการหุ้น: เหลือแค่การ์ดสำรอง (ปิดไว้) ──
-  // การ์ด "เงินรอลงทุน" ย้ายขึ้นไปอยู่ก่อน "รายการลงทุน" แล้ว — ต้องเห็นก่อนเลื่อนดูหุ้น
-  const planningFooterElement = (
-    <View>
-
-        {/* ── การ์ดเงินรอลงทุน (สำรอง) หลายสกุล + สมการความมั่งคั่ง ── */}
-        {/* ซ่อนไว้ชั่วคราวตามที่ผู้ใช้ต้องการ — เปลี่ยน false กลับเป็น true เพื่อโชว์อีกครั้ง */}
-        {false && reserveAccounts.length > 0 && (() => {
-          // ต้นทุน investments รวมตาม platform (THB) — ไว้หักออกจาก "ยอดที่เติมเข้า" ของบัญชี reserve
-          const investedByPlatform: Record<string, number> = {};
-          investments.forEach((inv) => {
-            const key = (inv.platform || '').trim().toLowerCase();
-            if (!key) return;
-            const costTHB = convertToTHB(inv.buyPrice, inv.currency ?? 'THB') * inv.quantity + (inv.fees || 0);
-            investedByPlatform[key] = (investedByPlatform[key] || 0) + costTHB;
-          });
-
-          // ต่อบัญชี: เงินสดรอลงทุน = ยอดที่เติม(THB) − ต้นทุนที่ซื้อบน platform นั้น
-          const rows = reserveAccounts.map((a) => {
-            const fundedTHB = convertToTHB(a.manualBalance || 0, a.currency);
-            const platKey = (a.platform || '').trim().toLowerCase();
-            const investedTHB = platKey ? (investedByPlatform[platKey] || 0) : 0;
-            return { a, fundedTHB, investedTHB, cashTHB: fundedTHB - investedTHB, hasPlatform: !!platKey };
-          });
-
-          const reserveCashTHB = rows.reduce((s, r) => s + r.cashTHB, 0);
-          const wealth = reserveCashTHB + summary.totalValue;
-          // ต้นทุนที่หักไปแล้ว (จาก platform ที่ผูกบัญชี) — ที่เหลือคือสินทรัพย์ที่ยังไม่ได้ผูก
-          const matchedCostTHB = Array.from(
-            new Set(rows.filter((r) => r.hasPlatform).map((r) => (r.a.platform || '').trim().toLowerCase()))
-          ).reduce((s, k) => s + (investedByPlatform[k] || 0), 0);
-          const unlinkedCostTHB = summary.totalCost - matchedCostTHB;
-
-          return (
-            <View style={styles.goalCard}>
-              <View style={styles.goalCardHeader}>
-                <Text style={styles.goalCardTitle}>
-                  <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> เงินรอลงทุน (สำรอง)
-                </Text>
-              </View>
-              <View style={styles.horizonBox}>
-                {rows.map(({ a, fundedTHB, investedTHB, cashTHB, hasPlatform }) => (
-                  <View key={a.id} style={styles.reserveAcctRow}>
-                    <View style={styles.horizonRow}>
-                      <Text style={styles.horizonYears}>
-                        {a.name} ({a.currency}){a.platform ? ` · ${a.platform}` : ''}
-                      </Text>
-                      <Text style={[styles.horizonRate, cashTHB < 0 && { color: COLORS.error }]}>
-                        {formatCurrency(cashTHB)}
-                      </Text>
-                    </View>
-                    {hasPlatform ? (
-                      <Text style={styles.reserveAcctSub}>
-                        เติม {formatCurrency(fundedTHB)} − ลงทุนแล้ว {formatCurrency(investedTHB)}
-                      </Text>
-                    ) : (
-                      <Text style={styles.reserveAcctSub}>ยังไม่ได้ผูก platform — โชว์ยอดที่เติมตรงๆ</Text>
-                    )}
-                  </View>
-                ))}
-                <View style={[styles.horizonRow, styles.reserveTotalRow]}>
-                  <Text style={styles.reserveTotalLabel}>รวมเงินสดรอลงทุน (THB)</Text>
-                  <Text style={[styles.reserveTotalValue, reserveCashTHB < 0 && { color: COLORS.error }]}>
-                    {formatCurrency(reserveCashTHB)}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.wealthBox}>
-                <View style={styles.horizonRow}>
-                  <Text style={styles.horizonYears}>+ ต้นทุนที่ลงไปแล้ว</Text>
-                  <Text style={styles.horizonRate}>{formatCurrency(summary.totalCost)}</Text>
-                </View>
-                <View style={styles.horizonRow}>
-                  <Text style={styles.horizonYears}>+ กำไร/ขาดทุน</Text>
-                  <Text style={[styles.horizonRate, isProfit ? styles.profitPositive : styles.profitNegative]}>
-                    {isProfit ? '+' : ''}{formatCurrency(summary.totalProfit)}
-                  </Text>
-                </View>
-                <View style={[styles.horizonRow, styles.reserveTotalRow]}>
-                  <Text style={styles.reserveTotalLabel}>ความมั่งคั่งเพื่อลงทุนรวม</Text>
-                  <Text style={styles.reserveTotalValue}>{formatCurrency(wealth)}</Text>
-                </View>
-              </View>
-              {reserveAccounts.some((a) => a.manualBalance == null) && (
-                <Text style={styles.tpSubText}>
-                  * บางบัญชียังไม่ได้ใส่ยอดที่เติม — ไปกรอกที่หน้า "บัญชีของฉัน"
-                </Text>
-              )}
-              {unlinkedCostTHB > 1 && (
-                <Text style={styles.tpSubText}>
-                  * มีสินทรัพย์ต้นทุน ~{formatCurrency(unlinkedCostTHB)} ที่ platform ยังไม่ตรงกับบัญชี reserve ไหน — ตั้ง platform ให้ตรงกัน เพื่อไม่ให้เงินสดรอลงทุนเกินจริง
-                </Text>
-              )}
-            </View>
-          );
-        })()}
-      </View>
-  );
-
   return (
     <View style={styles.container}>
       <View style={[
         styles.innerContainer,
-        isDesktop && styles.innerContainerDesktop,
+        isDesktop && [styles.innerContainerDesktop, { maxWidth }],
       ]}>
         {isDesktop ? (
           <FlatList
@@ -1537,7 +1459,6 @@ export default function PortfolioScreen() {
             style={styles.list}
             contentContainerStyle={styles.listContent}
             ListHeaderComponent={listHeaderElement}
-            ListFooterComponent={planningFooterElement}
             ListEmptyComponent={emptyListElement}
           />
         ) : (
@@ -1556,7 +1477,6 @@ export default function PortfolioScreen() {
               ))
             )}
             </View>
-            {planningFooterElement}
           </ScrollView>
         )}
       </View>
@@ -1569,7 +1489,13 @@ export default function PortfolioScreen() {
         onRequestClose={() => setSellTarget(null)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          {/* ฟอร์มนี้สูงเกินจอมือถือ (5 ช่อง + พรีวิว + checkbox) และ body ของเว็บตั้ง overflow:hidden ไว้
+              ถ้าไม่ให้การ์ดเลื่อนเอง ปุ่ม "บันทึกการขาย" จะหลุดออกนอกจอแล้วกดไม่ได้เลย */}
+          <ScrollView
+            style={styles.modalCard}
+            contentContainerStyle={styles.modalCardContent}
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalTitle}>
               <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> บันทึกการขาย
               {sellTarget ? ` — ${sellTarget.symbol || sellTarget.name}` : ''}
@@ -1682,7 +1608,7 @@ export default function PortfolioScreen() {
                 <Text style={styles.modalCancelText}>ยกเลิก</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -1694,7 +1620,11 @@ export default function PortfolioScreen() {
         onRequestClose={() => setGoalModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <ScrollView
+            style={styles.modalCard}
+            contentContainerStyle={styles.modalCardContent}
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalTitle}>
               <Ionicons name="disc-outline" size={18} color={COLORS.primary} /> เป้าหมายพอร์ตรวม
             </Text>
@@ -1729,7 +1659,7 @@ export default function PortfolioScreen() {
                 <Text style={styles.modalCancelText}>ยกเลิก</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -1744,7 +1674,12 @@ export default function PortfolioScreen() {
         onRequestClose={() => setPowderModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          {/* แถวจดยอดเพิ่มได้ไม่จำกัด → ความสูงไม่มีเพดาน ต้องให้การ์ดเลื่อนเองแน่ ๆ */}
+          <ScrollView
+            style={styles.modalCard}
+            contentContainerStyle={styles.modalCardContent}
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalTitle}>
               <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> จดยอดเงินรอลงทุน
             </Text>
@@ -1813,7 +1748,7 @@ export default function PortfolioScreen() {
                 <Text style={styles.modalCancelText}>ยกเลิก</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -1848,7 +1783,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 24,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 2,
     color: '#ffffff',
@@ -1865,7 +1799,6 @@ const styles = StyleSheet.create({
   },
   summaryValue: {
     fontSize: 32,
-    fontWeight: 'bold',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: '#ffffff',
   },
@@ -1876,12 +1809,10 @@ const styles = StyleSheet.create({
   },
   summaryProfit: {
     fontSize: 18,
-    fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
   },
   summaryPercent: {
     fontSize: 16,
-    fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
   },
   summaryCost: {
@@ -1890,6 +1821,18 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     opacity: 0.9,
     marginTop: 8,
+  },
+  // "กำไรสะสม" — เลขที่ไม่ถอยหลังตอนขาย จงใจแยกเส้นคั่นให้เห็นว่าเป็นคนละชั้นกับกำไรลอยตัวด้านบน
+  summaryLifetime: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: '#ffffff',
+    opacity: 0.85,
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.25)',
+    alignSelf: 'stretch',
   },
   profitPositive: {
     color: COLORS.success,
@@ -2125,42 +2068,7 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.error,
   },
-  horizonBox: {
-    marginTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 10,
-  },
-  horizonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 3,
-  },
-  reserveAcctRow: {
-    paddingVertical: 2,
-  },
-  reserveAcctSub: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    marginTop: 1,
-  },
-  simActiveText: {
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.primary,
-  },
   // ปุ่มสลับโหมดของการ์ดวางแผนถึงเป้า (ยุบ 3 ตารางเหลือ 1)
-  horizonYears: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-  },
-  horizonRate: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.primary,
-  },
   reserveTotalRow: {
     marginTop: 6,
     borderTopWidth: 1,
@@ -2177,11 +2085,6 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
   },
-  wealthBox: {
-    marginTop: 10,
-    backgroundColor: `${COLORS.primary}0D`,
-    padding: 10,
-  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -2189,12 +2092,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 24,
   },
+  // การ์ดเป็น ScrollView: style = กล่องนอก (สูงได้ไม่เกินจอ), contentContainerStyle = padding ข้างใน
+  // flexGrow:0 เพื่อให้สูงตามเนื้อหาจริง ไม่ใช่ยืดเต็มจอทุกครั้งแบบ default ของ ScrollView
   modalCard: {
     width: '100%',
     maxWidth: 400,
+    maxHeight: '100%',
+    flexGrow: 0,
     backgroundColor: COLORS.surface,
     borderWidth: 1,
     borderColor: COLORS.border,
+  },
+  modalCardContent: {
     padding: 24,
   },
   modalTitle: {
@@ -2250,8 +2159,8 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     backgroundColor: COLORS.surface,
   },
-  powderRowLabel: { flex: 3, padding: 10, fontSize: 14 },
-  powderRowAmount: { flex: 2, padding: 10, fontSize: 14, textAlign: 'right' },
+  powderRowLabel: { flex: 3, padding: 10, fontSize: 14, fontFamily: 'NotoSansThai_400Regular' },
+  powderRowAmount: { flex: 2, padding: 10, fontSize: 14, textAlign: 'right', fontFamily: 'NotoSansThai_400Regular' },
   powderRowDelete: { paddingHorizontal: 2, paddingVertical: 6 },
   powderAddBtn: {
     flexDirection: 'row',
@@ -2324,7 +2233,6 @@ const styles = StyleSheet.create({
   addButtonText: {
     color: '#ffffff',
     fontSize: 12,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 2,
     textTransform: 'uppercase',
@@ -2332,91 +2240,16 @@ const styles = StyleSheet.create({
   updateButtonText: {
     color: COLORS.primary,
     fontSize: 12,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 2,
     textTransform: 'uppercase',
   },
-  typeScroll: {
-    maxHeight: 140,
-  },
-  typeScrollContent: {
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-  },
-  typeWrapContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    padding:16
-  },
-  typeCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 0,
-    padding: 16,
-    width: 200,
-    elevation: 2,
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
-    } : {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-    }),
-  },
-  typeCardDesktop: {
-    flex: 1,
-    minWidth: 160,
-  },
-  typeHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    gap: 6,
-  },
 
-  typeName: {
-    fontSize: 14,
-    fontWeight: '600',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-    flex: 1,
-  },
-  typeCount: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-  },
-  typeValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.primary,
-    marginBottom: 8,
-  },
-  typeFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  typeProfit: {
-    fontSize: 14,
-    fontWeight: '600',
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  typePercentage: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-  },
   listHeader: {
     padding:16
   },
   listTitle: {
     fontSize: 18,
-    fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
@@ -2633,7 +2466,6 @@ const styles = StyleSheet.create({
   },
   investmentName: {
     fontSize: 16,
-    fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
@@ -2672,6 +2504,14 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.error,
   },
+  // สถานะกฎที่ยังไม่ครบรอบ — ตั้งใจให้จืดกว่าป้ายแดง จะได้ไม่แย่งความสนใจจากตัวที่ถึงคิวจริง
+  redRuleText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+    marginTop: 4,
+    marginLeft: 32,
+  },
   investmentDetails: {
     marginLeft: 32,
   },
@@ -2693,20 +2533,17 @@ const styles = StyleSheet.create({
   },
   investmentValue: {
     fontSize: 18,
-    fontWeight: 'bold',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
     marginBottom: 4,
   },
   investmentProfit: {
     fontSize: 15,
-    fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
     marginBottom: 2,
   },
   investmentPercent: {
     fontSize: 13,
-    fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
   },
   // แถวปุ่มท้ายการ์ดหุ้น: ขาย (บันทึกผลจริง) | ลบ (เอาออกเฉย ๆ)
@@ -2744,7 +2581,6 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: COLORS.textSecondary,
     fontSize: 10,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 1.5,
     textTransform: 'uppercase',

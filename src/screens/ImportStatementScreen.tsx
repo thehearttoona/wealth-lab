@@ -17,6 +17,8 @@ import { getAccounts } from '../services/accountStorage';
 import { parseKBankStatement } from '../utils/statementParser';
 import { ImportRow, ImportRowType, saveImportRows } from '../services/importStorage';
 import { EXPENSE_CATEGORIES, COLORS, getCurrencySymbol, formatCurrency } from '../utils/constants';
+import { notify } from '../utils/dialog';
+import { useResponsive } from '../utils/responsive';
 import { INCOME_CATEGORIES } from '../services/incomeStorage';
 
 interface EditRow extends ImportRow {
@@ -33,6 +35,7 @@ const TYPE_OPTS: { value: ImportRowType; label: string }[] = [
 ];
 
 export default function ImportStatementScreen() {
+  const { isDesktop, contentMaxWidth } = useResponsive();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountId, setAccountId] = useState<string>('');
   const [rawText, setRawText] = useState('');
@@ -57,11 +60,6 @@ export default function ImportStatementScreen() {
 
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const currency = selectedAccount?.currency || 'THB';
-
-  const notify = (msg: string) => {
-    if (Platform.OS === 'web') window.alert(msg);
-    else Alert.alert('', msg);
-  };
 
   const handleParse = () => {
     const parsed = parseKBankStatement(rawText);
@@ -139,7 +137,12 @@ export default function ImportStatementScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          isDesktop && { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' as const },
+        ]}
+      >
         {/* เลือกบัญชี */}
         <Text style={styles.label}>นำเข้าเข้าบัญชี</Text>
         {accounts.length === 0 ? (

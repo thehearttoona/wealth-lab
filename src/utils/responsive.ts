@@ -36,10 +36,10 @@ export function useResponsive() {
     isMobile,
     isWide,
     isWeb,
+    // เพดานความกว้างของเลย์เอาต์หลายคอลัมน์ (หน้าหลัก/พอร์ต) — จอ 2560px จะได้ไม่ยืดจนอ่านไม่ไหว
     maxWidth: DESKTOP_MAX_WIDTH,
+    // เพดานของเนื้อหาคอลัมน์เดียว (ลิสต์/ฟอร์ม)
     contentMaxWidth: DESKTOP_CONTENT_MAX_WIDTH,
-    // Number of columns for grid layouts
-    gridColumns: isDesktop ? 3 : isTablet ? 2 : 1,
     // Sidebar width
     sidebarWidth: isWide ? 240 : 200,
   };

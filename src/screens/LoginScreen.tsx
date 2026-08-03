@@ -56,7 +56,7 @@ return (
           {loading ? (
             <ActivityIndicator color={COLORS.text} size="small" />
           ) : (
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
+            <Text style={styles.googleButtonText}>เข้าสู่ระบบด้วย Google</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -90,7 +90,6 @@ const styles = StyleSheet.create({
   },
   logo: {
     fontSize: 24,
-    fontWeight: '700',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
     textAlign: 'center',
@@ -124,17 +123,17 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 13,
     color: COLORS.textSecondary,
-    fontWeight: '500',
+    fontFamily: 'NotoSansThai_500Medium',
   },
   tabTextActive: {
     color: '#fff',
-    fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   label: {
     fontSize: 13,
     color: COLORS.textSecondary,
     marginBottom: 8,
-    fontWeight: '500',
+    fontFamily: 'NotoSansThai_500Medium',
   },
   input: {
     backgroundColor: COLORS.background,
@@ -146,11 +145,13 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: 15,
     marginBottom: 16,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   error: {
     color: COLORS.error,
     fontSize: 12,
     marginBottom: 8,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   button: {
     backgroundColor: COLORS.primary,
@@ -163,7 +164,7 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontSize: 15,
-    fontWeight: '600',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   sentBox: {
     alignItems: 'center',
@@ -171,13 +172,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   sentIcon: { fontSize: 40, marginBottom: 4 },
-  sentTitle: { fontSize: 18, fontWeight: '600', color: COLORS.text },
-  sentDesc: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center' },
+  sentTitle: { fontSize: 18, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  sentDesc: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', fontFamily: 'NotoSansThai_400Regular' },
   link: {
     color: COLORS.primary,
     fontSize: 14,
     marginTop: 8,
     textDecorationLine: 'underline',
+    fontFamily: 'NotoSansThai_400Regular',
   },
   dividerRow: {
     flexDirection: 'row',
@@ -193,6 +195,7 @@ const styles = StyleSheet.create({
   dividerText: {
     fontSize: 12,
     color: COLORS.textSecondary,
+    fontFamily: 'NotoSansThai_400Regular',
   },
   googleButton: {
     borderWidth: 1,
@@ -205,7 +208,6 @@ const styles = StyleSheet.create({
   googleButtonText: {
     color: COLORS.text,
     fontSize: 14,
-    fontWeight: '500',
-    fontFamily: 'NotoSansThai_400Regular',
+    fontFamily: 'NotoSansThai_500Medium',
   },
 });

@@ -1,12 +1,6 @@
 import { Investment, Transaction, PortfolioSummary, InvestmentType } from '../types/investment';
 import { convertToTHB } from '../utils/constants';
-import { supabase } from './supabase';
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
+import { supabase, getUserId } from './supabase';
 
 const mapInvestmentFromDb = (row: any): Investment => ({
   id: row.id,
@@ -23,6 +17,8 @@ const mapInvestmentFromDb = (row: any): Investment => ({
   platform: row.platform ?? undefined,
   targetReturnPercent: row.target_return_percent ?? undefined,
   targetDate: row.target_date ?? undefined,
+  redInterval: row.red_interval ?? undefined,
+  redEvery: row.red_every ?? undefined,
 });
 
 const mapInvestmentToDb = (inv: Investment, userId: string) => ({
@@ -40,8 +36,49 @@ const mapInvestmentToDb = (inv: Investment, userId: string) => ({
   platform: inv.platform ?? null,
   target_return_percent: inv.targetReturnPercent ?? null,
   target_date: inv.targetDate ?? null,
+  red_interval: inv.redInterval ?? null,
+  red_every: inv.redEvery ?? null,
   user_id: userId,
 });
+
+// คอลัมน์ที่เพิ่มทีหลัง — ถ้ายังไม่ได้รัน SQL ให้ตัดทิ้งเฉพาะตัวที่ error ฟ้องชื่อมา แล้วลองใหม่
+// (วิธีเดียวกับ investmentPlanStorage) กันไม่ให้ "บันทึกการลงทุนไม่ได้เลย" เพราะลืมรัน SQL
+// ตัดทีละตัว ไม่ทิ้งทั้งชุด เผื่อรัน SQL ไปแค่บางส่วน
+const OPTIONAL_COLUMNS = ['red_interval', 'red_every'] as const;
+
+// รับได้ทั้งแถวเดียวและหลายแถว (bulk insert ก็ต้องตัดคอลัมน์เหมือนกัน)
+const withOptionalColumnFallback = async <T extends Record<string, any> | Record<string, any>[]>(
+  payload: T,
+  // PromiseLike ไม่ใช่ Promise — query builder ของ supabase เป็น thenable ที่ไม่มี catch/finally
+  run: (p: T) => PromiseLike<{ error: any }>
+): Promise<void> => {
+  const has = (p: T, col: string) =>
+    Array.isArray(p) ? p.some((row) => col in row) : col in p;
+  const strip = (p: T, col: string): T =>
+    (Array.isArray(p)
+      ? p.map((row) => {
+          const next = { ...row };
+          delete next[col];
+          return next;
+        })
+      : (() => {
+          const next = { ...(p as Record<string, any>) };
+          delete next[col];
+          return next;
+        })()) as T;
+
+  let current = payload;
+  for (let attempt = 0; attempt <= OPTIONAL_COLUMNS.length; attempt++) {
+    const { error } = await run(current);
+    if (!error) return;
+    const missing = OPTIONAL_COLUMNS.find(
+      (c) => has(current, c) && new RegExp(c, 'i').test(error.message || '')
+    );
+    if (!missing) throw error;
+    current = strip(current, missing);
+  }
+  throw new Error('บันทึกการลงทุนไม่สำเร็จ');
+};
 
 const mapTransactionFromDb = (row: any): Transaction => ({
   id: row.id,
@@ -69,8 +106,9 @@ const mapTransactionToDb = (tx: Transaction, userId: string) => ({
 // Investments
 export const saveInvestment = async (investment: Investment): Promise<void> => {
   const userId = await getUserId();
-  const { error } = await supabase.from('investments').insert(mapInvestmentToDb(investment, userId));
-  if (error) throw error;
+  await withOptionalColumnFallback(mapInvestmentToDb(investment, userId), (p) =>
+    supabase.from('investments').insert(p)
+  );
 };
 
 export const getInvestments = async (): Promise<Investment[]> => {
@@ -84,21 +122,19 @@ export const getInvestments = async (): Promise<Investment[]> => {
 
 export const updateInvestment = async (investment: Investment): Promise<void> => {
   const userId = await getUserId();
-  const { error } = await supabase
-    .from('investments')
-    .update(mapInvestmentToDb(investment, userId))
-    .eq('id', investment.id);
-  if (error) throw error;
+  await withOptionalColumnFallback(mapInvestmentToDb(investment, userId), (p) =>
+    supabase.from('investments').update(p).eq('id', investment.id)
+  );
 };
 
 // เพิ่มหลายรายการพร้อมกัน (bulk insert) — ใช้ในหน้า "จัดการตามแพลตฟอร์ม"
 export const saveInvestments = async (investments: Investment[]): Promise<void> => {
   if (investments.length === 0) return;
   const userId = await getUserId();
-  const { error } = await supabase
-    .from('investments')
-    .insert(investments.map((inv) => mapInvestmentToDb(inv, userId)));
-  if (error) throw error;
+  await withOptionalColumnFallback(
+    investments.map((inv) => mapInvestmentToDb(inv, userId)) as Record<string, any>[],
+    (p) => supabase.from('investments').insert(p)
+  );
 };
 
 // เปลี่ยน platform ของหลายรายการพร้อมกัน (bulk update) — RLS กรองให้เฉพาะของ user เองอยู่แล้ว

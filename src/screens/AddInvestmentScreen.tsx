@@ -6,20 +6,20 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
-import { Investment, InvestmentType, INVESTMENT_TYPES, INVESTMENT_PLATFORMS, DEFAULT_CURRENCIES, Currency } from '../types/investment';
+import { Investment, InvestmentType, INVESTMENT_TYPES, INVESTMENT_PLATFORMS, DEFAULT_CURRENCIES, Currency, RedInterval, RED_INTERVALS, DEFAULT_RED_INTERVAL, DEFAULT_RED_EVERY } from '../types/investment';
 import { getCurrencies } from '../services/currencyStorage';
 import { getPlatforms } from '../services/platformStorage';
 import { saveInvestment, updateInvestment } from '../services/investmentStorage';
 import { updateInvestmentPrice, searchCryptoList, CryptoSearchResult, searchStockList, StockSearchResult } from '../services/priceApi';
 import { searchFundList, FundCatalogItem } from '../services/fundCatalog';
 import { COLORS } from '../utils/constants';
+import { notify } from '../utils/dialog';
+import { useResponsive } from '../utils/responsive';
 
 type AddInvestmentScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -28,6 +28,7 @@ type AddInvestmentScreenNavigationProp = NativeStackNavigationProp<
 type AddInvestmentScreenRouteProp = RouteProp<RootStackParamList, 'AddInvestment'>;
 
 export default function AddInvestmentScreen() {
+  const { isDesktop } = useResponsive();
   const navigation = useNavigation<AddInvestmentScreenNavigationProp>();
   const route = useRoute<AddInvestmentScreenRouteProp>();
   const { investment } = route.params || {};
@@ -44,6 +45,11 @@ export default function AddInvestmentScreen() {
   const [fees, setFees] = useState('');
   const [notes, setNotes] = useState('');
   const [platform, setPlatform] = useState('');
+  // กฎ "ถึงคิวลงไม้" รายตัว — crypto/หุ้นเท่านั้นที่มีแท่งเทียนให้นับ
+  // (กองทุน/ทอง/อื่น ๆ ไม่มีข้อมูลแท่งเทียน จึงไม่โชว์ส่วนนี้เลย)
+  const [redInterval, setRedInterval] = useState<RedInterval>(DEFAULT_RED_INTERVAL);
+  const [redEvery, setRedEvery] = useState(String(DEFAULT_RED_EVERY));
+  const hasCandles = type === 'crypto' || type === 'stock_th' || type === 'stock_foreign';
   const [isFetchingPrice, setIsFetchingPrice] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<CryptoSearchResult[]>([]);
@@ -82,6 +88,8 @@ export default function AddInvestmentScreen() {
       setFees(investment.fees?.toString() || '');
       setNotes(investment.notes || '');
       setPlatform(investment.platform || '');
+      setRedInterval(investment.redInterval || DEFAULT_RED_INTERVAL);
+      setRedEvery(String(investment.redEvery || DEFAULT_RED_EVERY));
     }
   }, [investment]);
 
@@ -171,11 +179,7 @@ export default function AddInvestmentScreen() {
 
   const handleFetchRealtime = async () => {
     if (!symbol.trim()) {
-      if (Platform.OS === 'web') {
-        window.alert('กรุณากรอกตัวย่อ/รหัสก่อน');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'กรุณากรอกตัวย่อ/รหัสก่อน');
-      }
+      notify('กรุณากรอกตัวย่อ/รหัสก่อน', 'ข้อผิดพลาด');
       return;
     }
 
@@ -184,24 +188,12 @@ export default function AddInvestmentScreen() {
       const price = await updateInvestmentPrice(type, symbol.trim().toUpperCase(), currency);
       if (price !== null && price > 0) {
         setCurrentPrice(price.toString());
-        if (Platform.OS === 'web') {
-          window.alert(`อัปเดตราคาสำเร็จ: ${price.toLocaleString()} ${currency}`);
-        } else {
-          Alert.alert('สำเร็จ', `อัปเดตราคาสำเร็จ: ${price.toLocaleString()} ${currency}`);
-        }
+        notify(`อัปเดตราคาสำเร็จ: ${price.toLocaleString('th-TH')} ${currency}`, 'สำเร็จ');
       } else {
-        if (Platform.OS === 'web') {
-          window.alert('ไม่สามารถดึงราคาได้ กรุณาตรวจสอบตัวย่อ/รหัสหรือกรอกเอง');
-        } else {
-          Alert.alert('ข้อผิดพลาด', 'ไม่สามารถดึงราคาได้ กรุณาตรวจสอบตัวย่อ/รหัสหรือกรอกเอง');
-        }
+        notify('ไม่สามารถดึงราคาได้ กรุณาตรวจสอบตัวย่อ/รหัสหรือกรอกเอง', 'ข้อผิดพลาด');
       }
     } catch (error) {
-      if (Platform.OS === 'web') {
-        window.alert('เกิดข้อผิดพลาดในการดึงราคา');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'เกิดข้อผิดพลาดในการดึงราคา');
-      }
+      notify('เกิดข้อผิดพลาดในการดึงราคา', 'ข้อผิดพลาด');
     } finally {
       setIsFetchingPrice(false);
     }
@@ -210,35 +202,25 @@ export default function AddInvestmentScreen() {
   const handleSave = async () => {
     // Validation
     if (!symbol.trim()) {
-      if (Platform.OS === 'web') {
-        window.alert('กรุณากรอกตัวย่อ/รหัส');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'กรุณากรอกตัวย่อ/รหัส');
-      }
+      notify('กรุณากรอกตัวย่อ/รหัส', 'ข้อผิดพลาด');
       return;
     }
     if (!name.trim()) {
-      if (Platform.OS === 'web') {
-        window.alert('กรุณากรอกชื่อ');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'กรุณากรอกชื่อ');
-      }
+      notify('กรุณากรอกชื่อ', 'ข้อผิดพลาด');
       return;
     }
     if (!quantity || parseFloat(quantity) <= 0) {
-      if (Platform.OS === 'web') {
-        window.alert('กรุณากรอกจำนวนที่ถูกต้อง');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'กรุณากรอกจำนวนที่ถูกต้อง');
-      }
+      notify('กรุณากรอกจำนวนที่ถูกต้อง', 'ข้อผิดพลาด');
       return;
     }
     if (!buyPrice || parseFloat(buyPrice) <= 0) {
-      if (Platform.OS === 'web') {
-        window.alert('กรุณากรอกราคาซื้อที่ถูกต้อง');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'กรุณากรอกราคาซื้อที่ถูกต้อง');
-      }
+      notify('กรุณากรอกราคาซื้อที่ถูกต้อง', 'ข้อผิดพลาด');
+      return;
+    }
+
+    const parsedRedEvery = Math.floor(parseFloat(redEvery));
+    if (hasCandles && (!Number.isFinite(parsedRedEvery) || parsedRedEvery < 1 || parsedRedEvery > 12)) {
+      notify('จำนวนแท่งแดงต้องเป็นตัวเลข 1–12', 'ข้อผิดพลาด');
       return;
     }
 
@@ -256,35 +238,24 @@ export default function AddInvestmentScreen() {
         fees: fees ? parseFloat(fees) : undefined,
         notes: notes.trim() || undefined,
         platform: platform.trim() || undefined,
+        // ⚠️ ต้องส่งกลับไปด้วยเสมอ — updateInvestment เขียนทับทั้งแถว ถ้าไม่ใส่จะกลายเป็น null
+        // (บั๊กเดิม: กดแก้ไขรายการทีไร เป้าหมายกำไรที่ตั้งไว้หายทุกครั้งโดยไม่มีอะไรเตือน)
+        targetReturnPercent: investment?.targetReturnPercent,
+        targetDate: investment?.targetDate,
+        // กฎแท่งแดงรายตัว — ตรงกับค่าเริ่มต้นก็ไม่ต้องเก็บ ปล่อยเป็น undefined ให้ระบบใช้ค่ากลาง
+        redInterval: hasCandles && redInterval !== DEFAULT_RED_INTERVAL ? redInterval : undefined,
+        redEvery:
+          hasCandles && parsedRedEvery && parsedRedEvery !== DEFAULT_RED_EVERY
+            ? parsedRedEvery
+            : undefined,
       };
 
-      if (isEditing) {
-        await updateInvestment(investmentData);
-        if (Platform.OS === 'web') {
-          window.alert('แก้ไขการลงทุนเรียบร้อย');
-          navigation.goBack();
-        } else {
-          Alert.alert('สำเร็จ', 'แก้ไขการลงทุนเรียบร้อย', [
-            { text: 'ตกลง', onPress: () => navigation.goBack() },
-          ]);
-        }
-      } else {
-        await saveInvestment(investmentData);
-        if (Platform.OS === 'web') {
-          window.alert('บันทึกการลงทุนเรียบร้อย');
-          navigation.goBack();
-        } else {
-          Alert.alert('สำเร็จ', 'บันทึกการลงทุนเรียบร้อย', [
-            { text: 'ตกลง', onPress: () => navigation.goBack() },
-          ]);
-        }
-      }
+      if (isEditing) await updateInvestment(investmentData);
+      else await saveInvestment(investmentData);
+      await notify(isEditing ? 'แก้ไขการลงทุนเรียบร้อย' : 'บันทึกการลงทุนเรียบร้อย', 'สำเร็จ');
+      navigation.goBack();
     } catch (error) {
-      if (Platform.OS === 'web') {
-        window.alert('ไม่สามารถบันทึกข้อมูลได้');
-      } else {
-        Alert.alert('ข้อผิดพลาด', 'ไม่สามารถบันทึกข้อมูลได้');
-      }
+      notify('ไม่สามารถบันทึกข้อมูลได้', 'ข้อผิดพลาด');
     }
   };
 
@@ -293,7 +264,8 @@ export default function AddInvestmentScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.content}>
+      {/* ฟอร์มกรอกทีละช่อง — บนเดสก์ท็อปคุมไว้ 600px เท่ากับฟอร์ม AddExpense/AddInstallment */}
+      <View style={[styles.content, isDesktop && styles.contentDesktop]}>
         <Text style={styles.label}>ประเภทการลงทุน</Text>
         <ScrollView
           horizontal
@@ -631,6 +603,47 @@ export default function AddInvestmentScreen() {
           placeholderTextColor={COLORS.textSecondary}
         />
 
+        {/* ── กฎ "ถึงคิวลงไม้" รายตัว ──
+            ของที่แกว่งแรงอย่าง crypto ดูรายวันทัน แต่หุ้นที่ตั้งใจถือยาว ดูรายสัปดาห์/เดือน
+            จะกรองสัญญาณรบกวนออกได้เยอะกว่า จึงต้องตั้งแยกได้ ไม่ใช่กฎเดียวใช้ทั้งพอร์ต */}
+        {hasCandles && (
+          <>
+            <Text style={styles.label}>สัญญาณ "ถึงคิวลงไม้" ของตัวนี้</Text>
+            <View style={styles.platformChips}>
+              {RED_INTERVALS.map((r) => (
+                <TouchableOpacity
+                  key={r.value}
+                  style={[styles.platformChip, redInterval === r.value && styles.platformChipActive]}
+                  onPress={() => setRedInterval(r.value)}
+                >
+                  <Text
+                    style={[
+                      styles.platformChipText,
+                      redInterval === r.value && styles.platformChipTextActive,
+                    ]}
+                  >
+                    {r.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              style={styles.input}
+              value={redEvery}
+              onChangeText={setRedEvery}
+              keyboardType="numeric"
+              placeholder="2"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+            <Text style={styles.redRuleHint}>
+              เตือนเมื่อแดงติดกันครบทุก ๆ {redEvery || DEFAULT_RED_EVERY}{' '}
+              {RED_INTERVALS.find((r) => r.value === redInterval)?.unit}
+              {' '}(ครบ {redEvery || DEFAULT_RED_EVERY} / {(parseInt(redEvery, 10) || DEFAULT_RED_EVERY) * 2} / {(parseInt(redEvery, 10) || DEFAULT_RED_EVERY) * 3}…)
+              {' '}· นับเฉพาะแท่งที่ปิดแล้ว
+            </Text>
+          </>
+        )}
+
         <Text style={styles.label}>บันทึกเพิ่มเติม</Text>
         <TextInput
           style={[styles.input, styles.textArea]}
@@ -661,9 +674,22 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
   },
+  contentDesktop: {
+    maxWidth: 600,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  // คำอธิบายกฎแท่งแดง — ต้องอ่านแล้วเห็นภาพทันทีว่าจะเตือนตอนไหน ไม่ต้องเดา
+  redRuleHint: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+    marginTop: -8,
+    marginBottom: 12,
+    lineHeight: 18,
+  },
   label: {
     fontSize: 10,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
@@ -711,12 +737,10 @@ const styles = StyleSheet.create({
   typeText: {
     fontSize: 11,
     color: COLORS.text,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
   },
   typeTextSelected: {
     color: '#ffffff',
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
   },
   row: {
@@ -815,7 +839,6 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: '#ffffff',
     fontSize: 12,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 2,
     textTransform: 'uppercase',
@@ -855,7 +878,6 @@ const styles = StyleSheet.create({
   },
   searchResultSymbol: {
     fontSize: 14,
-    fontWeight: '600',
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
     marginBottom: 4,

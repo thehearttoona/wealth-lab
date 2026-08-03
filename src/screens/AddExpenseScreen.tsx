@@ -18,6 +18,7 @@ import { RootStackParamList, Expense, RecurringBill } from '../types';
 import { saveExpense, updateExpense, saveRecurringBill, updateRecurringBill } from '../services/storage';
 import { setPendingReturnDate } from '../services/pendingNavigation';
 import { EXPENSE_CATEGORIES, COLORS, formatCurrency, toChristianYear } from '../utils/constants';
+import { notify } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../services/supabase';
@@ -74,10 +75,10 @@ export default function AddExpenseScreen() {
         if (data.category && EXPENSE_CATEGORIES.includes(data.category)) setCategory(data.category);
         if (data.date) setExpenseDate(normalizeScanDate(data.date));
       } else {
-        showMsg(data.error || 'ไม่สามารถอ่านข้อมูลจากรูปได้');
+        notify(data.error || 'ไม่สามารถอ่านข้อมูลจากรูปได้');
       }
     } catch (err: any) {
-      showMsg('Error: ' + (err?.message || JSON.stringify(err) || 'unknown'));
+      notify('Error: ' + (err?.message || JSON.stringify(err) || 'unknown'));
     } finally {
       setScanning(false);
     }
@@ -122,7 +123,7 @@ export default function AddExpenseScreen() {
           const base64 = resized.split(',')[1];
           await scanWithSupabase(base64, 'image/jpeg');
         } catch (err: any) {
-          showMsg('อ่านไฟล์ไม่ได้: ' + (err?.message || ''));
+          notify('อ่านไฟล์ไม่ได้: ' + (err?.message || ''));
           setScanning(false);
         }
       };
@@ -131,7 +132,7 @@ export default function AddExpenseScreen() {
     } else {
       if (useCamera) {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
-        if (status !== 'granted') { showMsg('กรุณาอนุญาตใช้กล้อง'); return; }
+        if (status !== 'granted') { notify('กรุณาอนุญาตใช้กล้อง'); return; }
         const result = await ImagePicker.launchCameraAsync({
           mediaTypes: ['images'], quality: 0.4, exif: false, base64: true,
         });
@@ -140,7 +141,7 @@ export default function AddExpenseScreen() {
         }
       } else {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') { showMsg('กรุณาอนุญาตเข้าถึงรูปภาพ'); return; }
+        if (status !== 'granted') { notify('กรุณาอนุญาตเข้าถึงรูปภาพ'); return; }
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ['images'], quality: 0.4, exif: false, base64: true,
         });
@@ -225,7 +226,7 @@ export default function AddExpenseScreen() {
   const formatMonthLabel = (monthKey: string) => {
     const [y, m] = monthKey.split('-').map(Number);
     const year = y > 2400 ? y - 543 : y;
-    return new Date(year, m - 1, 1).toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+    return new Date(year, m - 1, 1).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
   };
 
   const navigateViewMonth = (delta: number) => {
@@ -248,21 +249,16 @@ export default function AddExpenseScreen() {
     });
   };
 
-  const showMsg = (msg: string) => {
-    if (Platform.OS === 'web') window.alert(msg);
-    else Alert.alert('', msg);
-  };
-
   // ── Save ──
   const handleSave = async () => {
     if (type === 'daily') {
       if (!amount || parseFloat(amount) <= 0) {
-        showMsg('กรุณากรอกจำนวนเงินที่ถูกต้อง');
+        notify('กรุณากรอกจำนวนเงินที่ถูกต้อง');
         return;
       }
     } else {
       if (Object.keys(monthEntries).length === 0) {
-        showMsg('กรุณาบันทึกอย่างน้อย 1 เดือน');
+        notify('กรุณาบันทึกอย่างน้อย 1 เดือน');
         return;
       }
     }
@@ -284,7 +280,7 @@ export default function AddExpenseScreen() {
         } else {
           await saveExpense(expenseData);
         }
-        showMsg(isEditing ? 'แก้ไขรายจ่ายแล้ว' : 'บันทึกรายจ่ายแล้ว');
+        notify(isEditing ? 'แก้ไขรายจ่ายแล้ว' : 'บันทึกรายจ่ายแล้ว');
       } else {
         const parsedMonthly: { [key: string]: number } = {};
         Object.entries(monthEntries).forEach(([month, amtStr]) => {
@@ -304,20 +300,19 @@ export default function AddExpenseScreen() {
         } else {
           await saveRecurringBill(billData);
         }
-        showMsg(isEditing ? 'แก้ไขรายการแล้ว' : 'บันทึกรายการแล้ว');
+        notify(isEditing ? 'แก้ไขรายการแล้ว' : 'บันทึกรายการแล้ว');
       }
       if (type === 'daily') {
         setPendingReturnDate(expenseDate);
       }
       navigation.goBack();
     } catch {
-      showMsg('บันทึกไม่สำเร็จ กรุณาลองใหม่');
+      notify('บันทึกไม่สำเร็จ กรุณาลองใหม่');
     }
   };
 
   const sortedEntries = Object.entries(monthEntries).sort(([a], [b]) => b.localeCompare(a));
   const totalSaved = sortedEntries.reduce((sum, [, v]) => sum + (parseFloat(v) || 0), 0);
-
 
   
   // ── Render ──
@@ -395,8 +390,8 @@ export default function AddExpenseScreen() {
             >
               <Ionicons name="calendar-outline" size={15} color={COLORS.primary} />
               <Text style={styles.datePickerText}>
-                {new Date(toChristianYear(expenseDate)).toLocaleDateString('en-US', {
-                  year: 'numeric', month: 'long', day: 'numeric',
+                {new Date(toChristianYear(expenseDate)).toLocaleDateString('th-TH', {
+                  day: 'numeric', month: 'long', year: 'numeric',
                 })}
               </Text>
               <Ionicons name={showCalendar ? 'chevron-up' : 'chevron-down'} size={12} color={COLORS.textSecondary} />
@@ -539,7 +534,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   content: { padding: 24 },
   label: {
-    fontSize: 11, fontWeight: '400', fontFamily: 'NotoSansThai_400Regular',
+    fontSize: 11, fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5, textTransform: 'uppercase', color: COLORS.textSecondary,
     marginBottom: 12, marginTop: 24,
   },
@@ -591,7 +586,7 @@ const styles = StyleSheet.create({
   monthNavBtn: { padding: 16 },
   monthNavCenter: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 12 },
   monthNavigatorLabel: {
-    fontSize: 15, fontWeight: '600', fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, textAlign: 'center',
+    fontSize: 15, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, textAlign: 'center',
   },
   monthSavedBadge: {
     flexDirection: 'row', alignItems: 'center',
@@ -666,7 +661,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 40, borderWidth: 1, borderColor: COLORS.primary,
   },
   saveButtonText: {
-    color: '#ffffff', fontSize: 13, fontWeight: '400',
+    color: '#ffffff', fontSize: 13, 
     fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.5, textTransform: 'uppercase',
   },
 });

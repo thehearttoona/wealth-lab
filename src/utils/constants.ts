@@ -32,6 +32,46 @@ export const COLORS = {
   divider: '#F1F5F9',
 };
 
+// ── สีสำหรับกราฟ ──
+// ห้ามใช้คู่ เขียว/แดง เด็ดขาด — ตรวจด้วย simulation ตาบอดสีเขียว-แดง (deuteranopia) แล้ว
+// #22A06B ↔ #D64545 ได้ ΔE แค่ 5.4 (เกณฑ์ต้อง ≥ 8) คนตาบอดสีจะเห็นเป็นสีเดียวกัน
+// ส่วน COLORS.primary (#294E80) ใช้ในกราฟไม่ผ่านเพราะเข้มเกินย่าน (L 0.422) และสีจางเกิน (C 0.094)
+// #3A6DB0 คือ primary ที่สว่างขึ้นหนึ่งขั้น เฉดเดียวกัน ผ่านครบทุกเกณฑ์ (ΔE 19.3 กับเขียว)
+export const CHART = {
+  income: '#22A06B',
+  expense: '#3A6DB0',
+  /** แท่งหมวดรายจ่าย — หมวดไม่มีลำดับในตัวเอง จึงใช้สีเดียวทั้งหมด
+   *  ไล่เฉดตามยอดคือเอาช่องทางสีไปย้ำสิ่งที่ความยาวแท่งบอกอยู่แล้ว */
+  bar: '#3A6DB0',
+  grid: '#E2E8F0',
+} as const;
+
+// ── ฟอนต์ ──
+// ทั้งแอปใช้ Noto Sans Thai ตัวเดียว น้ำหนักมาจาก "ไฟล์" ไม่ใช่ fontWeight
+// ⚠️ ห้ามใส่ fontWeight คู่กับ fontFamily เด็ดขาด — เว็บจะ fake-bold ทับไฟล์ที่มีน้ำหนักอยู่แล้ว
+// (เคยเป็นบั๊กกระจาย 19 ไฟล์ เพราะแต่ละหน้าจอเขียน style เองหมด)
+export const FONTS = {
+  light: 'NotoSansThai_300Light',
+  regular: 'NotoSansThai_400Regular',
+  medium: 'NotoSansThai_500Medium',
+  semibold: 'NotoSansThai_600SemiBold',
+} as const;
+
+/**
+ * ชุดขนาด+น้ำหนักที่ใช้ซ้ำทั้งแอป — กระจายลง StyleSheet ได้เลย
+ * เช่น  title: { ...TEXT.title, color: COLORS.text }
+ */
+export const TEXT = {
+  screenTitle: { fontSize: 20, fontFamily: FONTS.semibold },
+  title: { fontSize: 16, fontFamily: FONTS.semibold },
+  subtitle: { fontSize: 14, fontFamily: FONTS.medium },
+  body: { fontSize: 14, fontFamily: FONTS.regular },
+  label: { fontSize: 13, fontFamily: FONTS.medium },
+  caption: { fontSize: 12, fontFamily: FONTS.regular },
+  hint: { fontSize: 11, fontFamily: FONTS.light },
+  amount: { fontSize: 22, fontFamily: FONTS.semibold },
+} as const;
+
 // ── แคชสกุลเงินที่ผู้ใช้ตั้งเอง ──
 // convertToTHB/getCurrencySymbol ถูกเรียกแบบ sync จากทุกหน้าจอ เลย await Supabase ตรงนี้ไม่ได้
 // วิธีคือให้ services/currencyStorage.ts โหลดรายการมาใส่แคชนี้ตอนเข้าแอป (refreshCurrencyCache)
@@ -92,28 +132,29 @@ export const toChristianYear = (dateString: string): string => {
   return dateString;
 };
 
+// ทั้งสามตัวใช้ th-TH ปีที่ได้จึงเป็น พ.ศ. — ตรงกับที่ toChristianYear แปลงขาเข้าไว้เป็น ค.ศ. แล้ว
 export const formatDate = (dateString: string): string => {
   const date = new Date(toChristianYear(dateString));
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
+  return date.toLocaleDateString('th-TH', {
     day: 'numeric',
+    month: 'long',
+    year: 'numeric',
   });
 };
 
 export const formatDateShort = (dateString: string): string => {
   const date = new Date(toChristianYear(dateString));
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
+  return date.toLocaleDateString('th-TH', {
     day: 'numeric',
+    month: 'short',
+    year: 'numeric',
   });
 };
 
 export const getCurrentMonthYear = (): string => {
   const date = new Date();
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
+  return date.toLocaleDateString('th-TH', {
     month: 'long',
+    year: 'numeric',
   });
 };

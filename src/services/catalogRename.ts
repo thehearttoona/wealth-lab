@@ -1,14 +1,8 @@
-import { supabase } from './supabase';
+import { supabase, getUserId } from './supabase';
 
 // เปลี่ยนชื่อสกุลเงิน/แพลตฟอร์มแล้วต้องไล่แก้ของที่ใช้อยู่ให้ครบ
 // เพราะ investments/accounts/realized_trades เก็บเป็น "string ดิบ" ไม่ได้อ้าง id
 // ถ้าไม่ไล่แก้ ของเก่าจะค้างชื่อเดิมแล้วกลายเป็นรายการกำพร้าที่ไม่มีในลิสต์
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
 
 // ตาราง realized_trades อาจยังไม่ถูกสร้าง (ต้องรัน SQL เอง) — ข้ามไปแทนที่จะพังทั้งการ rename
 const ignoreMissingTable = (error: { code?: string; message?: string } | null): void => {

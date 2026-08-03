@@ -5,25 +5,38 @@ import {
   Image,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   ScrollView,
-  Platform,
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Calendar, DateData } from 'react-native-calendars';
+import { Calendar, DateData, LocaleConfig } from 'react-native-calendars';
 import { RootStackParamList, Expense, RecurringBill, Income } from '../types';
 import { getIncomes, getMonthlyIncomeTotal, deleteIncome } from '../services/incomeStorage';
 import { getPendingReturnDate, clearPendingReturnDate } from '../services/pendingNavigation';
-import { supabase } from '../services/supabase';
 
 import { getExpenses, deleteExpense, getRecurringBills, deleteRecurringBill } from '../services/storage';
 import { formatCurrency, formatDate, COLORS, getCurrentMonthYear } from '../utils/constants';
+import { confirmAsk } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FontDisplay } from 'expo-font';
+
+// react-native-calendars มากับ locale อังกฤษอย่างเดียว ต้องลงทะเบียนไทยเองไม่งั้นหัวปฏิทินเป็น January/Mon
+LocaleConfig.locales['th'] = {
+  monthNames: [
+    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
+  ],
+  monthNamesShort: ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
+  dayNames: ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'],
+  dayNamesShort: ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'],
+  today: 'วันนี้',
+};
+LocaleConfig.defaultLocale = 'th';
+
+// ชื่อเดือน/วันที่แบบไทย ใช้ร่วมกันทั้งหน้า (ปีเป็น พ.ศ. ตามที่ th-TH ให้มา)
+const TH_MONTHS_SHORT = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
@@ -34,7 +47,7 @@ const INCOME_DAY_TEXT = '#136B47';
 
 export default function HomeScreen() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
-  const { isDesktop, isMobile } = useResponsive();
+  const { isDesktop, maxWidth } = useResponsive();
   const insets = useSafeAreaInsets();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [weekTotal, setWeekTotal] = useState(0);
@@ -123,7 +136,7 @@ export default function HomeScreen() {
               borderColor: incomeOnly ? INCOME_DAY_BORDER : 'transparent',
               borderRadius: 0,
             },
-            text: { color: COLORS.text, fontWeight: 'bold' },
+            text: { color: COLORS.text, fontFamily: 'NotoSansThai_600SemiBold', },
           },
           amount: totalAmount,
           incomeAmount: dayIncome,
@@ -139,13 +152,13 @@ export default function HomeScreen() {
         marked[todayStr].customStyles = {
           ...marked[todayStr].customStyles,
           container: { ...marked[todayStr].customStyles?.container, borderWidth: 2, borderColor: COLORS.primary, borderRadius: 0},
-          text: { color: COLORS.primary, fontWeight: 'bold' },
+          text: { color: COLORS.primary, fontFamily: 'NotoSansThai_600SemiBold', },
         };
       } else {
         marked[todayStr] = {
           customStyles: {
             container: { borderWidth: 2, borderColor: COLORS.primary, borderRadius: 0},
-            text: { color: COLORS.primary, fontWeight: 'bold' },
+            text: { color: COLORS.primary, fontFamily: 'NotoSansThai_600SemiBold', },
           },
         };
       }
@@ -252,25 +265,9 @@ export default function HomeScreen() {
   );
 
   const handleDelete = async (id: string) => {
-    if (Platform.OS === 'web') {
-      const confirmed = window.confirm('ต้องการลบรายการนี้ใช่ไหม?');
-      if (confirmed) {
-        await deleteExpense(id);
-        loadExpenses();
-      }
-    } else {
-      Alert.alert('ลบรายการ', 'ต้องการลบรายการนี้ใช่ไหม?', [
-        { text: 'ยกเลิก', style: 'cancel' },
-        {
-          text: 'ลบ',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteExpense(id);
-            loadExpenses();
-          },
-        },
-      ]);
-    }
+    if (!(await confirmAsk('ลบรายการ', 'ต้องการลบรายการนี้ใช่ไหม?', 'ลบ'))) return;
+    await deleteExpense(id);
+    loadExpenses();
   };
 
   const handleEdit = (item: Expense) => {
@@ -278,76 +275,35 @@ export default function HomeScreen() {
   };
 
   const handleDeleteBill = async (id: string) => {
-    if (Platform.OS === 'web') {
-      const confirmed = window.confirm('ต้องการลบรายการนี้ใช่ไหม?');
-      if (confirmed) {
-        await deleteRecurringBill(id);
-        loadExpenses();
-      }
-    } else {
-      Alert.alert('ลบรายการ', 'ต้องการลบรายการนี้ใช่ไหม?', [
-        { text: 'ยกเลิก', style: 'cancel' },
-        {
-          text: 'ลบ',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteRecurringBill(id);
-            loadExpenses();
-          },
-        },
-      ]);
-    }
+    if (!(await confirmAsk('ลบรายการ', 'ต้องการลบรายการนี้ใช่ไหม?', 'ลบ'))) return;
+    await deleteRecurringBill(id);
+    loadExpenses();
   };
 
   const handleEditBill = (bill: RecurringBill) => {
     navigation.navigate('AddExpense', { type: 'recurring', bill });
   };
 
-  const handleDeleteIncome = (id: string) => {
-    if (Platform.OS === 'web') {
-      if (window.confirm('ต้องการลบรายรับนี้ใช่ไหม?')) {
-        deleteIncome(id).then(() => loadExpenses());
-      }
-    } else {
-      Alert.alert('ลบรายรับ', 'ต้องการลบรายรับนี้ใช่ไหม?', [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: 'ลบ', style: 'destructive', onPress: () => deleteIncome(id).then(() => loadExpenses()) },
-      ]);
-    }
+  const handleDeleteIncome = async (id: string) => {
+    if (!(await confirmAsk('ลบรายรับ', 'ต้องการลบรายรับนี้ใช่ไหม?', 'ลบ'))) return;
+    await deleteIncome(id);
+    loadExpenses();
   };
 
-  const handleDeleteSelectedExpenses = () => {
+  const handleDeleteSelectedExpenses = async () => {
     if (selectedExpenseIds.size === 0) return;
-    const doDelete = async () => {
-      for (const id of selectedExpenseIds) await deleteExpense(id);
-      setSelectedExpenseIds(new Set());
-      loadExpenses();
-    };
-    if (Platform.OS === 'web') {
-      if (window.confirm(`ลบ ${selectedExpenseIds.size} รายการใช่ไหม?`)) doDelete();
-    } else {
-      Alert.alert('ลบรายการ', `ลบ ${selectedExpenseIds.size} รายการใช่ไหม?`, [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: 'ลบ', style: 'destructive', onPress: doDelete },
-      ]);
-    }
+    if (!(await confirmAsk('ลบรายการ', `ลบ ${selectedExpenseIds.size} รายการใช่ไหม?`, 'ลบ'))) return;
+    for (const id of selectedExpenseIds) await deleteExpense(id);
+    setSelectedExpenseIds(new Set());
+    loadExpenses();
   };
 
-  const handleDeleteSelectedIncomes = () => {
+  const handleDeleteSelectedIncomes = async () => {
     if (selectedIncomeIds.size === 0) return;
-    const doDelete = async () => {
-      for (const id of selectedIncomeIds) await deleteIncome(id);
-      setSelectedIncomeIds(new Set());
-      loadExpenses();
-    };
-    if (Platform.OS === 'web') {
-      if (window.confirm(`ลบ ${selectedIncomeIds.size} รายการใช่ไหม?`)) doDelete();
-    } else {
-      Alert.alert('ลบรายการ', `ลบ ${selectedIncomeIds.size} รายการใช่ไหม?`, [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: 'ลบ', style: 'destructive', onPress: doDelete },
-      ]);
-    }
+    if (!(await confirmAsk('ลบรายการ', `ลบ ${selectedIncomeIds.size} รายการใช่ไหม?`, 'ลบ'))) return;
+    for (const id of selectedIncomeIds) await deleteIncome(id);
+    setSelectedIncomeIds(new Set());
+    loadExpenses();
   };
 
   const onDayPress = (day: DateData) => {
@@ -381,7 +337,7 @@ export default function HomeScreen() {
             borderColor: COLORS.accent,
             borderRadius: 0,
           },
-          text: { color: COLORS.accent, fontWeight: 'bold' },
+          text: { color: COLORS.accent, fontFamily: 'NotoSansThai_600SemiBold', },
         },
       };
       return updated;
@@ -494,9 +450,9 @@ export default function HomeScreen() {
     const endDay = weekDays[6];
     const monthLabel =
       weekStart.getMonth() === endDay.getMonth()
-        ? weekStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-        : `${weekStart.toLocaleDateString('en-US', { month: 'short' })} – ${endDay.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
-    const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        ? weekStart.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })
+        : `${weekStart.toLocaleDateString('th-TH', { month: 'short' })} – ${endDay.toLocaleDateString('th-TH', { month: 'short', year: 'numeric' })}`;
+    const DAY_LABELS = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
 
     return (
       <View style={[styles.calendarContainer, isDesktop && styles.calendarContainerDesktop]}>
@@ -512,7 +468,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setViewMode('month')} style={styles.viewToggleBtn}>
               <Ionicons name="calendar-outline" size={12} color={COLORS.textSecondary} />
-              <Text style={styles.viewToggleText}>Month</Text>
+              <Text style={styles.viewToggleText}>รายเดือน</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -548,7 +504,7 @@ export default function HomeScreen() {
           {selectedDate ? (
             <>
               <Text style={styles.selectedDayTitle}>
-                {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                {new Date(selectedDate + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
               </Text>
               <View style={{ flexDirection: 'row', gap: 16 }}>
                 {getDayIncome(selectedDate) > 0 && (
@@ -561,7 +517,7 @@ export default function HomeScreen() {
             </>
           ) : (
             <>
-              <Text style={styles.selectedDayTitle}>This Week</Text>
+              <Text style={styles.selectedDayTitle}>สัปดาห์นี้</Text>
               <View style={{ flexDirection: 'row', gap: 16 }}>
                 {(() => {
                   const weekEnd = new Date(weekStart);
@@ -582,7 +538,7 @@ export default function HomeScreen() {
                     <>
                       {wIncome > 0 && <Text style={[styles.selectedDayAmount, { color: COLORS.success }]}>+{formatCurrency(wIncome)}</Text>}
                       {wExpense > 0 && <Text style={[styles.selectedDayAmount, { color: COLORS.error }]}>-{formatCurrency(wExpense)}</Text>}
-                      {wIncome === 0 && wExpense === 0 && <Text style={[styles.selectedDayAmount, { color: COLORS.textSecondary }]}>No records</Text>}
+                      {wIncome === 0 && wExpense === 0 && <Text style={[styles.selectedDayAmount, { color: COLORS.textSecondary }]}>ไม่มีรายการ</Text>}
                     </>
                   );
                 })()}
@@ -600,7 +556,7 @@ export default function HomeScreen() {
 
         {/* ── Month/Year Picker Header ── */}
         {(() => {
-          const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          const MONTHS = TH_MONTHS_SHORT;
           const goTo = (year: number, month: number) => {
             setCalendarMonth({ year, month });
             setSelectedDate('');
@@ -619,8 +575,9 @@ export default function HomeScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 12 }}
                   onPress={() => { setShowMonthPicker(true); setPickerYear(calendarMonth.year); }}>
-                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: COLORS.text, fontFamily: 'NotoSansThai_600SemiBold' }}>
-                    {MONTHS[calendarMonth.month]} {calendarMonth.year}
+                  <Text style={{ fontSize: 16, color: COLORS.text, fontFamily: 'NotoSansThai_600SemiBold' }}>
+                    {/* state เก็บเป็น ค.ศ. แต่โชว์ พ.ศ. ให้ตรงกับที่คนไทยอ่าน */}
+                    {MONTHS[calendarMonth.month]} {calendarMonth.year + 543}
                   </Text>
                   <Ionicons name="chevron-down" size={14} color={COLORS.textSecondary} />
                 </TouchableOpacity>
@@ -641,7 +598,7 @@ export default function HomeScreen() {
                       <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setPickerYear(y => y - 1)}>
                         <Ionicons name="chevron-back" size={20} color={COLORS.text} />
                       </TouchableOpacity>
-                      <Text style={{ color: COLORS.text, fontWeight: 'bold', fontSize: 16 }}>{pickerYear}</Text>
+                      <Text style={{ color: COLORS.text, fontFamily: 'NotoSansThai_600SemiBold', fontSize: 16 }}>{pickerYear + 543}</Text>
                       <TouchableOpacity hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setPickerYear(y => y + 1)}>
                         <Ionicons name="chevron-forward" size={20} color={COLORS.text} />
                       </TouchableOpacity>
@@ -654,7 +611,7 @@ export default function HomeScreen() {
                           <TouchableOpacity key={m}
                             style={{ width: '25%', alignItems: 'center', paddingVertical: 14, backgroundColor: isActive ? COLORS.primary : 'transparent' }}
                             onPress={() => { goTo(pickerYear, i); setShowMonthPicker(false); }}>
-                            <Text style={{ color: isActive ? '#fff' : COLORS.text, fontSize: 14 }}>{m}</Text>
+                            <Text style={{ color: isActive ? '#fff' : COLORS.text, fontSize: 14, fontFamily: 'NotoSansThai_400Regular' }}>{m}</Text>
                           </TouchableOpacity>
                         );
                       })}
@@ -736,7 +693,7 @@ export default function HomeScreen() {
         {selectedDate ? (
           <View style={styles.selectedDayInfo}>
             <Text style={styles.selectedDayTitle}>
-              {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+              {new Date(selectedDate + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}
             </Text>
             <View style={{ flexDirection: 'row', gap: 16 }}>
               {getDayIncome(selectedDate) > 0 ? <Text style={[styles.selectedDayAmount, { color: COLORS.success }]}>+{formatCurrency(getDayIncome(selectedDate))}</Text> : null}
@@ -768,7 +725,7 @@ export default function HomeScreen() {
         d.setDate(mon.getDate() + i);
         return d;
       });
-      const fmtDay = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const fmtDay = (d: Date) => `${d.getDate()} ${TH_MONTHS_SHORT[d.getMonth()]}`;
       const spansPrev = mon.getMonth() !== month;
       const label = spansPrev ? `${fmtDay(mon)}–${fmtDay(sun)}` : `${fmtDay(mon)}–${sun.getDate()}`;
       weeks.push({ days, label });
@@ -779,16 +736,18 @@ export default function HomeScreen() {
       <View>
         {!isDesktop && (
           <TouchableOpacity style={styles.weekTableToggle} onPress={() => setShowWeekTable(v => !v)}>
-            <Text style={styles.weekTableToggleText}>Weekly Summary</Text>
+            <Text style={styles.weekTableToggleText}>สรุปรายสัปดาห์</Text>
             <Ionicons name={showWeekTable ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
           </TouchableOpacity>
         )}
         {(isDesktop || showWeekTable) ? <View style={styles.weekTableContainer}>
           <View style={styles.weekTableHeader}>
-            <Text style={[styles.weekTableCell, { flex: 1, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>Week</Text>
-            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: COLORS.success, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>Income</Text>
-            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: COLORS.primary, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>Expense</Text>
-            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>Balance</Text>
+            {/* คอลัมน์ "สัปดาห์" กว้างกว่าเพราะป้ายเป็นช่วงวันที่ (เช่น 1 ก.ค.–7) ยาวกว่าตัวเลขเงิน
+                บนเดสก์ท็อปตารางนี้อยู่ในคอลัมน์ขวาแคบ ~250px แบ่ง 4 ช่องเท่ากันแล้วเลขจะเบียด */}
+            <Text style={[styles.weekTableCell, { flex: 1.3, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }]}>สัปดาห์</Text>
+            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: COLORS.success, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, fontSize: 10 }]}>รายรับ</Text>
+            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: COLORS.primary, fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, fontSize: 10 }]}>รายจ่าย</Text>
+            <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', fontFamily: 'NotoSansThai_400Regular', letterSpacing: 1.2, fontSize: 10 }]}>คงเหลือ</Text>
           </View>
           {weeks.map((week, wi) => {
             const wExpense = week.days.reduce((s, d) => {
@@ -802,14 +761,14 @@ export default function HomeScreen() {
             const balance = wIncome - wExpense;
             return (
               <View key={wi} style={[styles.weekTableRow, wi % 2 === 0 ? { backgroundColor: `${COLORS.surface}` } : { backgroundColor: COLORS.background }]}>
-                <Text style={[styles.weekTableCell, { flex: 1, color: COLORS.text }]} numberOfLines={1}>{week.label}</Text>
-                <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: wIncome > 0 ? COLORS.success : COLORS.textSecondary }]}>
+                <Text style={[styles.weekTableCell, { flex: 1.3, color: COLORS.text }]} numberOfLines={1}>{week.label}</Text>
+                <Text numberOfLines={1} style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: wIncome > 0 ? COLORS.success : COLORS.textSecondary }]}>
                   {wIncome > 0 ? `${formatCurrency(wIncome)}` : '–'}
                 </Text>
-                <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: wExpense > 0 ? COLORS.primary : COLORS.textSecondary }]}>
+                <Text numberOfLines={1} style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: wExpense > 0 ? COLORS.primary : COLORS.textSecondary }]}>
                   {wExpense > 0 ? `${formatCurrency(wExpense)}` : '–'}
                 </Text>
-                <Text style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: balance >= 0 ? COLORS.success : COLORS.error }]}>
+                <Text numberOfLines={1} style={[styles.weekTableCell, { flex: 1, textAlign: 'right', color: balance >= 0 ? COLORS.success : COLORS.error }]}>
                   {wIncome === 0 && wExpense === 0 ? '–' : formatCurrency(balance)}
                 </Text>
               </View>
@@ -823,14 +782,14 @@ export default function HomeScreen() {
   const renderRecurringBills = () => {
     const now = new Date();
     const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const currentMonthLabel = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const currentMonthLabel = now.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
 
     return (
       <View style={[styles.recurringBillsSection, isDesktop && styles.recurringBillsSectionDesktop]}>
         <View style={styles.sectionHeader}>
           <View style={styles.sectionTitleContainer}>
             <Ionicons name="card-outline" size={16} color={COLORS.text} />
-            <Text style={styles.sectionTitle}> Recurring Bills</Text>
+            <Text style={styles.sectionTitle}> ค่าใช้จ่ายประจำ</Text>
           </View>
           <Text style={styles.monthlyTotal}>{formatCurrency(totalMonthlyBills)}</Text>
         </View>
@@ -853,7 +812,7 @@ export default function HomeScreen() {
                       <View style={styles.billInfoRow}>
                         <Ionicons name="calendar-outline" size={10} color={COLORS.textSecondary} />
                         <Text style={styles.billDueDate}>
-                          {' '}{recordedCount} month{recordedCount !== 1 ? 's' : ''} recorded
+                          {' '}บันทึกแล้ว {recordedCount} เดือน
                         </Text>
                       </View>
                     </View>
@@ -861,7 +820,7 @@ export default function HomeScreen() {
                       {thisMonthAmount !== undefined ? (
                         <Text style={styles.billAmount}>{formatCurrency(thisMonthAmount)}</Text>
                       ) : (
-                        <Text style={styles.billAmountEmpty}>Not recorded</Text>
+                        <Text style={styles.billAmountEmpty}>ยังไม่บันทึก</Text>
                       )}
                     </View>
                   </TouchableOpacity>
@@ -870,14 +829,14 @@ export default function HomeScreen() {
                     onPress={() => handleDeleteBill(bill.id)}
                   >
                     <Ionicons name="trash-outline" size={12} color={COLORS.textSecondary} />
-                    <Text style={styles.billDeleteText}> Delete</Text>
+                    <Text style={styles.billDeleteText}> ลบ</Text>
                   </TouchableOpacity>
                 </View>
               );
             })}
           </View>
         ) : (
-          <Text style={styles.emptyBillsText}>No recurring bills yet</Text>
+          <Text style={styles.emptyBillsText}>ยังไม่มีค่าใช้จ่ายประจำ</Text>
         )}
 
         <TouchableOpacity
@@ -885,7 +844,7 @@ export default function HomeScreen() {
           onPress={() => navigation.navigate('AddExpense', { type: 'recurring' })}
         >
           <Ionicons name="add-circle-outline" size={16} color={COLORS.primary} />
-          <Text style={styles.buttonSecondaryText}> Add Recurring Bill</Text>
+          <Text style={styles.buttonSecondaryText}> เพิ่มค่าใช้จ่ายประจำ</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -901,7 +860,7 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={isDesktop ? styles.desktopInner : undefined}>
+      <View style={isDesktop ? [styles.desktopInner, { maxWidth }] : undefined}>
 
         {/* ── Header ── */}
         <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
@@ -919,26 +878,22 @@ export default function HomeScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             {isDesktop && (
               <>
-                {/* <TouchableOpacity
+                <TouchableOpacity
                   style={styles.topBarAddBtn}
                   onPress={() => navigation.navigate('AddIncome', { date: selectedDate || undefined })}
                 >
                   <Ionicons name="add-circle-outline" size={16} color={COLORS.success} />
-                  <Text style={[styles.topBarAddBtnText, { color: COLORS.success }]}>Add Income</Text>
-                </TouchableOpacity> */}
-                {/* <TouchableOpacity
+                  <Text style={[styles.topBarAddBtnText, { color: COLORS.success }]}>เพิ่มรายรับ</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={styles.topBarAddBtn}
                   onPress={() => navigation.navigate('AddExpense', { type: 'daily', date: selectedDate || undefined })}
                 >
                   <Ionicons name="add-circle-outline" size={16} color={COLORS.primary} />
-                  <Text style={[styles.topBarAddBtnText, { color: COLORS.primary }]}>Add Expense</Text>
-                </TouchableOpacity> */}
+                  <Text style={[styles.topBarAddBtnText, { color: COLORS.primary }]}>เพิ่มรายจ่าย</Text>
+                </TouchableOpacity>
               </>
             )}
-            <TouchableOpacity onPress={() => supabase.auth.signOut()} style={styles.topBarLogout}>
-              <Ionicons name="log-out-outline" size={14} color={COLORS.textSecondary} />
-              <Text style={{ color: COLORS.text, fontSize: 12, fontFamily: 'NotoSansThai_400Regular' }}>Logout</Text>
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -948,30 +903,32 @@ export default function HomeScreen() {
           const viewIncome = incomes.filter(i => i.date?.startsWith(viewKey)).reduce((s, i) => s + i.amount, 0);
           const viewExpense = expenses.filter(e => e.date?.startsWith(viewKey)).reduce((s, e) => s + e.amount, 0);
           const viewBalance = viewIncome - viewExpense;
-          const monthLabel = new Date(calendarMonth.year, calendarMonth.month, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+          const monthLabel = new Date(calendarMonth.year, calendarMonth.month, 1).toLocaleDateString('th-TH', { month: 'short', year: 'numeric' });
+          // แท็บเล็ต (768–1023) เคยหลุด: isMobile=false, isDesktop=false → การ์ด 3 ใบเบียดในแถวเดียว
+          // จนตัวเลขหลักล้านตกบรรทัด เลยเทียบกับ isDesktop ตรง ๆ ให้ทุกอย่างที่ไม่ใช่เดสก์ท็อปวางเป็นคอลัมน์
           return (
-            <View style={[styles.summaryContainer, isMobile && styles.summaryContainerMobile]}>
+            <View style={[styles.summaryContainer, !isDesktop && styles.summaryContainerMobile]}>
               <View style={[styles.summaryCard, styles.summaryCardIncome, isDesktop && styles.summaryCardDesktop]}>
-                <Text style={styles.summaryLabel}>Income</Text>
+                <Text style={styles.summaryLabel}>รายรับ</Text>
                 <Text style={[styles.summaryAmount, styles.summaryAmountIncome, isDesktop && styles.summaryAmountDesktop]}>
                   {formatCurrency(viewIncome)}
                 </Text>
                 <Text style={styles.summarySubLabel}>{monthLabel}</Text>
               </View>
               <View style={[styles.summaryCard, styles.summaryCardExpense, isDesktop && styles.summaryCardDesktop]}>
-                <Text style={styles.summaryLabel}>Expense</Text>
+                <Text style={styles.summaryLabel}>รายจ่าย</Text>
                 <Text style={[styles.summaryAmount, styles.summaryAmountExpense, isDesktop && styles.summaryAmountDesktop]}>
                   {formatCurrency(viewExpense)}
                 </Text>
                 <Text style={styles.summarySubLabel}>{monthLabel}</Text>
               </View>
-              {/* <View style={[styles.summaryCard, styles.summaryCardNet, isDesktop && styles.summaryCardDesktop]}>
-                <Text style={styles.summaryLabel}>Balance</Text>
+              <View style={[styles.summaryCard, styles.summaryCardNet, isDesktop && styles.summaryCardDesktop]}>
+                <Text style={styles.summaryLabel}>คงเหลือ</Text>
                 <Text style={[styles.summaryAmount, viewBalance >= 0 ? styles.summaryAmountIncome : styles.summaryAmountExpense, isDesktop && styles.summaryAmountDesktop]}>
                   {formatCurrency(viewBalance)}
                 </Text>
                 <Text style={styles.summarySubLabel}>{monthLabel}</Text>
-              </View> */}
+              </View>
             </View>
           );
         })()}
@@ -1001,36 +958,19 @@ export default function HomeScreen() {
               onPress={() => navigation.navigate('AddIncome', { date: selectedDate || undefined })}
             >
               <Ionicons name="add-circle-outline" size={24} color={COLORS.success} />
-              <Text style={[styles.buttonText, styles.buttonTextIncome]}>Add Income</Text>
+              <Text style={[styles.buttonText, styles.buttonTextIncome]}>เพิ่มรายรับ</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.button, styles.buttonExpense]}
               onPress={() => navigation.navigate('AddExpense', { type: 'daily', date: selectedDate || undefined })}
             >
               <Ionicons name="add-circle-outline" size={24} color={COLORS.primary} />
-              <Text style={[styles.buttonText, styles.buttonTextExpense]}>Add Expense</Text>
+              <Text style={[styles.buttonText, styles.buttonTextExpense]}>เพิ่มรายจ่าย</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {isDesktop && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10,padding:24 }}>
-            <TouchableOpacity
-              style={styles.topBarAddBtn}
-              onPress={() => navigation.navigate('AddIncome', { date: selectedDate || undefined })}
-            >
-              <Ionicons name="add-circle-outline" size={16} color={COLORS.success} />
-              <Text style={[styles.topBarAddBtnText, { color: COLORS.success }]}>Add Income</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.topBarAddBtn}
-              onPress={() => navigation.navigate('AddExpense', { type: 'daily', date: selectedDate || undefined })}
-            >
-              <Ionicons name="add-circle-outline" size={16} color={COLORS.primary} />
-              <Text style={[styles.topBarAddBtnText, { color: COLORS.primary }]}>Add Expense</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {/* ปุ่มเพิ่มรายรับ/รายจ่ายของเดสก์ท็อปอยู่บน topBar แล้ว — เคยมีชุดที่สองซ้ำตรงนี้ เอาออก */}
 
         {/* ── Income / Expense Lists ── */}
         <View style={isDesktop ? styles.desktopListsRow : undefined}>
@@ -1060,7 +1000,7 @@ export default function HomeScreen() {
                   <>
                     <TouchableOpacity onPress={() => setIncomeSelectMode(true)} style={styles.selectModeBtn}>
                       <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
-                      <Text style={styles.selectModeText}>Select</Text>
+                      <Text style={styles.selectModeText}>เลือก</Text>
                     </TouchableOpacity>
                     <Text style={styles.incomeTotalText}>{formatCurrency(filteredIncomes.reduce((s, i) => s + i.amount, 0))}</Text>
                   </>
@@ -1101,7 +1041,7 @@ export default function HomeScreen() {
               <>
                 <TouchableOpacity onPress={() => setExpenseSelectMode(true)} style={styles.selectModeBtn}>
                   <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
-                  <Text style={styles.selectModeText}>Select</Text>
+                  <Text style={styles.selectModeText}>เลือก</Text>
                 </TouchableOpacity>
                 <Text style={styles.expenseTotalText}>{formatCurrency(filteredExpenses.reduce((s, e) => s + e.amount, 0))}</Text>
               </>
@@ -1110,22 +1050,14 @@ export default function HomeScreen() {
         </View>
 
         {/* ── Expense List ── */}
-        {showExpenseList && <View style={[styles.listContainer, isDesktop && styles.listContainerDesktop]}>
+        {showExpenseList && <View style={styles.listContainer}>
           {filteredExpenses.length > 0 ? (
-            filteredExpenses.map((item, index) => (
-              <View
-                key={item.id}
-                style={isDesktop ? [
-                  styles.expenseColItem,
-                  index % 2 === 0 && styles.expenseColLeft,
-                ] : undefined}
-              >
-                {renderExpenseItem(item)}
-              </View>
+            filteredExpenses.map((item) => (
+              <View key={item.id}>{renderExpenseItem(item)}</View>
             ))
           ) : (
             <Text style={styles.emptyText}>
-              {selectedDate ? 'No expenses on this day' : 'No expenses yet'}
+              {selectedDate ? 'วันนี้ยังไม่มีรายจ่าย' : 'ยังไม่มีรายจ่าย'}
             </Text>
           )}
         </View>}
@@ -1155,7 +1087,6 @@ const styles = StyleSheet.create({
   },
   sectionToggleText: {
     fontSize: 11,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
@@ -1183,7 +1114,6 @@ const styles = StyleSheet.create({
   },
   desktopHeaderTitle: {
     fontSize: 13,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 2,
     textTransform: 'uppercase',
@@ -1260,12 +1190,6 @@ const styles = StyleSheet.create({
   topBarLogo: {
     width: 104, // 30 × (444/128)
     height: 30,
-  },
-  topBarLogout: {
-    padding: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
   },
 
   // ── Summary cards ──
@@ -1349,7 +1273,6 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 11,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
@@ -1357,7 +1280,6 @@ const styles = StyleSheet.create({
   },
   summaryAmount: {
     fontSize: 22,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 0.5,
     color: COLORS.primary,
@@ -1400,7 +1322,6 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontSize: 11,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 2,
     textTransform: 'uppercase',
@@ -1414,7 +1335,6 @@ const styles = StyleSheet.create({
   buttonSecondaryText: {
     color: COLORS.primary,
     fontSize: 11,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5,
   },
@@ -1432,7 +1352,6 @@ const styles = StyleSheet.create({
   },
   weekMonthLabel: {
     fontSize: 13,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1,
     color: COLORS.text,
@@ -1541,14 +1460,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: COLORS.background,
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
+    gap: 6,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
   weekTableRow: {
     flexDirection: 'row',
     paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
+    gap: 6,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
@@ -1570,7 +1491,6 @@ const styles = StyleSheet.create({
   calNavBtn: { padding: 10 },
   calMonthTitle: {
     fontSize: 14,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1,
     color: COLORS.text,
@@ -1670,8 +1590,10 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     borderRadius: 0,
   },
+  // react-native-calendars ห่อ dayComponent ไว้ใน View ที่เป็น flex:1 อยู่แล้ว (1 ใน 7 ของแถว)
+  // ฉะนั้น width:'100%' = พอดีช่องเสมอ ต่างจาก width คงที่ 42/52 เดิมที่ล้นทันทีเมื่อจอแคบกว่า ~310px
   dayContainer: {
-    width: 42,
+    width: '100%',
     height: 52,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1680,7 +1602,6 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   dayContainerDesktop: {
-    width: 52,
     height: 62,
   },
   dayContainerSelected: {
@@ -1696,7 +1617,6 @@ const styles = StyleSheet.create({
   dayText: {
     fontSize: 11,
     color: COLORS.text,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
   },
   dayTextDesktop: {
@@ -1704,8 +1624,7 @@ const styles = StyleSheet.create({
   },
   todayText: {
     color: COLORS.primary,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_500Medium',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   dayTextSelected: {
     color: COLORS.accent,
@@ -1742,14 +1661,12 @@ const styles = StyleSheet.create({
   selectedDayTitle: {
     fontSize: 12,
     color: COLORS.text,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 0.5,
   },
   selectedDayAmount: {
     fontSize: 14,
     color: COLORS.primary,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
   },
 
@@ -1781,7 +1698,6 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 12,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 2,
     textTransform: 'uppercase',
@@ -1789,13 +1705,11 @@ const styles = StyleSheet.create({
   },
   monthlyTotal: {
     fontSize: 14,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.primary,
   },
   billMonthLabel: {
     fontSize: 11,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     letterSpacing: 0.5,
@@ -1819,7 +1733,6 @@ const styles = StyleSheet.create({
   },
   billName: {
     fontSize: 14,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.text,
     marginBottom: 6,
@@ -1830,7 +1743,6 @@ const styles = StyleSheet.create({
   },
   billDueDate: {
     fontSize: 10,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
   },
@@ -1840,13 +1752,11 @@ const styles = StyleSheet.create({
   },
   billAmount: {
     fontSize: 14,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.primary,
   },
   billAmountEmpty: {
     fontSize: 11,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     fontStyle: 'italic',
@@ -1862,7 +1772,6 @@ const styles = StyleSheet.create({
   },
   billDeleteText: {
     fontSize: 9,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
@@ -1872,7 +1781,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: COLORS.textSecondary,
     fontSize: 11,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     paddingVertical: 24,
   },
@@ -1893,7 +1801,6 @@ const styles = StyleSheet.create({
   },
   listTitle: {
     fontSize: 12,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 2,
     textTransform: 'uppercase',
@@ -1906,7 +1813,6 @@ const styles = StyleSheet.create({
   clearButton: {
     fontSize: 11,
     color: COLORS.primary,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 0.5,
   },
@@ -1914,21 +1820,10 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     paddingTop: 0,
   },
-  // Desktop: 2-column flex-wrap
-  listContainerDesktop: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'flex-start',
-    padding: 0,
-  },
-  expenseColItem: {
-    width: '100%',
-  },
-  // Left column gets a right border as column divider
-  expenseColLeft: {
-    borderRightWidth: 1,
-    borderRightColor: COLORS.border,
-  },
+  // หมายเหตุ: เคยมี listContainerDesktop/expenseColItem/expenseColLeft ที่ตั้งใจทำ 2 คอลัมน์
+  // แต่ expenseColItem เป็น width:'100%' จึงได้คอลัมน์เดียวอยู่แล้ว เหลือแค่ borderRight
+  // ของแถว index คู่ที่โผล่เป็นขีดตั้งลอย ๆ — เอาออกทั้งชุด ลิสต์นี้อยู่ในคอลัมน์ครึ่งจอแล้ว
+  // (desktopListsRow) แบ่งซ้อนอีกชั้นจะแคบเกินอ่าน
 
   // ── Expense item ──
   expenseItem: {
@@ -1952,7 +1847,6 @@ const styles = StyleSheet.create({
   },
   expenseCategory: {
     fontSize: 14,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 0.5,
     color: COLORS.text,
@@ -1960,14 +1854,12 @@ const styles = StyleSheet.create({
   },
   expenseDescription: {
     fontSize: 12,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     marginBottom: 4,
   },
   expenseDate: {
     fontSize: 10,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 0.5,
     color: COLORS.textSecondary,
@@ -1986,7 +1878,6 @@ const styles = StyleSheet.create({
   },
   expenseAmount: {
     fontSize: 16,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 0.5,
     color: COLORS.primary,
@@ -2041,7 +1932,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: COLORS.textSecondary,
     fontSize: 12,
-    fontWeight: '300',
     fontFamily: 'NotoSansThai_300Light',
     letterSpacing: 1,
     marginVertical: 48,

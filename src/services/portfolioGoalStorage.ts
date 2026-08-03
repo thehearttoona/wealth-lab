@@ -1,11 +1,5 @@
 import { PortfolioGoal } from '../utils/investmentGoals';
-import { supabase } from './supabase';
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
+import { supabase, getUserId } from './supabase';
 
 export const getPortfolioGoal = async (): Promise<PortfolioGoal | null> => {
   const { data, error } = await supabase

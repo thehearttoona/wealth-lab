@@ -1,11 +1,5 @@
 import { InstallmentPlan } from '../types';
-import { supabase } from './supabase';
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
+import { supabase, getUserId } from './supabase';
 
 const mapFromDb = (row: any): InstallmentPlan => ({
   id: row.id,

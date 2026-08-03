@@ -1,6 +1,7 @@
 import { Expense } from '../types';
 import { getExpenses } from '../services/storage';
 import { getPortfolioSummary } from '../services/investmentStorage';
+import { formatCurrency } from './constants';
 
 export interface Insight {
   type: 'warning' | 'alert' | 'tip' | 'success';
@@ -20,7 +21,7 @@ export const analyzeExpenses = async (): Promise<Insight[]> => {
   if (dailyExpenses.length === 0) {
     return [{
       type: 'tip',
-      icon: '💡',
+      icon: 'bulb-outline',
       title: 'เริ่มจดบันทึกค่าใช้จ่าย',
       message: 'ยังไม่มีข้อมูลค่าใช้จ่าย ลองเริ่มบันทึกเพื่อดูข้อมูลเชิงลึก',
     }];
@@ -53,42 +54,55 @@ export const analyzeExpenses = async (): Promise<Insight[]> => {
     if (percentage > 30) {
       insights.push({
         type: 'warning',
-        icon: '⚠️',
+        icon: 'alert-circle-outline',
         title: `${maxCategory.category} สูงเกินไป`,
         message: `คุณใช้จ่าย${maxCategory.category} ${percentage.toFixed(1)}% ของรายจ่ายทั้งหมด แนะนำให้ลดลงเหลือ 25-30%`,
         savingPotential: maxCategory.amount * 0.2,
-        actionable: `ลองลดค่า${maxCategory.category}ลง 20% จะประหยัดได้ประมาณ ฿${(maxCategory.amount * 0.2).toFixed(0)}/เดือน`,
+        actionable: `ลองลดค่า${maxCategory.category}ลง 20% จะประหยัดได้ประมาณ ${formatCurrency((maxCategory.amount * 0.2))}/เดือน`,
       });
     }
   }
 
-  // Insight 2: เปรียบเทียบกับเดือนที่แล้ว
+  // Insight 2: เปรียบเทียบกับเดือนที่แล้ว "ช่วงเวลาเท่ากัน"
+  //
+  // ของเดิมเอายอดทั้งเดือนที่แล้ว (เต็มเดือน) มาเทียบกับเดือนนี้ที่เพิ่งผ่านไปไม่กี่วัน
+  // วันที่ 2 ของเดือนจึงขึ้นว่า "ประหยัดได้ดีมาก ลดลง 100%" ทุกครั้ง ทั้งที่ยังไม่ได้ประหยัดอะไรเลย
+  // แก้เป็นเทียบวันที่ 1..วันนี้ ของทั้งสองเดือน แล้วรอให้ผ่านไปพอสมควรก่อนค่อยสรุป
+  const dayOfMonth = new Date().getDate();
+  const MIN_DAYS_TO_COMPARE = 5;
+
   const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1;
   const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-  const lastMonthExpenses = dailyExpenses.filter((e) => {
-    const expenseDate = new Date(e.date);
-    return expenseDate.getMonth() === lastMonth && expenseDate.getFullYear() === lastMonthYear;
-  });
-  const lastMonthTotal = lastMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const lastMonthSameWindowTotal = dailyExpenses
+    .filter((e) => {
+      const d = new Date(e.date);
+      return (
+        d.getMonth() === lastMonth &&
+        d.getFullYear() === lastMonthYear &&
+        d.getDate() <= dayOfMonth
+      );
+    })
+    .reduce((sum, e) => sum + e.amount, 0);
 
-  if (lastMonthTotal > 0) {
-    const change = monthlyTotal - lastMonthTotal;
-    const changePercent = (change / lastMonthTotal) * 100;
+  if (dayOfMonth >= MIN_DAYS_TO_COMPARE && lastMonthSameWindowTotal > 0) {
+    const change = monthlyTotal - lastMonthSameWindowTotal;
+    const changePercent = (change / lastMonthSameWindowTotal) * 100;
+    const window = `เทียบวันที่ 1–${dayOfMonth} ของทั้งสองเดือน`;
 
     if (changePercent > 20) {
       insights.push({
         type: 'alert',
-        icon: '🔴',
+        icon: 'trending-up-outline',
         title: 'ค่าใช้จ่ายเพิ่มขึ้นมาก',
-        message: `เดือนนี้ใช้จ่ายมากกว่าเดือนที่แล้ว ${changePercent.toFixed(1)}% (เพิ่ม ฿${change.toFixed(0)})`,
+        message: `ช่วงนี้ใช้จ่ายมากกว่าเดือนที่แล้ว ${changePercent.toFixed(1)}% (เพิ่ม ${formatCurrency(change)}) — ${window}`,
         actionable: 'ลองตรวจสอบว่ามีรายจ่ายพิเศษหรือไม่ และควรปรับลด',
       });
     } else if (changePercent < -10) {
       insights.push({
         type: 'success',
-        icon: '✅',
-        title: 'ประหยัดได้ดีมาก!',
-        message: `เดือนนี้ใช้จ่ายน้อยกว่าเดือนที่แล้ว ${Math.abs(changePercent).toFixed(1)}% (ลด ฿${Math.abs(change).toFixed(0)})`,
+        icon: 'trending-down-outline',
+        title: 'ใช้จ่ายน้อยลง',
+        message: `ช่วงนี้ใช้จ่ายน้อยกว่าเดือนที่แล้ว ${Math.abs(changePercent).toFixed(1)}% (ลด ${formatCurrency(Math.abs(change))}) — ${window}`,
       });
     }
   }
@@ -102,9 +116,9 @@ export const analyzeExpenses = async (): Promise<Insight[]> => {
   if (projectedMonthly > monthlyTotal * 1.5) {
     insights.push({
       type: 'warning',
-      icon: '📊',
+      icon: 'stats-chart-outline',
       title: 'แนวโน้มการใช้จ่ายสูง',
-      message: `ถ้าใช้จ่ายต่อไปในอัตรานี้ คาดว่าเดือนนี้จะใช้ ฿${projectedMonthly.toFixed(0)}`,
+      message: `ถ้าใช้จ่ายต่อไปในอัตรานี้ คาดว่าเดือนนี้จะใช้ ${formatCurrency(projectedMonthly)}`,
       actionable: 'ลองตั้งเป้าหมายรายจ่ายและติดตามให้ใกล้เคียง',
     });
   }
@@ -113,7 +127,7 @@ export const analyzeExpenses = async (): Promise<Insight[]> => {
   if (byCategory['อาหาร'] > 10000) {
     insights.push({
       type: 'tip',
-      icon: '🍳',
+      icon: 'restaurant-outline',
       title: 'ประหยัดค่าอาหาร',
       message: 'ค่าอาหารของคุณสูง ลองทำอาหารเองบ้างวันละ 1-2 มื้อ',
       savingPotential: 3000,
@@ -124,7 +138,7 @@ export const analyzeExpenses = async (): Promise<Insight[]> => {
   if (byCategory['บันเทิง'] > monthlyTotal * 0.25) {
     insights.push({
       type: 'tip',
-      icon: '🎮',
+      icon: 'game-controller-outline',
       title: 'ลดค่าบันเทิง',
       message: 'ค่าบันเทิงสูงเกินไป ควรจำกัดไม่เกิน 20% ของรายจ่าย',
       actionable: 'ลองหาความบันเทิงฟรีหรือราคาถูกกว่า',
@@ -134,7 +148,7 @@ export const analyzeExpenses = async (): Promise<Insight[]> => {
   if (byCategory['เดินทาง'] > 8000) {
     insights.push({
       type: 'tip',
-      icon: '🚗',
+      icon: 'car-outline',
       title: 'ประหยัดค่าเดินทาง',
       message: 'ค่าเดินทางสูง ลองใช้ขนส่งสาธารณะหรือแชร์รถกับเพื่อน',
       savingPotential: 2000,
@@ -153,7 +167,7 @@ export const analyzeInvestments = async (): Promise<Insight[]> => {
   if (summary.totalValue === 0) {
     return [{
       type: 'tip',
-      icon: '💼',
+      icon: 'briefcase-outline',
       title: 'เริ่มต้นลงทุน',
       message: 'ยังไม่มีพอร์ตการลงทุน ลองเริ่มลงทุนเพื่อสร้างความมั่งคั่ง',
       actionable: 'เริ่มจากกองทุนหรือหุ้นปันผล',
@@ -164,16 +178,16 @@ export const analyzeInvestments = async (): Promise<Insight[]> => {
   if (summary.totalProfitPercent > 10) {
     insights.push({
       type: 'success',
-      icon: '🎉',
+      icon: 'trophy-outline',
       title: 'พอร์ตกำไรดีมาก!',
-      message: `คุณทำกำไร ${summary.totalProfitPercent.toFixed(2)}% (฿${summary.totalProfit.toFixed(0)})`,
+      message: `คุณทำกำไร ${summary.totalProfitPercent.toFixed(2)}% (${formatCurrency(summary.totalProfit)})`,
     });
   } else if (summary.totalProfitPercent < -10) {
     insights.push({
       type: 'alert',
-      icon: '⚠️',
+      icon: 'alert-circle-outline',
       title: 'พอร์ตขาดทุน',
-      message: `พอร์ตขาดทุน ${Math.abs(summary.totalProfitPercent).toFixed(2)}% (฿${Math.abs(summary.totalProfit).toFixed(0)})`,
+      message: `พอร์ตขาดทุน ${Math.abs(summary.totalProfitPercent).toFixed(2)}% (${formatCurrency(Math.abs(summary.totalProfit))})`,
       actionable: 'ลองตรวจสอบและปรับพอร์ต หรือ hold ถ้าเชื่อในระยะยาว',
     });
   }
@@ -187,7 +201,7 @@ export const analyzeInvestments = async (): Promise<Insight[]> => {
   if (groupedTypes.size === 1) {
     insights.push({
       type: 'warning',
-      icon: '⚖️',
+      icon: 'git-compare-outline',
       title: 'ควรกระจายความเสี่ยง',
       message: 'คุณลงทุนในประเภทเดียว ควรกระจายเพื่อลดความเสี่ยง',
       actionable: 'ลองเพิ่มการลงทุนในประเภทอื่นๆ เช่น กองทุน, ทอง',
@@ -200,7 +214,7 @@ export const analyzeInvestments = async (): Promise<Insight[]> => {
   if (stockValue > 0 && stockPercentage > 70) {
     insights.push({
       type: 'warning',
-      icon: '📈',
+      icon: 'trending-up-outline',
       title: 'หุ้นเยอะเกินไป',
       message: `หุ้น (ไทย+ต่างประเทศ) คิดเป็น ${stockPercentage.toFixed(1)}% ของพอร์ต ความเสี่ยงสูง`,
       actionable: 'ควรลดสัดส่วนหุ้นลงและเพิ่มสินทรัพย์ที่มั่นคง',
@@ -213,7 +227,7 @@ export const analyzeInvestments = async (): Promise<Insight[]> => {
     if (type === 'crypto' && percentage > 20) {
       insights.push({
         type: 'warning',
-        icon: '₿',
+        icon: 'logo-bitcoin',
         title: 'Crypto มีความเสี่ยงสูง',
         message: `Crypto คิดเป็น ${percentage.toFixed(1)}% ซึ่งค่อนข้างสูง`,
         actionable: 'แนะนำไม่ควรเกิน 10-15% ของพอร์ต',

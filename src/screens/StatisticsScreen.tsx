@@ -109,7 +109,7 @@ export default function StatisticsScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={isDesktop ? styles.desktopWrapper : undefined}>
-        <View style={[styles.header, isDesktop && styles.headerDesktop]}>
+        <View style={styles.header}>
           <Text style={styles.headerTitle}>📊 วิเคราะห์การเงิน</Text>
           <Text style={styles.headerSubtitle}>AI วิเคราะห์และแนะนำเพื่อคุณ</Text>
         </View>
@@ -188,18 +188,15 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontFamily: 'NotoSansThai_300Light',
   },
+  // เดิม paddingTop 60 เผื่อ status bar แต่หน้านี้มี header ของ Stack ("สถิติ & ข้อสังเกต") อยู่แล้ว
+  // จึงเป็นช่องว่างตายซ้อน header — ตัดเหลือ 20 เท่ากันทุกจอ (headerDesktop เลยไม่จำเป็นแล้ว)
   header: {
     backgroundColor: COLORS.primary,
     padding: 20,
-    paddingTop: 60,
     paddingBottom: 30,
-  },
-  headerDesktop: {
-    paddingTop: 20,
   },
   headerTitle: {
     fontSize: 28,
-    fontWeight: 'bold',
     color: '#ffffff',
     fontFamily: 'NotoSansThai_600SemiBold',
   },
@@ -222,8 +219,7 @@ const styles = StyleSheet.create({
   refreshButtonText: {
     fontSize: 16,
     color: COLORS.primary,
-    fontWeight: '600',
-    fontFamily: 'NotoSansThai_400Regular',
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   content: {
     padding: 16,
@@ -243,7 +239,6 @@ const styles = StyleSheet.create({
   },
   summaryCount: {
     fontSize: 20,
-    fontWeight: 'bold',
     fontFamily: 'NotoSansThai_600SemiBold',
   },
   insightsGridDesktop: {
@@ -279,7 +274,6 @@ const styles = StyleSheet.create({
   },
   insightTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
     flex: 1,
     fontFamily: 'NotoSansThai_600SemiBold',
   },
@@ -298,7 +292,6 @@ const styles = StyleSheet.create({
   },
   actionableLabel: {
     fontSize: 13,
-    fontWeight: '600',
     color: COLORS.text,
     marginBottom: 4,
     fontFamily: 'NotoSansThai_600SemiBold',
@@ -317,7 +310,6 @@ const styles = StyleSheet.create({
   },
   savingText: {
     fontSize: 14,
-    fontWeight: '600',
     color: '#ffffff',
     textAlign: 'center',
     fontFamily: 'NotoSansThai_600SemiBold',
@@ -333,7 +325,6 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
     color: COLORS.text,
     marginBottom: 8,
     fontFamily: 'NotoSansThai_600SemiBold',
@@ -361,7 +352,6 @@ const styles = StyleSheet.create({
   },
   infoTitle: {
     fontSize: 16,
-    fontWeight: '600',
     color: '#7986CB',
     marginBottom: 8,
     fontFamily: 'NotoSansThai_600SemiBold',
@@ -380,7 +370,6 @@ const styles = StyleSheet.create({
   },
   tipTitle: {
     fontSize: 16,
-    fontWeight: '600',
     color: '#FFB74D',
     marginBottom: 8,
     fontFamily: 'NotoSansThai_600SemiBold',

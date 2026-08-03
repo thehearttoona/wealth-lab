@@ -10,3 +10,10 @@ export const supabase = createClient('https://hdqycikfcxgxfipkcezw.supabase.co',
     detectSessionInUrl: Platform.OS === 'web',
   },
 });
+
+// ทุก *Storage.ts ต้องแนบ user_id ตอนเขียน (RLS บังคับ) — เดิม copy ฟังก์ชันนี้ไว้ทุกไฟล์
+export const getUserId = async (): Promise<string> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  return user.id;
+};

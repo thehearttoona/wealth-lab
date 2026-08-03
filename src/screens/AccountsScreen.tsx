@@ -21,6 +21,8 @@ import { getAccounts, saveAccount, updateAccount, deleteAccount } from '../servi
 import { getCurrencies } from '../services/currencyStorage';
 import { getPlatforms } from '../services/platformStorage';
 import { COLORS, getCurrencySymbol, formatCurrency } from '../utils/constants';
+import { notify, confirmAsk } from '../utils/dialog';
+import { useResponsive } from '../utils/responsive';
 
 const roleLabel = (role: AccountRole) =>
   ACCOUNT_ROLES.find((r) => r.value === role)?.label || role;
@@ -29,6 +31,7 @@ const roleIcon = (role: AccountRole) =>
 
 export default function AccountsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { isDesktop, contentMaxWidth } = useResponsive();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -88,11 +91,6 @@ export default function AccountsScreen() {
     setModalVisible(true);
   };
 
-  const notify = (msg: string) => {
-    if (Platform.OS === 'web') window.alert(msg);
-    else Alert.alert('', msg);
-  };
-
   const handleSave = async () => {
     if (!name.trim()) {
       notify('กรุณาใส่ชื่อบัญชี');
@@ -120,22 +118,13 @@ export default function AccountsScreen() {
 
   const handleDelete = async () => {
     if (!editing) return;
-    const doDelete = async () => {
-      try {
-        await deleteAccount(editing.id);
-        setModalVisible(false);
-        await load();
-      } catch (e: any) {
-        notify('ลบไม่สำเร็จ\n' + (e?.message || String(e)));
-      }
-    };
-    if (Platform.OS === 'web') {
-      if (window.confirm(`ลบบัญชี "${editing.name}" ?`)) doDelete();
-    } else {
-      Alert.alert('ลบบัญชี', `ลบบัญชี "${editing.name}" ?`, [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: 'ลบ', style: 'destructive', onPress: doDelete },
-      ]);
+    if (!(await confirmAsk('ลบบัญชี', `ลบบัญชี "${editing.name}" ?`, 'ลบ'))) return;
+    try {
+      await deleteAccount(editing.id);
+      setModalVisible(false);
+      await load();
+    } catch (e: any) {
+      notify('ลบไม่สำเร็จ\n' + (e?.message || String(e)));
     }
   };
 
@@ -149,7 +138,12 @@ export default function AccountsScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.listContent}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.listContent,
+          isDesktop && { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' as const },
+        ]}
+      >
         <Text style={styles.intro}>
           แยกบัญชีตามหน้าที่ของเงิน — ใช้จ่าย / รอลงทุน / พักรายได้ เพื่อ import statement แยกบัญชี และไม่ให้เงินโอนระหว่างกันนับซ้ำ
         </Text>
@@ -205,7 +199,12 @@ export default function AccountsScreen() {
       {/* ── Add/Edit modal ── */}
       <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          {/* chip 3 ชุด (สกุลเงิน/บทบาท/แพลตฟอร์ม) wrap ได้เรื่อย ๆ → การ์ดต้องเลื่อนเองและมีเพดานความสูง */}
+          <ScrollView
+            style={styles.modalCard}
+            contentContainerStyle={styles.modalCardContent}
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.modalTitle}>
               <Ionicons name="wallet-outline" size={18} color={COLORS.primary} />{' '}
               {editing ? 'แก้ไขบัญชี' : 'เพิ่มบัญชี'}
@@ -295,7 +294,7 @@ export default function AccountsScreen() {
                 <Text style={styles.modalCancelText}>ยกเลิก</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -344,7 +343,7 @@ const styles = StyleSheet.create({
   cardSub: { fontSize: 12, fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary, marginTop: 2 },
   cardRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   cardBalance: { fontSize: 14, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
-  cardBalanceMuted: { fontSize: 14, color: COLORS.textSecondary },
+  cardBalanceMuted: { fontSize: 14, color: COLORS.textSecondary, fontFamily: 'NotoSansThai_400Regular' },
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -368,8 +367,23 @@ const styles = StyleSheet.create({
   },
   importBtnText: { color: COLORS.primary, fontSize: 14, fontFamily: 'NotoSansThai_600SemiBold' },
   // modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalCard: { backgroundColor: COLORS.surface, borderRadius: 12, padding: 20 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  // maxWidth กันการ์ดกางเต็มจอบนเดสก์ท็อป / maxHeight+flexGrow:0 ให้สูงตามเนื้อหาแต่ไม่เกินจอ
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '100%',
+    flexGrow: 0,
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+  },
+  modalCardContent: { padding: 20 },
   modalTitle: { fontSize: 16, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, marginBottom: 12 },
   modalLabel: {
     fontSize: 12,

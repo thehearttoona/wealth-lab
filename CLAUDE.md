@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-"Narix" (aka Wealth Lab) — a personal finance + investment/trading tracker. Expo / React Native app that is **primarily deployed as a web app to Vercel** (`narix.vercel.app`), though the same codebase targets iOS/Android. UI is in **Thai**. Backend is **Supabase** (auth + Postgres). A separate Python FastAPI service (`mt5_backend/`) handles MetaTrader 5 grid trading.
+"Narix" (aka Wealth Lab) — a personal finance + investment tracker. Expo / React Native app that is **primarily deployed as a web app to Vercel** (`narix.vercel.app`), though the same codebase targets iOS/Android. UI is in **Thai**. Backend is **Supabase** (auth + Postgres).
+
+The MT5 grid-trading feature and the in-app AI assistant were **removed** — no MT5 screens, no `mt5_backend/` Python service, no `aiService`/`AIAssistant`. Don't reintroduce them.
 
 ## Commands
 
@@ -18,7 +20,7 @@ npx expo export --platform web   # production web build → dist/ (this is the V
 
 There is **no unit-test framework and no linter** configured. `npx tsc --noEmit` is the correctness gate.
 
-**Known pre-existing type errors** live in `GridTradingScreen.tsx`, `TradingCalculatorScreen.tsx`, `mt5Api.ts`, and `supabase/functions/telegram-bot/index.ts` (Deno globals). These are unrelated to app code — when typechecking, filter to the files you touched (e.g. `npx tsc --noEmit 2>&1 | grep <yourfile>`) rather than expecting a clean run.
+**App code typechecks clean.** The only remaining errors are the 8 in `supabase/functions/telegram-bot/index.ts` (Deno globals, expected under the app's tsconfig). Anything else is yours.
 
 ### Deploy
 ```bash
@@ -27,29 +29,29 @@ vercel --prod --scope thehearttoonas-projects --yes     # deploy (may exceed a 2
 ```
 Deploys go to Vercel account scope `thehearttoonas-projects`. `vercel.json` sets `buildCommand`, `outputDirectory: dist`, and an SPA rewrite that routes everything **except `/api/*`** to `/`.
 
-### Python trading backend (separate, optional)
-```bash
-npm run backend          # cd mt5_backend && python main.py  (FastAPI on :8000)
-npm run dev              # runs web + backend concurrently
-```
-
 ## Architecture
 
 ### Storage layer — the core pattern
 Every data domain has a `src/services/*Storage.ts` module wrapping Supabase. They all follow the same conventions, so match them when adding one:
-- `getUserId()` reads the authenticated user; rows are per-user and enforced by **RLS** — always attach `user_id` on writes.
+- `getUserId()` lives in `services/supabase.ts` — import it, don't re-declare it. Rows are per-user and enforced by **RLS**, so always attach `user_id` on writes.
 - **DB uses snake_case, TS uses camelCase.** Each module defines `mapXFromDb` / `mapXToDb` translators. When you add a field to a type, you must add it to **both** mappers or it silently drops on save/load.
-- Some settings are per-user singletons (e.g. `investment_plan`, MT5 settings) using `.maybeSingle()` + `upsert`.
+- Some settings are per-user singletons (e.g. `investment_plan`) using `.maybeSingle()` + `upsert`.
 - Schema changes are applied by hand via SQL in the Supabase console (no migrations checked in). When adding a column, provide the idempotent `alter table ... add column if not exists ...` for the user to run.
 
-`src/services/` map: `storage.ts` (expenses + recurring bills), `incomeStorage`, `installmentStorage`, `monthlySummaryStorage`, `investmentStorage` (+ `getPortfolioSummary`), `portfolioGoalStorage`, `investmentPlanStorage`, `tradingStorage`, `mt5Storage`, plus non-storage services below.
+`src/services/` map: `storage.ts` (expenses + recurring bills), `incomeStorage`, `installmentStorage`, `monthlySummaryStorage`, `investmentStorage` (+ `getPortfolioSummary`), `portfolioGoalStorage`, `investmentPlanStorage`, plus non-storage services below.
 
 ### Navigation — responsive fork
-`src/navigation/index.tsx` gates on `useAuth()` (shows `LoginScreen` when logged out), then renders **one of two entirely different layouts** based on `useResponsive().isDesktop`:
-- Desktop (≥1024px): custom `DesktopSidebar` + swapped content pane (no real navigator — active tab is local state).
-- Mobile: `@react-navigation` bottom tabs.
+`src/navigation/index.tsx` gates on `useAuth()` (shows `LoginScreen` when logged out), then picks a layout from `useResponsive().isDesktop`. Both branches share **one** `Stack.Navigator`; only the root screen and the chrome around it differ:
+- Desktop (≥1024px): `DesktopSidebar` is a persistent shell rendered **outside `NavigationContainer`**, so pushing a sub-screen (Accounts, ManageCatalog, …) keeps the sidebar on screen. The active tab is local state in `Navigation`, passed down to the Stack's root screen (`DesktopRootScreen`) through `DesktopTabContext` — don't move that state back inside the navigator. Tapping a sidebar item also `navigate`s back to the root route via `navigationRef`, otherwise the press looks dead while a pushed screen covers the pane.
+- Mobile: root screen is `MobileTabNavigator` (`@react-navigation` bottom tabs).
 
-`useResponsive()` (`src/utils/responsive.ts`) is the single source for breakpoints, `isDesktop/isMobile`, grid columns, sidebar width. Screens frequently branch on it — e.g. Portfolio uses a `FlatList` 2-col grid on desktop but a `ScrollView` on mobile (a plain flex `FlatList` breaks scrolling on web).
+`useResponsive()` (`src/utils/responsive.ts`) is the single source for breakpoints, `isDesktop/isTablet/isMobile/isWide`, `maxWidth` (1200, multi-column pages), `contentMaxWidth` (800, single-column lists/forms), and `sidebarWidth`. Screens frequently branch on it — e.g. Portfolio uses a `FlatList` 2-col grid on desktop but a `ScrollView` on mobile (a plain flex `FlatList` breaks scrolling on web).
+
+Two responsive traps that already bit once:
+- **Don't gate "stack it vertically" on `isMobile`** — the 768–1023 tablet band is neither `isMobile` nor `isDesktop`, so those rows stay side-by-side and get crushed. Branch on `!isDesktop`.
+- **`alignSelf: 'center'` + `width: '100%'` does nothing without a `maxWidth`.** Any desktop wrapper needs all three, or the page just stretches across a 2560px monitor.
+
+Every `Modal` card must be a `ScrollView` with `maxHeight: '100%'` + `flexGrow: 0` (padding goes on `contentContainerStyle`). `public/index.html` sets `body { overflow: hidden }`, so a modal taller than the viewport doesn't just look bad — its save button becomes unreachable.
 
 ### Price data — `src/services/priceApi.ts` + Vercel proxies
 Live prices come from multiple free sources: **Binance** (crypto, real-time), **CoinGecko** (crypto fallback), **Twelve Data** (stocks, key embedded client-side), **open.er-api.com** (FX rates, 1-hr cached), and **Yahoo Finance via `api/yahoo-quote.js`** (stock fallback, gold `GC=F`, daily candles).
@@ -60,16 +62,23 @@ Live prices come from multiple free sources: **Binance** (crypto, real-time), **
 
 Fund NAV (Thai funds) has **no working live API** — SEC Open Data's NAV endpoint is impractical (oldest-first, 100/page, no latest filter). Instead a static catalog `public/funds.json` (~3000 funds) is lazily fetched and searched client-side (`src/services/fundCatalog.ts`); NAV is entered manually.
 
-Note there are **two** currency-conversion paths: `utils/constants.ts#convertToTHB` uses **hardcoded** rates (used by `getPortfolioSummary`), while `priceApi.ts` uses **live** rates. Keep that in mind when reconciling portfolio totals.
+The **Twelve Data key must stay server-side** — it goes through `api/twelve-data.js`, which reads `TWELVE_DATA_API_KEY` from the Vercel env (with the old public key as a temporary fallback). Never put a key back into `priceApi.ts`; it ships in the browser bundle.
 
-### AI assistant
-`src/services/aiService.ts` builds a financial context (expenses/income/portfolio/trading aggregated) and the `AIAssistant` component chats over it. The backend URL comes from MT5 settings (defaults to a LAN IP).
+Note there are **two** currency-conversion paths: `utils/constants.ts#convertToTHB` uses **user-set** rates (used by `getPortfolioSummary`), while `priceApi.ts` uses **live** rates. Keep that in mind when reconciling portfolio totals.
+
+`convertToTHB` reads a module-level cache, not React state — so nothing re-renders when the rates land. `Navigation` therefore **blocks on `refreshCurrencyCache()` before rendering any screen**; don't turn that back into a fire-and-forget `useEffect` or totals will paint with the hardcoded fallback rates and stay wrong until the screen remounts.
 
 ### Fonts & theming
-`App.tsx` loads Noto Sans Thai + Nunito via `useFonts` and **renders `null` until fonts are ready** (splash held). Thai text must use `NotoSansThai_*` families in styles — mixing families is a visible bug the user cares about. Icons are **`@expo/vector-icons` (Ionicons)** only. Do **not** reintroduce `react-native-iconify` — its Babel plugin double-minifies the web bundle and produces a blank white screen on Vercel. All colors come from `COLORS` in `src/utils/constants.ts`.
+`App.tsx` loads **only Noto Sans Thai** via `useFonts` and **renders `null` until fonts are ready** (splash held). Every `Text`/`TextInput` style must set an explicit `NotoSansThai_*` family — no family means the system font leaks in, and mixing families is a visible bug the user cares about.
+
+**Never set `fontWeight` alongside `fontFamily`** — on web that fake-bolds the glyphs on top of an already-weighted font file. Pick the weight by choosing the file: `_300Light` / `_400Regular` / `_500Medium` / `_600SemiBold` (SemiBold is the heaviest one loaded).
+
+Use the `FONTS` / `TEXT` presets in `utils/constants.ts` rather than re-typing family strings — `screenTitle: { ...TEXT.screenTitle, color: COLORS.text }`. `ProfileScreen.tsx` is the reference; the older screens still hardcode their own values and can be migrated opportunistically.
+
+### Dialogs
+`react-native-web` doesn't implement `Alert.alert` with buttons, so every prompt needs a `Platform.OS === 'web'` fork. That fork lives in **`utils/dialog.ts`** — use `notify(msg, title?)` and `await confirmAsk(title, msg, yesLabel?)`. Don't hand-roll `window.alert` / `Alert.alert` in a screen again. Icons are **`@expo/vector-icons` (Ionicons)** only. Do **not** reintroduce `react-native-iconify` — its Babel plugin double-minifies the web bundle and produces a blank white screen on Vercel. All colors come from `COLORS` in `src/utils/constants.ts`.
 
 ### Other pieces
-- `mt5_backend/` — standalone FastAPI + `MetaTrader5` package; opens 7-position martingale grids, auto-closes the rest when any one closes, streams over WebSocket. Runs on a Windows VPS with MT5 installed; app talks to it over a configurable URL. See `mt5_backend/README.md`.
 - `supabase/functions/telegram-bot/` — a Deno edge function (its TS errors are expected under the app's tsconfig).
 
 ## Conventions

@@ -1,5 +1,5 @@
 import { Income } from '../types';
-import { supabase } from './supabase';
+import { supabase, getUserId } from './supabase';
 
 export type { Income };
 
@@ -14,12 +14,6 @@ export const INCOME_CATEGORIES = [
   'ของขวัญ',
   'อื่นๆ',
 ];
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
 
 export const saveIncome = async (income: Income): Promise<void> => {
   const userId = await getUserId();

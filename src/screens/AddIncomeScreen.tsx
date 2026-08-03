@@ -17,6 +17,7 @@ import { RootStackParamList } from '../types';
 import { saveIncome, updateIncome, deleteIncome, INCOME_CATEGORIES } from '../services/incomeStorage';
 import { setPendingReturnDate } from '../services/pendingNavigation';
 import { COLORS, formatCurrency, toChristianYear } from '../utils/constants';
+import { notify, confirmAsk } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
 
 type AddIncomeNavProp = NativeStackNavigationProp<RootStackParamList, 'AddIncome'>;
@@ -66,13 +67,13 @@ export default function AddIncomeScreen() {
 
   const formatDateLabel = (dateStr: string) => {
     const d = new Date(toChristianYear(dateStr));
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
   };
 
   const handleSave = async () => {
     const parsed = parseFloat(amount);
     if (!amount || isNaN(parsed) || parsed <= 0) {
-      Alert.alert('ข้อผิดพลาด', 'กรุณากรอกจำนวนเงินที่ถูกต้อง');
+      notify('กรุณากรอกจำนวนเงินที่ถูกต้อง', 'ข้อผิดพลาด');
       return;
     }
 
@@ -96,20 +97,11 @@ export default function AddIncomeScreen() {
     navigation.goBack();
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!income) return;
-    const doDelete = async () => {
-      await deleteIncome(income.id);
-      navigation.goBack();
-    };
-    if (Platform.OS === 'web') {
-      if (window.confirm('คุณต้องการลบรายรับนี้ใช่หรือไม่?')) doDelete();
-    } else {
-      Alert.alert('ลบรายรับ', 'คุณต้องการลบรายรับนี้ใช่หรือไม่?', [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: 'ลบ', style: 'destructive', onPress: doDelete },
-      ]);
-    }
+    if (!(await confirmAsk('ลบรายรับ', 'คุณต้องการลบรายรับนี้ใช่หรือไม่?', 'ลบ'))) return;
+    await deleteIncome(income.id);
+    navigation.goBack();
   };
 
   const calendarTheme = {
@@ -279,8 +271,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_400Regular',
+    fontFamily: 'NotoSansThai_600SemiBold',
     color: '#ffffff',
   },
 
@@ -294,7 +285,6 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 11,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
@@ -397,7 +387,6 @@ const styles = StyleSheet.create({
   saveBtnText: {
     color: '#ffffff',
     fontSize: 13,
-    fontWeight: '400',
     fontFamily: 'NotoSansThai_400Regular',
     letterSpacing: 1.5,
     textTransform: 'uppercase',

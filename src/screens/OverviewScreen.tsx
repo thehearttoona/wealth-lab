@@ -1,60 +1,88 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types';
+import { RootStackParamList, Expense, Income, InstallmentPlan, RecurringBill } from '../types';
+import { Investment, RealizedTrade } from '../types/investment';
+import { Account } from '../types/account';
 import { getExpenses, getRecurringBills } from '../services/storage';
+import { getIncomes } from '../services/incomeStorage';
 import { getInvestments, getPortfolioSummary } from '../services/investmentStorage';
-import { getTradingOrders, getOrderStatistics } from '../services/tradingStorage';
-import { formatCurrency, COLORS, getCurrentMonthYear } from '../utils/constants';
+import { getRealizedTrades } from '../services/realizedStorage';
+import { getAccounts } from '../services/accountStorage';
+import { getInstallmentPlans } from '../services/installmentStorage';
+import { formatCurrency, COLORS, CHART, TEXT, FONTS } from '../utils/constants';
+import { getCurrentMonthKey } from '../utils/installments';
+import { computeNetWorth, NetWorthBreakdown } from '../utils/netWorth';
+import { computeCoverage, CoverageResult, INFLATION_RATE } from '../utils/portfolioCoverage';
+import {
+  ActivityDay,
+  ActivityEvent,
+  ACTIVITY_META,
+  MonthFlow,
+  CategorySlice,
+  buildActivityFeed,
+  groupActivityByDay,
+  buildMonthlyFlow,
+  monthsWithData,
+  expensesByCategory,
+} from '../utils/activityLog';
+import MonthlyFlowChart from '../components/charts/MonthlyFlowChart';
+import CategoryBars from '../components/charts/CategoryBars';
 import { useResponsive } from '../utils/responsive';
 
-type OverviewScreenNavigationProp = NativeStackNavigationProp<
-  RootStackParamList,
-  'Overview'
->;
+type Nav = NativeStackNavigationProp<RootStackParamList, 'Overview'>;
+
+// กราฟย้อนหลังจะมีความหมายก็ต่อเมื่อมีข้อมูลจริงหลายเดือน
+// น้อยกว่านี้จะได้แท่งว่างเป็นแถบ ซึ่งอ่านแล้วเข้าใจน้อยกว่าไม่มีกราฟ
+const MIN_MONTHS_FOR_CHART = 3;
+
+const kindColor = (kind: ActivityEvent['kind']): string => {
+  if (kind === 'income') return CHART.income;
+  if (kind === 'expense') return CHART.expense;
+  if (kind === 'installment') return COLORS.textSecondary;
+  return COLORS.accent; // ซื้อ/ขาย
+};
 
 export default function OverviewScreen() {
-  const navigation = useNavigation<OverviewScreenNavigationProp>();
+  const navigation = useNavigation<Nav>();
   const { isDesktop } = useResponsive();
-  const [totalExpenses, setTotalExpenses] = useState(0);
-  const [monthlyBills, setMonthlyBills] = useState(0);
-  const [portfolioValue, setPortfolioValue] = useState(0);
-  const [portfolioProfit, setPortfolioProfit] = useState(0);
-  const [tradingPnL, setTradingPnL] = useState(0);
-  const [openOrders, setOpenOrders] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [worth, setWorth] = useState<NetWorthBreakdown | null>(null);
+  const [days, setDays] = useState<ActivityDay[]>([]);
+  const [flow, setFlow] = useState<MonthFlow[]>([]);
+  const [categories, setCategories] = useState<CategorySlice[]>([]);
+  const [coverage, setCoverage] = useState<CoverageResult | null>(null);
 
   const loadData = async () => {
-    // รายจ่ายรายวัน (เดือนนี้)
-    const expenses = await getExpenses();
-    const now = new Date();
-    const monthExpenses = expenses.filter((e) => {
-      const expDate = new Date(e.date);
-      return expDate.getMonth() === now.getMonth() && expDate.getFullYear() === now.getFullYear();
-    });
-    setTotalExpenses(monthExpenses.reduce((sum, e) => sum + e.amount, 0));
+    // ดึงพร้อมกัน แต่ละอันล้มเองได้โดยไม่ทำให้ทั้งหน้าพัง (บางตารางอาจยังไม่ได้รัน SQL)
+    const safe = async <T,>(p: Promise<T>, fallback: T): Promise<T> => {
+      try {
+        return await p;
+      } catch {
+        return fallback;
+      }
+    };
 
-    // รายจ่ายประจำเดือน
-    const bills = await getRecurringBills();
-    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    setMonthlyBills(bills.reduce((sum, b) => sum + (b.monthlyAmounts?.[currentMonthKey] ?? 0), 0));
+    const [expenses, incomes, investments, realized, accounts, plans, bills, summary] =
+      await Promise.all([
+        safe<Expense[]>(getExpenses(), []),
+        safe<Income[]>(getIncomes(), []),
+        safe<Investment[]>(getInvestments(), []),
+        safe<RealizedTrade[]>(getRealizedTrades(), []),
+        safe<Account[]>(getAccounts(), []),
+        safe<InstallmentPlan[]>(getInstallmentPlans(), []),
+        safe<RecurringBill[]>(getRecurringBills(), []),
+        getPortfolioSummary(),
+      ]);
 
-    // พอร์ตการลงทุน
-    const portfolio = await getPortfolioSummary();
-    setPortfolioValue(portfolio.totalValue);
-    setPortfolioProfit(portfolio.totalProfit);
-
-    // Trading
-    const tradingStats = await getOrderStatistics();
-    setTradingPnL(tradingStats.totalPnL);
-    setOpenOrders(tradingStats.openOrders);
+    setWorth(computeNetWorth(summary.totalValue, accounts, investments, plans));
+    setCoverage(computeCoverage(expenses, bills, summary.totalValue, summary.totalProfit));
+    setDays(groupActivityByDay(buildActivityFeed({ expenses, incomes, investments, realized, plans })));
+    setFlow(buildMonthlyFlow(expenses, incomes));
+    setCategories(expensesByCategory(expenses, getCurrentMonthKey()));
+    setLoading(false);
   };
 
   useFocusEffect(
@@ -63,384 +91,244 @@ export default function OverviewScreen() {
     }, [])
   );
 
-  const totalIncome = portfolioValue + portfolioProfit + tradingPnL;
-  const totalOutcome = totalExpenses + monthlyBills;
-  const netWorth = totalIncome - totalOutcome;
+  if (loading || !worth) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color={COLORS.primary} size="large" />
+      </View>
+    );
+  }
+
+  const showFlowChart = monthsWithData(flow) >= MIN_MONTHS_FOR_CHART;
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={isDesktop ? styles.desktopInnerWrapper : undefined}>
-        <View style={[styles.header, isDesktop && { paddingTop: 0 }]}>
-          <View style={styles.headerTop}>
-            <Ionicons name="analytics" size={32} color="#ffffff" />
-            <Text style={styles.headerTitle}>ภาพรวมการเงิน</Text>
-          </View>
-          <Text style={styles.headerSubtitle}>{getCurrentMonthYear()}</Text>
-        </View>
-
-        {/* สรุปรวม */}
-        <View style={[styles.summaryCard, isDesktop && { borderRadius: 0}]}>
-          <Text style={styles.summaryLabel}>มูลค่าสุทธิ</Text>
-          <Text style={[
-            styles.summaryValue,
-            netWorth >= 0 ? styles.positive : styles.negative
-          ]}>
-            {formatCurrency(netWorth)}
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={isDesktop ? styles.desktopWrap : undefined}>
+        {/* ── ① ตัวเลขเดียวที่หน้านี้มีแล้วที่อื่นไม่มี ── */}
+        <View style={styles.heroCard}>
+          <Text style={styles.heroLabel}>ความมั่งคั่งสุทธิ</Text>
+          <Text style={[styles.heroValue, worth.netWorth < 0 && { color: COLORS.error }]}>
+            {formatCurrency(worth.netWorth)}
           </Text>
-          <View style={styles.summaryRow}>
-            <View style={styles.summaryItem}>
-              <Ionicons name="trending-up" size={16} color={COLORS.success} />
-              <Text style={styles.summaryItemLabel}>รายรับ</Text>
-              <Text style={styles.summaryItemValue}>{formatCurrency(totalIncome)}</Text>
-            </View>
-            <View style={styles.summaryItem}>
-              <Ionicons name="trending-down" size={16} color={COLORS.error} />
-              <Text style={styles.summaryItemLabel}>รายจ่าย</Text>
-              <Text style={styles.summaryItemValue}>{formatCurrency(totalOutcome)}</Text>
-            </View>
+
+          <View style={styles.breakdown}>
+            <BreakdownRow label="พอร์ตลงทุน (ราคาตลาด)" value={worth.portfolioValue} sign="+" />
+            <BreakdownRow label="เงินสดที่ยังไม่ได้ลงทุน" value={worth.cash} sign="+" />
+            <BreakdownRow label="ยอดผ่อนที่ยังต้องจ่าย" value={worth.debt} sign="−" />
           </View>
+
+          {worth.hasUnfilledAccount && (
+            <Text style={styles.note}>
+              * บางบัญชียังไม่ได้กรอกยอด เงินสดจึงต่ำกว่าจริง — กรอกได้ที่ "บัญชีของฉัน"
+            </Text>
+          )}
         </View>
 
-        {/* รายจ่าย & การลงทุน & Trading - Desktop: single row of 4 cards */}
-        {isDesktop ? (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Ionicons name="card-outline" size={20} color={COLORS.primary} />
-              <Text style={styles.sectionTitle}>สรุปทั้งหมด</Text>
-            </View>
-            <View style={[styles.row, { gap: 24 }]}>
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => navigation.navigate('ExpenseTracking')}
-              >
-                <View style={styles.cardIcon}>
-                  <Ionicons name="calendar-outline" size={24} color={COLORS.primary} />
-                </View>
-                <Text style={styles.cardLabel}>รายจ่ายรายวัน</Text>
-                <Text style={styles.cardValue}>{formatCurrency(totalExpenses)}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => navigation.navigate('ExpenseTracking')}
-              >
-                <View style={styles.cardIcon}>
-                  <Ionicons name="repeat" size={24} color={COLORS.primary} />
-                </View>
-                <Text style={styles.cardLabel}>รายจ่ายรายเดือน</Text>
-                <Text style={styles.cardValue}>{formatCurrency(monthlyBills)}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => navigation.navigate('Portfolio')}
-              >
-                <View style={styles.cardIcon}>
-                  <Ionicons name="briefcase-outline" size={24} color={COLORS.primary} />
-                </View>
-                <Text style={styles.cardLabel}>การลงทุน</Text>
-                <Text style={styles.cardValue}>{formatCurrency(portfolioValue)}</Text>
-                <Text style={[
-                  styles.cardSubValue,
-                  portfolioProfit >= 0 ? styles.positive : styles.negative
-                ]}>
-                  {portfolioProfit >= 0 ? '+' : ''}{formatCurrency(portfolioProfit)}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => navigation.navigate('TradingOrders')}
-              >
-                <View style={styles.cardIcon}>
-                  <Ionicons name="trending-up" size={24} color={COLORS.primary} />
-                </View>
-                <Text style={styles.cardLabel}>Trading</Text>
-                <Text style={styles.cardValue}>{openOrders} ออเดอร์</Text>
-                <Text style={[
-                  styles.cardSubValue,
-                  tradingPnL >= 0 ? styles.positive : styles.negative
-                ]}>
-                  {tradingPnL >= 0 ? '+' : ''}{formatCurrency(tradingPnL)}
-                </Text>
-              </TouchableOpacity>
-            </View>
+        {/* ── ② พอร์ตเลี้ยงตัวเองได้แค่ไหน (ย้ายมาจากหน้าสรุปรายจ่ายรายเดือนที่ถอดออก) ── */}
+        {coverage && (coverage.coveragePercent !== null || coverage.requiredReturnPercent !== null) && (
+          <View style={styles.coverageCard}>
+            <Text style={styles.coverageTitle}>พอร์ตเลี้ยงตัวเองได้แค่ไหน</Text>
+            {coverage.coveragePercent !== null && (
+              <Text style={styles.coverageLine}>
+                กำไรพอร์ตตอนนี้ครอบคลุมรายจ่ายปีนี้ได้{' '}
+                <Text style={styles.coverageStrong}>{Math.round(coverage.coveragePercent)}%</Text>
+              </Text>
+            )}
+            {coverage.requiredReturnPercent !== null && (
+              <Text style={styles.coverageLine}>
+                ต้องได้ผลตอบแทน{' '}
+                <Text style={styles.coverageStrong}>
+                  {coverage.requiredReturnPercent.toFixed(1)}% ต่อปี
+                </Text>{' '}
+                ถึงจะจ่ายไหว + สู้เงินเฟ้อ {INFLATION_RATE}%
+              </Text>
+            )}
+            <Text style={styles.note}>
+              * รายจ่ายปีนี้ {formatCurrency(coverage.expenseYTD)} · เทียบกับกำไรลอยตัวทั้งก้อน
+              (ไม่ใช่เฉพาะกำไรที่เกิดปีนี้)
+            </Text>
           </View>
-        ) : (
-          <>
-            {/* รายจ่าย */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Ionicons name="card-outline" size={20} color={COLORS.primary} />
-                <Text style={styles.sectionTitle}>รายจ่าย</Text>
-              </View>
-              <View style={styles.row}>
-                <TouchableOpacity
-                  style={styles.card}
-                  onPress={() => navigation.navigate('ExpenseTracking')}
-                >
-                  <View style={styles.cardIcon}>
-                    <Ionicons name="calendar-outline" size={24} color={COLORS.primary} />
-                  </View>
-                  <Text style={styles.cardLabel}>รายวัน</Text>
-                  <Text style={styles.cardValue}>{formatCurrency(totalExpenses)}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.card}
-                  onPress={() => navigation.navigate('ExpenseTracking')}
-                >
-                  <View style={styles.cardIcon}>
-                    <Ionicons name="repeat" size={24} color={COLORS.primary} />
-                  </View>
-                  <Text style={styles.cardLabel}>รายเดือน</Text>
-                  <Text style={styles.cardValue}>{formatCurrency(monthlyBills)}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* การลงทุน */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Ionicons name="briefcase-outline" size={20} color={COLORS.primary} />
-                <Text style={styles.sectionTitle}>การลงทุน</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.investmentCard}
-                onPress={() => navigation.navigate('Portfolio')}
-              >
-                <View style={styles.investmentHeader}>
-                  <Text style={styles.investmentLabel}>พอร์ตการลงทุน</Text>
-                  <Text style={styles.investmentValue}>{formatCurrency(portfolioValue)}</Text>
-                </View>
-                <View style={styles.investmentProfit}>
-                  <Text style={styles.investmentProfitLabel}>กำไร/ขาดทุน</Text>
-                  <Text style={[
-                    styles.investmentProfitValue,
-                    portfolioProfit >= 0 ? styles.positive : styles.negative
-                  ]}>
-                    {portfolioProfit >= 0 ? '+' : ''}{formatCurrency(portfolioProfit)}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-
-            {/* Trading */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Ionicons name="trending-up" size={20} color={COLORS.primary} />
-                <Text style={styles.sectionTitle}>Trading</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.investmentCard}
-                onPress={() => navigation.navigate('TradingOrders')}
-              >
-                <View style={styles.investmentHeader}>
-                  <Text style={styles.investmentLabel}>ออเดอร์เปิดอยู่</Text>
-                  <Text style={styles.investmentCount}>{openOrders} ออเดอร์</Text>
-                </View>
-                <View style={styles.investmentProfit}>
-                  <Text style={styles.investmentProfitLabel}>P&L รวม</Text>
-                  <Text style={[
-                    styles.investmentProfitValue,
-                    tradingPnL >= 0 ? styles.positive : styles.negative
-                  ]}>
-                    {tradingPnL >= 0 ? '+' : ''}{formatCurrency(tradingPnL)}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-          </>
         )}
 
-        <View style={{ height: 40 }} />
+        {/* ── ③ ความเคลื่อนไหว — ของที่คุ้มสุด อยู่บนสุดรองจาก hero ── */}
+        <Text style={styles.sectionTitle}>ความเคลื่อนไหวล่าสุด</Text>
+        {days.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Ionicons name="time-outline" size={26} color={COLORS.textSecondary} />
+            <Text style={styles.emptyText}>ยังไม่มีรายการ — เริ่มบันทึกรายรับ/รายจ่ายได้ที่หน้าหลัก</Text>
+          </View>
+        ) : (
+          <View style={styles.card}>
+            {days.map((day, di) => (
+              <View key={day.label} style={di > 0 ? styles.dayBlockGap : undefined}>
+                <Text style={styles.dayLabel}>{day.label}</Text>
+                {day.events.map((e) => (
+                  <View key={e.id} style={styles.event}>
+                    <View style={[styles.eventDot, { backgroundColor: `${kindColor(e.kind)}18` }]}>
+                      <Ionicons
+                        name={ACTIVITY_META[e.kind].icon as any}
+                        size={16}
+                        color={kindColor(e.kind)}
+                      />
+                    </View>
+                    <View style={styles.eventText}>
+                      <Text style={styles.eventTitle} numberOfLines={1}>
+                        {e.title}
+                      </Text>
+                      <Text style={styles.eventSub} numberOfLines={1}>
+                        {ACTIVITY_META[e.kind].label}
+                        {e.subtitle ? ` · ${e.subtitle}` : ''}
+                      </Text>
+                    </View>
+                    {e.amountTHB !== null && (
+                      <Text
+                        style={[
+                          styles.eventAmount,
+                          { color: e.amountTHB >= 0 ? CHART.income : COLORS.text },
+                        ]}
+                      >
+                        {e.amountTHB >= 0 ? '+' : '−'}
+                        {formatCurrency(Math.abs(e.amountTHB))}
+                      </Text>
+                    )}
+                  </View>
+                ))}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* ── ③ กราฟ — โผล่เองเมื่อข้อมูลพอ ── */}
+        <Text style={styles.sectionTitle}>เข้า / ออก ย้อนหลัง 6 เดือน</Text>
+        <View style={styles.card}>
+          {showFlowChart ? (
+            <MonthlyFlowChart data={flow} />
+          ) : (
+            <Text style={styles.emptyText}>
+              ยังเก็บข้อมูลไม่พอ — มีข้อมูล {monthsWithData(flow)} เดือน กราฟจะขึ้นเองเมื่อครบ{' '}
+              {MIN_MONTHS_FOR_CHART} เดือน
+            </Text>
+          )}
+        </View>
+
+        {/* ── ④ รายจ่ายเดือนนี้แยกหมวด ── */}
+        <Text style={styles.sectionTitle}>รายจ่ายเดือนนี้ แยกหมวด</Text>
+        <View style={[styles.card, styles.lastCard]}>
+          {categories.length > 0 ? (
+            <CategoryBars data={categories} />
+          ) : (
+            <Text style={styles.emptyText}>เดือนนี้ยังไม่มีรายจ่ายที่บันทึกไว้</Text>
+          )}
+        </View>
       </View>
     </ScrollView>
   );
 }
 
+function BreakdownRow({ label, value, sign }: { label: string; value: number; sign: '+' | '−' }) {
+  return (
+    <View style={styles.breakdownRow}>
+      <Text style={styles.breakdownLabel}>
+        {sign} {label}
+      </Text>
+      <Text style={styles.breakdownValue}>{formatCurrency(value)}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: COLORS.background },
+  content: { padding: 16, paddingBottom: 40 },
+  center: {
     flex: 1,
     backgroundColor: COLORS.background,
-  },
-  desktopInnerWrapper: {
-    maxWidth: 1200,
-    alignSelf: 'center',
-    width: '100%',
-    paddingHorizontal: 16,
-  },
-  header: {
-    backgroundColor: COLORS.primary,
-    padding: 20,
-    paddingTop: 60,
-    paddingBottom: 30,
-  },
-  headerTop: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 8,
+    justifyContent: 'center',
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: '#ffffff',
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    fontFamily: 'NotoSansThai_300Light',
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginLeft: 44,
-  },
-  summaryCard: {
+  desktopWrap: { maxWidth: 680, width: '100%', alignSelf: 'center' },
+
+  heroCard: {
     backgroundColor: COLORS.surface,
-    margin: 16,
-    padding: 24,
-    borderRadius: 0,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 18,
   },
-  summaryLabel: {
-    fontSize: 14,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.textSecondary,
-    marginBottom: 8,
+  heroLabel: { ...TEXT.caption, color: COLORS.textSecondary },
+  // ตัวเลขพระเอกใช้ sans ตัวเดียวกับทั้งแอป ไม่ใช้ฟอนต์ประดับ
+  heroValue: {
+    fontSize: 34,
+    fontFamily: FONTS.semibold,
+    color: COLORS.text,
+    marginTop: 2,
+    marginBottom: 14,
   },
-  summaryValue: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    marginBottom: 16,
+  breakdown: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.divider,
+    paddingTop: 10,
+    gap: 6,
   },
-  summaryRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  summaryItem: {
-    flex: 1,
-    flexDirection: 'column',
+  breakdownRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  breakdownLabel: { ...TEXT.caption, color: COLORS.textSecondary, flexShrink: 1 },
+  breakdownValue: { ...TEXT.caption, fontFamily: FONTS.medium, color: COLORS.text },
+  note: { ...TEXT.hint, color: COLORS.warning, marginTop: 10 },
+
+  coverageCard: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 12,
     gap: 4,
   },
-  summaryItemLabel: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.textSecondary,
-  },
-  summaryItemValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  section: {
-    paddingHorizontal: 16,
-    marginBottom: 24,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
+  coverageTitle: { ...TEXT.title, color: COLORS.text, marginBottom: 4 },
+  coverageLine: { ...TEXT.body, color: COLORS.textSecondary, lineHeight: 22 },
+  coverageStrong: { fontFamily: FONTS.semibold, color: COLORS.text },
+
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_600SemiBold',
+    ...TEXT.title,
     color: COLORS.text,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  card: {
-    flex: 1,
-    backgroundColor: COLORS.surface,
-    padding: 16,
-    borderRadius: 0,
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  cardIcon: {
+    marginTop: 22,
     marginBottom: 8,
   },
-  cardLabel: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.textSecondary,
-    marginBottom: 4,
-  },
-  cardValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  cardSubValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    marginTop: 4,
-  },
-  investmentCard: {
+  card: {
     backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
     padding: 16,
-    borderRadius: 0,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
   },
-  investmentHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  lastCard: { marginBottom: 8 },
+  emptyCard: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 22,
     alignItems: 'center',
-    marginBottom: 12,
+    gap: 8,
   },
-  investmentLabel: {
-    fontSize: 14,
-    fontFamily: 'NotoSansThai_400Regular',
+  emptyText: { ...TEXT.caption, color: COLORS.textSecondary, textAlign: 'center' },
+
+  dayBlockGap: { marginTop: 16 },
+  dayLabel: {
+    ...TEXT.hint,
+    fontFamily: FONTS.medium,
     color: COLORS.textSecondary,
+    marginBottom: 6,
   },
-  investmentValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  investmentCount: {
-    fontSize: 16,
-    fontWeight: '600',
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  investmentProfit: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  event: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
+  eventDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    justifyContent: 'center',
   },
-  investmentProfitLabel: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.textSecondary,
-  },
-  investmentProfitValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  positive: {
-    color: COLORS.success,
-  },
-  negative: {
-    color: COLORS.error,
-  },
+  eventText: { flex: 1 },
+  eventTitle: { ...TEXT.body, color: COLORS.text },
+  eventSub: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 1 },
+  eventAmount: { ...TEXT.body, fontFamily: FONTS.semibold },
 });

@@ -1,10 +1,4 @@
-import { supabase } from './supabase';
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
+import { supabase, getUserId } from './supabase';
 
 export type ImportRowType = 'income' | 'expense' | 'transfer' | 'invest';
 

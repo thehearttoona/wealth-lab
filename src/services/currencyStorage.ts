@@ -1,12 +1,6 @@
-import { supabase } from './supabase';
+import { supabase, getUserId } from './supabase';
 import { UserCurrency, DEFAULT_CURRENCIES } from '../types/investment';
 import { setCurrencyCatalog } from '../utils/constants';
-
-const getUserId = async (): Promise<string> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-  return user.id;
-};
 
 const mapFromDb = (row: any): UserCurrency => ({
   id: row.id,

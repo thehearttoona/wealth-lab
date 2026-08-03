@@ -27,7 +27,23 @@ export interface Investment {
   platform?: string;     // แพลตฟอร์มที่ลงทุน เช่น Bitkub, Streaming, Dime
   targetReturnPercent?: number; // เป้าหมายกำไร % (เช่น 10 = +10%)
   targetDate?: string;   // วันที่ต้องการให้ถึงเป้า (ISO) — ใช้คำนวณ "ต้องโตปีละกี่ %"
+  // ── กฎ "ถึงคิวลงไม้" ตั้งแยกรายตัวได้ (ไม่ตั้ง = ใช้ค่าเริ่มต้น วัน/ทุก 2 แท่ง) ──
+  // ของที่แกว่งแรงอย่าง crypto ดูรายวันทัน แต่หุ้นปันผลที่ถือยาวดูรายสัปดาห์/เดือนจะมีความหมายกว่า
+  redInterval?: RedInterval; // แท่งเทียนที่ใช้นับ
+  redEvery?: number;         // เตือนเมื่อแดงติดกันครบทุก ๆ N แท่ง (N, 2N, 3N…)
 }
+
+// กรอบเวลาแท่งเทียนของกฎ "แดงติดกัน"
+export type RedInterval = 'day' | 'week' | 'month';
+
+export const RED_INTERVALS: { value: RedInterval; label: string; unit: string }[] = [
+  { value: 'day', label: 'รายวัน', unit: 'วัน' },
+  { value: 'week', label: 'รายสัปดาห์', unit: 'สัปดาห์' },
+  { value: 'month', label: 'รายเดือน', unit: 'เดือน' },
+];
+
+export const DEFAULT_RED_INTERVAL: RedInterval = 'day';
+export const DEFAULT_RED_EVERY = 2;
 
 export interface Transaction {
   id: string;

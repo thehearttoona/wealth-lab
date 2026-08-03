@@ -35,6 +35,8 @@ import { getRealizedTrades } from '../services/realizedStorage';
 import { getAccounts } from '../services/accountStorage';
 import { getRateToTHB } from '../services/priceApi';
 import { COLORS } from '../utils/constants';
+import { notify, confirmAsk } from '../utils/dialog';
+import { useResponsive } from '../utils/responsive';
 
 type Tab = 'currency' | 'platform';
 
@@ -47,6 +49,7 @@ interface Usage {
 const EMPTY_USAGE: Usage = { currency: {}, platform: {} };
 
 export default function ManageCatalogScreen() {
+  const { isDesktop, contentMaxWidth } = useResponsive();
   const [tab, setTab] = useState<Tab>('currency');
   const [currencies, setCurrencies] = useState<UserCurrency[]>([]);
   const [platforms, setPlatforms] = useState<UserPlatform[]>([]);
@@ -65,20 +68,9 @@ export default function ManageCatalogScreen() {
   const [fetchingRate, setFetchingRate] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const notify = (msg: string) => {
-    if (Platform.OS === 'web') window.alert(msg);
-    else Alert.alert('', msg);
-  };
-
-  const confirmAsk = (title: string, msg: string, onYes: () => void, yesLabel = 'ตกลง') => {
-    if (Platform.OS === 'web') {
-      if (window.confirm(`${title}\n\n${msg}`)) onYes();
-    } else {
-      Alert.alert(title, msg, [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: yesLabel, style: 'destructive', onPress: onYes },
-      ]);
-    }
+  // ห่อ confirmAsk แบบ callback ไว้ เพราะจุดเรียกในไฟล์นี้เป็น handler ที่ไม่ใช่ async
+  const askThen = (title: string, msg: string, onYes: () => void, yesLabel = 'ตกลง') => {
+    confirmAsk(title, msg, yesLabel).then((ok) => { if (ok) onYes(); });
   };
 
   const load = useCallback(async () => {
@@ -228,7 +220,7 @@ export default function ManageCatalogScreen() {
     };
 
     if (renaming && affected > 0) {
-      confirmAsk(
+      askThen(
         'เปลี่ยนชื่อสกุลเงิน',
         `"${oldCode}" → "${code}" จะไล่อัปเดตรายการที่ใช้อยู่ ${affected} รายการให้ด้วย`,
         run,
@@ -269,7 +261,7 @@ export default function ManageCatalogScreen() {
     };
 
     if (renaming && affected > 0) {
-      confirmAsk(
+      askThen(
         'เปลี่ยนชื่อแพลตฟอร์ม',
         `"${oldName}" → "${name}" จะไล่อัปเดตรายการที่ใช้อยู่ ${affected} รายการให้ด้วย`,
         run,
@@ -289,7 +281,7 @@ export default function ManageCatalogScreen() {
       notify(`ลบไม่ได้ — ยังมี ${count} รายการใช้ "${label}" อยู่\nย้ายรายการเหล่านั้นไปใช้ตัวอื่นก่อน`);
       return;
     }
-    confirmAsk('ลบรายการ', `ลบ "${label}" ?`, async () => {
+    askThen('ลบรายการ', `ลบ "${label}" ?`, async () => {
       try {
         if (editingCurrency) await deleteCurrency(editingCurrency.id);
         else await deletePlatform(editingPlatform!.id);
@@ -332,7 +324,12 @@ export default function ManageCatalogScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.listContent}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.listContent,
+          isDesktop && { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' as const },
+        ]}
+      >
         {tableMissing && (
           <Text style={styles.warnBox}>
             ยังใช้ไม่ได้ — เอาไฟล์ `sql/catalog_currencies_platforms.sql` ไปรันที่ Supabase SQL editor ก่อน 1 ครั้ง
@@ -397,7 +394,11 @@ export default function ManageCatalogScreen() {
       {/* ── Add/Edit modal ── */}
       <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <ScrollView
+            style={styles.modalCard}
+            contentContainerStyle={styles.modalCardContent}
+            showsVerticalScrollIndicator={false}
+          >
             {isCurrencyTab ? (
               <>
                 <Text style={styles.modalTitle}>
@@ -494,7 +495,7 @@ export default function ManageCatalogScreen() {
                 <Text style={styles.modalCancelText}>ปิด</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -555,8 +556,22 @@ const styles = StyleSheet.create({
   },
   addBtnText: { color: '#ffffff', fontSize: 15, fontFamily: 'NotoSansThai_600SemiBold' },
   // modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalCard: { backgroundColor: COLORS.surface, borderRadius: 12, padding: 20 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '100%',
+    flexGrow: 0,
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+  },
+  modalCardContent: { padding: 20 },
   modalTitle: { fontSize: 16, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text, marginBottom: 12 },
   modalLabel: { fontSize: 12, fontFamily: 'NotoSansThai_500Medium', color: COLORS.textSecondary, marginTop: 12, marginBottom: 6 },
   modalInput: {

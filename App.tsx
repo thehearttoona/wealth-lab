@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
+// ทั้งแอปใช้ Noto Sans Thai ตัวเดียว — เคยโหลด Nunito มาคู่กันแล้วฟอนต์ปนกันเวลามีไทยผสมอังกฤษ
 import { useFonts, NotoSansThai_300Light, NotoSansThai_400Regular, NotoSansThai_500Medium, NotoSansThai_600SemiBold } from '@expo-google-fonts/noto-sans-thai';
-import { Nunito_400Regular, Nunito_500Medium, Nunito_600SemiBold, Nunito_700Bold } from '@expo-google-fonts/nunito';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -15,10 +15,6 @@ export default function App() {
     NotoSansThai_400Regular,
     NotoSansThai_500Medium,
     NotoSansThai_600SemiBold,
-    Nunito_400Regular,
-    Nunito_500Medium,
-    Nunito_600SemiBold,
-    Nunito_700Bold,
   });
 
   useEffect(() => {
