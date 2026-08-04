@@ -34,7 +34,6 @@ import { getPlatforms } from '../services/platformStorage';
 import { getCurrencies } from '../services/currencyStorage';
 import { formatCurrencyWithType, COLORS } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
-import { useResponsive } from '../utils/responsive';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'ManageByPlatform'>;
 
@@ -89,12 +88,7 @@ const confirmMsg = (msg: string): Promise<boolean> => confirmAsk('ยืนย�
 
 export default function ManageByPlatformScreen() {
   const navigation = useNavigation<Nav>();
-  const { isDesktop, contentMaxWidth } = useResponsive();
-
-  // เนื้อหาคอลัมน์เดียว — บนเดสก์ท็อปคุมความกว้างไว้ ไม่ให้ฟอร์มยืดเต็มจอ
-  const wide = isDesktop
-    ? { maxWidth: contentMaxWidth, width: '100%' as const, alignSelf: 'center' as const }
-    : null;
+  // เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts)
 
   const [mode, setMode] = useState<'edit' | 'add'>('edit');
   const [investments, setInvestments] = useState<Investment[]>([]);
@@ -419,7 +413,7 @@ export default function ManageByPlatformScreen() {
         <>
           <ScrollView
             style={styles.body}
-            contentContainerStyle={[{ padding: 16, paddingBottom: selected.length > 0 ? 96 : 24 }, wide]}
+            contentContainerStyle={{ padding: 16, paddingBottom: selected.length > 0 ? 96 : 24 }}
           >
             {groups.length === 0 ? (
               <Text style={styles.empty}>ยังไม่มีการลงทุน{'\n'}ไปที่โหมด "เพิ่มหลายรายการ" เพื่อเริ่มได้เลย</Text>
@@ -509,7 +503,7 @@ export default function ManageByPlatformScreen() {
 
       {/* ═══════════ โหมดเพิ่ม ═══════════ */}
       {mode === 'add' && (
-        <ScrollView style={styles.body} contentContainerStyle={[{ padding: 16, paddingBottom: 40 }, wide]}>
+        <ScrollView style={styles.body} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <Text style={styles.label}>แพลตฟอร์มของทั้งชุดนี้</Text>
           <View style={styles.chips}>
             {platformOptions.map((p) => (

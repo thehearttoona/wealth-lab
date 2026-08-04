@@ -15,14 +15,12 @@ import {
   getInstallmentNumber,
   getEstimatedTotalForMonth,
 } from '../utils/installments';
-import { useResponsive } from '../utils/responsive';
 
 type InstallmentsScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Installments'>;
 
 export default function InstallmentsScreen() {
   const navigation = useNavigation<InstallmentsScreenNavigationProp>();
   const [plans, setPlans] = useState<InstallmentPlan[]>([]);
-  const { isDesktop } = useResponsive();
 
   const loadData = async () => {
     const data = await getInstallmentPlans();
@@ -98,7 +96,8 @@ export default function InstallmentsScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={[styles.content, isDesktop && { maxWidth: 900, alignSelf: 'center' as const, width: '100%' as any }]}>
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <View style={styles.content}>
         <View style={styles.estimateRow}>
           <View style={styles.estimateCard}>
             <Text style={styles.estimateLabel}>ประมาณการเดือนนี้</Text>

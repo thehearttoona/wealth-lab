@@ -58,5 +58,7 @@ export type RootStackParamList = {
   Accounts: undefined;
   ImportStatement: undefined;
   Tax: undefined;
+  PurchaseGoals: undefined;
+  SellReview: undefined;
 };
 

@@ -17,7 +17,6 @@ import { saveInstallmentPlan, updateInstallmentPlan } from '../services/installm
 import { EXPENSE_CATEGORIES, COLORS, formatCurrency } from '../utils/constants';
 import { notify } from '../utils/dialog';
 import { getCurrentMonthKey, addMonths } from '../utils/installments';
-import { useResponsive } from '../utils/responsive';
 
 type AddInstallmentScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'AddInstallment'>;
 type AddInstallmentScreenRouteProp = RouteProp<RootStackParamList, 'AddInstallment'>;
@@ -26,7 +25,6 @@ export default function AddInstallmentScreen() {
   const navigation = useNavigation<AddInstallmentScreenNavigationProp>();
   const route = useRoute<AddInstallmentScreenRouteProp>();
   const { plan } = route.params || {};
-  const { isDesktop } = useResponsive();
   const isEditing = !!plan;
 
   const [name, setName] = useState('');
@@ -105,7 +103,8 @@ export default function AddInstallmentScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={[styles.content, isDesktop && { maxWidth: 600, alignSelf: 'center' as const, width: '100%' as any }]}>
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <View style={styles.content}>
         <Text style={styles.label}>ชื่อรายการ</Text>
         <TextInput
           style={styles.input}

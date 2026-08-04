@@ -93,18 +93,77 @@ export const GAIN_RULE_LABELS: Record<GainTaxRule, string> = {
   taxable_on_remit: 'เสียเมื่อนำเงินเข้าไทย',
 };
 
+export const MONTH_LABELS_TH = [
+  'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+  'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
+] as const;
+
+/**
+ * ข้อมูลรายเดือนจากสลิปเงินเดือน — 1 แถวต่อ 1 เดือน (มี 12 แถวเสมอ)
+ *
+ * ทำไมต้องรายเดือน: ภาษีทั้งปีคิดจาก "ยอดรวม" อยู่แล้ว ดังนั้นรายเดือนไม่ได้ทำให้ภาษีแม่นขึ้น
+ * แต่ 3 อย่างนี้ทำได้แค่ตอนเก็บเป็นรายเดือน —
+ *   1. หัก ณ ที่จ่ายไม่เท่ากันทุกเดือน (เดือนโบนัสโดนหนัก) กรอกจากสลิปตรง ๆ ไม่ต้องรวมเอง
+ *   2. เงินเดือนขึ้นกลางปี / เข้างานกลางปี เก็บได้ตรงตามจริง ไม่ต้องเฉลี่ย
+ *   3. แยก "ที่เกิดจริงแล้ว" ออกจาก "คาดทั้งปี" ได้ (ดู projectFullYear ใน utils/taxCalc.ts)
+ */
+export interface TaxMonth {
+  month: number;          // 1–12
+  salary: number;         // เงินเดือน ม.40(1) ของเดือนนั้น
+  bonus: number;          // โบนัส/เงินได้ ม.40(1) อื่นที่ได้ในเดือนนั้น
+  withheld: number;       // ภาษีหัก ณ ที่จ่ายของเดือนนั้น
+  socialSecurity: number; // ประกันสังคมที่จ่ายในเดือนนั้น
+}
+
+export const emptyTaxMonths = (): TaxMonth[] =>
+  Array.from({ length: 12 }, (_, i) => ({
+    month: i + 1,
+    salary: 0,
+    bonus: 0,
+    withheld: 0,
+    socialSecurity: 0,
+  }));
+
+export interface TaxMonthTotals {
+  salary: number;
+  bonus: number;
+  withheld: number;
+  socialSecurity: number;
+  /** จำนวนเดือนที่กรอกอะไรไว้แล้ว — ใช้เตือนว่าประมาณการยังไม่ครบปี */
+  filledMonths: number;
+  /** เดือนล่าสุด (1–12) ที่มีเงินเดือน — ใช้เป็นฐานประมาณเดือนที่เหลือ, 0 = ยังไม่กรอกเลย */
+  lastSalaryMonth: number;
+}
+
+export const sumTaxMonths = (months: TaxMonth[] | undefined): TaxMonthTotals => {
+  const list = months ?? [];
+  const t: TaxMonthTotals = {
+    salary: 0, bonus: 0, withheld: 0, socialSecurity: 0, filledMonths: 0, lastSalaryMonth: 0,
+  };
+  list.forEach((m) => {
+    t.salary += m.salary || 0;
+    t.bonus += m.bonus || 0;
+    t.withheld += m.withheld || 0;
+    t.socialSecurity += m.socialSecurity || 0;
+    if ((m.salary || 0) > 0 || (m.bonus || 0) > 0 || (m.withheld || 0) > 0 || (m.socialSecurity || 0) > 0) {
+      t.filledMonths += 1;
+    }
+    if ((m.salary || 0) > 0 && m.month > t.lastSalaryMonth) t.lastSalaryMonth = m.month;
+  });
+  return t;
+};
+
 /**
  * ข้อมูลภาษีที่ผู้ใช้กรอก — 1 แถวต่อ 1 ปีภาษี (พ.ศ.)
  * เก็บเป็น "ต่อปี" เพราะทั้งเงินเดือนและกฎเปลี่ยนได้ทุกปี ถ้าเก็บก้อนเดียวจะย้อนดูปีเก่าไม่ได้
+ *
+ * เงินเดือน/โบนัส/หัก ณ ที่จ่าย/ประกันสังคม เก็บใน `months` เท่านั้น — ตารางนี้เป็นแหล่งความจริงเดียว
+ * ของฝั่งภาษี โดยตั้งใจไม่อ่านจาก incomes เพื่อไม่ให้มีเลขสองที่แล้วไม่ตรงกัน
  */
 export interface TaxProfile {
   year: number;                 // ปีภาษี พ.ศ. (เช่น 2569)
-  monthlySalary: number;        // เงินเดือน (ต่อเดือน)
-  salaryMonths: number;         // ได้รับกี่เดือนในปีนี้ (ปกติ 12 — เข้างานกลางปีก็ปรับได้)
-  bonus: number;                // โบนัส/เงินได้ ม.40(1) อื่นในปีนี้
+  months: TaxMonth[];           // 12 แถว (ดู emptyTaxMonths)
   otherIncome: number;          // เงินได้อื่นที่ต้องนำมารวม (ไม่ได้หักค่าใช้จ่าย 50%)
-  socialSecurity: number;       // ประกันสังคมที่จ่ายจริงทั้งปี
-  withheld: number;             // ภาษีหัก ณ ที่จ่ายที่ถูกหักไปแล้วทั้งปี
   extraDeductions: number;      // ลดหย่อนอื่น ๆ รวมก้อนเดียว (RMF/SSF/ประกัน/บุตร ฯลฯ)
   // กฎกำไรขายรายชนิด — ไม่ระบุ = ใช้ DEFAULT_GAIN_RULES
   gainRules?: Partial<Record<InvestmentType, GainTaxRule>>;
@@ -114,11 +173,7 @@ export interface TaxProfile {
 
 export const emptyTaxProfile = (year: number): TaxProfile => ({
   year,
-  monthlySalary: 0,
-  salaryMonths: 12,
-  bonus: 0,
+  months: emptyTaxMonths(),
   otherIncome: 0,
-  socialSecurity: 0,
-  withheld: 0,
   extraDeductions: 0,
 });

@@ -14,7 +14,11 @@ import { InvestmentType, RealizedTrade, INVESTMENT_TYPES } from '../types/invest
 import { Income } from '../types';
 import {
   TaxProfile,
+  TaxMonth,
   emptyTaxProfile,
+  emptyTaxMonths,
+  sumTaxMonths,
+  MONTH_LABELS_TH,
   TAX_BRACKETS,
   DEFAULT_GAIN_RULES,
   GAIN_RULE_LABELS,
@@ -23,13 +27,13 @@ import {
   PERSONAL_ALLOWANCE,
   SOCIAL_SECURITY_CAP,
 } from '../types/tax';
-import { calculateTax, gainRuleFor, taxYearOf } from '../utils/taxCalc';
+import { calculateTax, gainRuleFor, taxYearOf, projectFullYear } from '../utils/taxCalc';
+import { useResponsive } from '../utils/responsive';
 import { getRealizedTrades } from '../services/realizedStorage';
 import { getIncomes } from '../services/incomeStorage';
 import { getTaxProfile, saveTaxProfile, getTaxYears, isTaxTableMissing } from '../services/taxStorage';
 import { COLORS, FONTS, TEXT, formatCurrency } from '../utils/constants';
 import { notify } from '../utils/dialog';
-import { useResponsive } from '../utils/responsive';
 
 const currentBuddhistYear = () => new Date().getFullYear() + 543;
 
@@ -39,35 +43,33 @@ const num = (s: string): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-type FormKey =
-  | 'monthlySalary'
-  | 'salaryMonths'
-  | 'bonus'
-  | 'otherIncome'
-  | 'socialSecurity'
-  | 'withheld'
-  | 'extraDeductions';
+// เหลือแค่ 2 ช่องที่เป็น "ยอดทั้งปี" จริง ๆ
+// เงินเดือน/โบนัส/หัก ณ ที่จ่าย/ประกันสังคม ย้ายไปตารางรายเดือนแล้ว (กรอกจากสลิปตรง ๆ)
+type FormKey = 'otherIncome' | 'extraDeductions';
 
 const FIELDS: { key: FormKey; label: string; hint?: string }[] = [
-  { key: 'monthlySalary', label: 'เงินเดือน (ต่อเดือน)' },
-  { key: 'salaryMonths', label: 'ได้รับกี่เดือนในปีนี้', hint: 'เข้างานกลางปีก็ปรับได้ ปกติ 12' },
-  { key: 'bonus', label: 'โบนัส / เงินได้จากงานอื่นทั้งปี' },
   {
     key: 'otherIncome',
-    label: 'เงินได้อื่นที่ต้องนำมารวม',
+    label: 'เงินได้อื่นที่ต้องนำมารวม (ทั้งปี)',
     hint: 'เช่น ดอกเบี้ย ค่าเช่า — ส่วนนี้ไม่ได้หักค่าใช้จ่าย 50%',
   },
-  { key: 'socialSecurity', label: 'ประกันสังคมที่จ่ายทั้งปี', hint: `ลดหย่อนได้ไม่เกิน ${formatCurrency(SOCIAL_SECURITY_CAP)}` },
   {
     key: 'extraDeductions',
-    label: 'ลดหย่อนอื่น ๆ (รวมก้อนเดียว)',
+    label: 'ลดหย่อนอื่น ๆ (รวมก้อนเดียว, ทั้งปี)',
     hint: 'RMF/SSF, ประกันชีวิต, บุตร, ดอกเบี้ยบ้าน, บริจาค — รวมยอดมาใส่ช่องนี้',
   },
-  { key: 'withheld', label: 'ภาษีหัก ณ ที่จ่ายที่ถูกหักไปแล้ว', hint: 'ดูจากหนังสือรับรอง 50 ทวิ' },
+];
+
+// คอลัมน์ในตารางรายเดือน — ตรงกับสลิปเงินเดือน 1 ใบ
+const MONTH_COLUMNS: { key: keyof Omit<TaxMonth, 'month'>; label: string }[] = [
+  { key: 'salary', label: 'เงินเดือน' },
+  { key: 'bonus', label: 'โบนัส' },
+  { key: 'withheld', label: 'หัก ณ ที่จ่าย' },
+  { key: 'socialSecurity', label: 'ประกันสังคม' },
 ];
 
 export default function TaxScreen() {
-  const { isDesktop, contentMaxWidth } = useResponsive();
+  const { isDesktop } = useResponsive();
   const [year, setYear] = useState(currentBuddhistYear());
   const [availableYears, setAvailableYears] = useState<number[]>([]);
   const [profile, setProfile] = useState<TaxProfile>(emptyTaxProfile(currentBuddhistYear()));
@@ -110,14 +112,52 @@ export default function TaxScreen() {
   );
 
   const breakdown = useMemo(() => calculateTax(profile, trades), [profile, trades]);
+  const monthTotals = useMemo(() => sumTaxMonths(profile.months), [profile.months]);
+  // ยอดที่กรอกจริง vs คาดทั้งปี — ต้องแยกกัน ไม่งั้นกรอก 8 เดือนแล้วเห็นภาษีต่ำกว่าจริง ~5 เท่า
+  const projection = useMemo(() => projectFullYear(profile, trades), [profile, trades]);
 
   const setField = (key: FormKey, value: string) =>
     setProfile((p) => ({ ...p, [key]: num(value) }));
 
+  const setMonthField = (month: number, key: keyof Omit<TaxMonth, 'month'>, value: string) =>
+    setProfile((p) => ({
+      ...p,
+      months: (p.months || emptyTaxMonths()).map((m) =>
+        m.month === month ? { ...m, [key]: num(value) } : m
+      ),
+    }));
+
+  // เงินเดือนส่วนใหญ่เท่ากันทุกเดือน — ถ้าไม่มีปุ่มนี้ต้องพิมพ์ซ้ำ 12 รอบ × 4 ช่อง
+  const copyMonthDown = (month: number) => {
+    setProfile((p) => {
+      const src = (p.months || []).find((m) => m.month === month);
+      if (!src) return p;
+      return {
+        ...p,
+        months: (p.months || []).map((m) =>
+          m.month > month
+            ? // โบนัสไม่ก๊อปลงไป — ไม่ได้รับทุกเดือน ก๊อปไปจะทำให้เงินได้สูงเกินจริง
+              { ...m, salary: src.salary, withheld: src.withheld, socialSecurity: src.socialSecurity }
+            : m
+        ),
+      };
+    });
+  };
+
   const setRule = (type: InvestmentType, rule: GainTaxRule) =>
     setProfile((p) => ({ ...p, gainRules: { ...(p.gainRules || {}), [type]: rule } }));
 
-  // เดาเงินเดือน/โบนัสจากรายรับที่บันทึกไว้แล้ว — ไม่ต้องกรอกซ้ำถ้าลงบันทึกอยู่ทุกเดือน
+  /**
+   * เติมเงินเดือน/โบนัสจากรายรับที่บันทึกไว้ — เป็นตัวช่วย "เติมครั้งเดียว" ไม่ใช่การผูกข้อมูล
+   * ค่าที่เติมจะถูกเก็บใน tax_profiles.months ทันที ฝั่งภาษีจึงยังมีแหล่งความจริงเดียวคือตารางนี้
+   *
+   * เดิมฟังก์ชันนี้เฉลี่ยเงินเดือนแล้วเดา salaryMonths จาก "จำนวนเดือนที่มีข้อมูล" ซึ่งเป็นบั๊ก:
+   * กดกลางปีแล้วประมาณการทั้งปีกลายเป็นยอดถึงปัจจุบันเงียบ ๆ (เงินเดือน 50,000 กดเดือน ส.ค.
+   * ได้ภาษี ฿4,200 แทน ฿20,600) ตอนนี้ลงยอดจริงรายเดือน ไม่เฉลี่ย ไม่เดาจำนวนเดือน
+   * แล้วให้การ์ด "คาดทั้งปี" ทำหน้าที่ประมาณเดือนที่เหลือแยกออกมาชัด ๆ
+   *
+   * แตะแค่คอลัมน์เงินเดือน/โบนัส — หัก ณ ที่จ่ายและประกันสังคมไม่มีใน incomes จึงไม่ล้างของที่กรอกไว้
+   */
   const fillFromIncomes = () => {
     const ofYear = incomes.filter((i) => taxYearOf(i.date) === year);
     const salaryRows = ofYear.filter((i) => i.category === 'เงินเดือน');
@@ -126,16 +166,33 @@ export default function TaxScreen() {
       notify(`ปี ${year} ยังไม่มีรายรับหมวด "เงินเดือน" หรือ "โบนัส" ที่บันทึกไว้`);
       return;
     }
-    const salaryTotal = salaryRows.reduce((s, i) => s + i.amount, 0);
-    // นับ "เดือนที่มีเงินเดือนเข้า" ไม่ใช่จำนวนรายการ เผื่อบันทึกเดือนละหลายรอบ
-    const months = new Set(salaryRows.map((i) => i.date.slice(0, 7))).size;
+
+    const byMonth = (rows: typeof ofYear) => {
+      const acc = new Map<number, number>();
+      rows.forEach((i) => {
+        // date อาจเป็น พ.ศ. ในข้อมูลเก่า — taxYearOf กรองปีให้แล้ว ที่นี่เอาแค่เลขเดือน
+        const mm = parseInt(i.date.slice(5, 7), 10);
+        if (mm >= 1 && mm <= 12) acc.set(mm, (acc.get(mm) || 0) + i.amount);
+      });
+      return acc;
+    };
+    const salaryByMonth = byMonth(salaryRows);
+    const bonusByMonth = byMonth(bonusRows);
+
     setProfile((p) => ({
       ...p,
-      monthlySalary: months > 0 ? Math.round(salaryTotal / months) : p.monthlySalary,
-      salaryMonths: months > 0 ? months : p.salaryMonths,
-      bonus: bonusRows.reduce((s, i) => s + i.amount, 0) || p.bonus,
+      months: (p.months || emptyTaxMonths()).map((m) => ({
+        ...m,
+        salary: salaryByMonth.get(m.month) ?? m.salary,
+        bonus: bonusByMonth.get(m.month) ?? m.bonus,
+      })),
     }));
-    notify(`ดึงจากรายรับปี ${year} แล้ว — เงินเดือน ${months} เดือน รวม ${formatCurrency(salaryTotal)}`);
+
+    const total = salaryRows.reduce((s, i) => s + i.amount, 0);
+    notify(
+      `เติมจากรายรับปี ${year} แล้ว — เงินเดือน ${salaryByMonth.size} เดือน รวม ${formatCurrency(total)}\n` +
+        'หัก ณ ที่จ่าย/ประกันสังคม ต้องกรอกจากสลิปเอง (ไม่มีในหน้ารายรับ)'
+    );
   };
 
   const handleSave = async () => {
@@ -204,14 +261,9 @@ export default function TaxScreen() {
     );
   };
 
+  // เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts)
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[
-        styles.content,
-        isDesktop && { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' },
-      ]}
-    >
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {tableMissing && (
         <Text style={styles.warnBox}>
           ยังใช้ไม่ได้ — เอาไฟล์ `sql/tax_profiles.sql` ไปรันที่ Supabase SQL editor ก่อน 1 ครั้ง
@@ -234,9 +286,13 @@ export default function TaxScreen() {
         ))}
       </ScrollView>
 
-      {/* ── คำตอบ: ภาษีทั้งปี ── */}
+      {/* ── คำตอบ: ภาษีจากที่กรอกจริง ── */}
       <View style={styles.heroCard}>
-        <Text style={styles.heroLabel}>ภาษีทั้งปี (ประมาณการ)</Text>
+        <Text style={styles.heroLabel}>
+          {breakdown.filledMonths >= 12
+            ? 'ภาษีทั้งปี (ประมาณการ)'
+            : `ภาษีจากที่กรอกจริง ${breakdown.filledMonths}/12 เดือน`}
+        </Text>
         <Text style={styles.heroValue}>{formatCurrency(breakdown.tax)}</Text>
         <View style={styles.heroSplit}>
           <View style={styles.heroSplitCell}>
@@ -262,6 +318,30 @@ export default function TaxScreen() {
         </Text>
       </View>
 
+      {/* ── คาดทั้งปี ──
+          ขั้นบันไดภาษีไม่เป็นเชิงเส้น ยอด 8 เดือนคิดตรง ๆ จะได้ภาษีต่ำกว่าจริงหลายเท่า
+          จึงต้องโชว์แยกเป็นอีกการ์ด ไม่ใช่เอาไปปนกับเลข "ที่กรอกจริง" ด้านบน */}
+      {projection.projected && (
+        <View style={styles.projectCard}>
+          <Text style={styles.projectLabel}>
+            คาดทั้งปี — ถ้าเดือนที่เหลือได้เท่าเดือน {MONTH_LABELS_TH[projection.basedOnMonth - 1]}
+          </Text>
+          <Text style={styles.projectValue}>{formatCurrency(projection.projected.tax)}</Text>
+          <Text style={styles.projectFoot}>
+            เงินได้จากงาน {formatCurrency(projection.projected.salaryIncome)} · เงินได้สุทธิ{' '}
+            {formatCurrency(projection.projected.netIncome)} · อยู่ขั้น{' '}
+            {(projection.projected.marginalRate * 100).toFixed(0)}%
+            {'\n'}
+            {projection.projected.balance > 0
+              ? `ถ้าหัก ณ ที่จ่ายเดินต่อแบบนี้ สิ้นปีต้องจ่ายเพิ่ม ${formatCurrency(projection.projected.balance)}`
+              : `ถ้าหัก ณ ที่จ่ายเดินต่อแบบนี้ สิ้นปีได้คืน ${formatCurrency(Math.abs(projection.projected.balance))}`}
+          </Text>
+          <Text style={styles.projectWarn}>
+            โบนัสไม่ถูกประมาณให้ (ไม่ได้รับทุกเดือน) — ถ้าปีนี้จะได้โบนัสอีก ให้ใส่ในเดือนที่คาดว่าจะได้
+          </Text>
+        </View>
+      )}
+
       {/* ── ภาษีจากกำไรขาย ── */}
       <View style={styles.gainCard}>
         <Text style={styles.gainCardLabel}>ภาษีที่มาจากกำไรขายปีนี้</Text>
@@ -279,10 +359,74 @@ export default function TaxScreen() {
         title="รายได้ & ลดหย่อน"
         subtitle={`เงินได้จากงาน ${formatCurrency(breakdown.salaryIncome)}`}
       >
+        {/* ── ตารางรายเดือน: กรอกจากสลิปเงินเดือนเดือนต่อเดือน ── */}
+        <Text style={styles.tableTitle}>กรอกจากสลิปเงินเดือน (รายเดือน)</Text>
+        <Text style={styles.tableHint}>
+          ภาษีทั้งปีคิดจากยอดรวม ดังนั้นกรอกรายเดือนไม่ได้ทำให้ภาษีเปลี่ยน — แต่ได้หัก ณ ที่จ่ายที่ตรงจริง
+          (แต่ละเดือนไม่เท่ากัน) และแยก "ที่เกิดจริงแล้ว" กับ "คาดทั้งปี" ออกจากกันได้
+        </Text>
+
         <TouchableOpacity style={styles.fillBtn} onPress={fillFromIncomes}>
           <Ionicons name="download-outline" size={15} color={COLORS.primary} />
-          <Text style={styles.fillBtnText}>ดึงจากรายรับที่บันทึกไว้ในแอป</Text>
+          <Text style={styles.fillBtnText}>เติมเงินเดือน/โบนัสจากหน้ารายรับ (ครั้งเดียว)</Text>
         </TouchableOpacity>
+
+        {/* หัวตารางเฉพาะเดสก์ท็อป — มือถือใช้ label ในแต่ละช่องแทน เพราะ 4 ช่องในแถวเดียวแคบเกิน */}
+        {isDesktop && (
+          <View style={styles.mRowHead}>
+            <Text style={[styles.mHeadCell, styles.mMonthCell]}>เดือน</Text>
+            {MONTH_COLUMNS.map((c) => (
+              <Text key={c.key} style={[styles.mHeadCell, styles.mInputCell]}>{c.label}</Text>
+            ))}
+            <Text style={[styles.mHeadCell, styles.mCopyCell]}> </Text>
+          </View>
+        )}
+
+        {(profile.months || emptyTaxMonths()).map((m) => (
+          <View key={m.month} style={[styles.mRow, !isDesktop && styles.mRowMobile]}>
+            <Text style={[styles.mMonthLabel, isDesktop && styles.mMonthCell]}>
+              {MONTH_LABELS_TH[m.month - 1]}
+            </Text>
+            <View style={[styles.mFields, !isDesktop && styles.mFieldsMobile]}>
+              {MONTH_COLUMNS.map((c) => (
+                <View key={c.key} style={[styles.mInputCell, !isDesktop && styles.mInputCellMobile]}>
+                  {!isDesktop && <Text style={styles.mMiniLabel}>{c.label}</Text>}
+                  <TextInput
+                    style={styles.mInput}
+                    value={m[c.key] ? String(m[c.key]) : ''}
+                    onChangeText={(v) => setMonthField(m.month, c.key, v)}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor={COLORS.textSecondary}
+                  />
+                </View>
+              ))}
+            </View>
+            {m.month < 12 && (
+              <TouchableOpacity
+                style={[styles.mCopyBtn, isDesktop && styles.mCopyCell]}
+                onPress={() => copyMonthDown(m.month)}
+              >
+                <Ionicons name="arrow-down-outline" size={13} color={COLORS.primary} />
+                <Text style={styles.mCopyText}>{isDesktop ? '' : ' เติมลงเดือนที่เหลือ'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ))}
+
+        {/* แถวรวม — ตัวเลขชุดนี้คือฐานที่เอาไปคิดภาษีจริง */}
+        <View style={styles.mTotalRow}>
+          <Text style={styles.mTotalLabel}>
+            รวม {monthTotals.filledMonths}/12 เดือน
+          </Text>
+          <Text style={styles.mTotalValue}>
+            เงินเดือน+โบนัส {formatCurrency(monthTotals.salary + monthTotals.bonus)} · หัก ณ ที่จ่าย{' '}
+            {formatCurrency(monthTotals.withheld)} · ปกส. {formatCurrency(monthTotals.socialSecurity)}
+            {monthTotals.socialSecurity > SOCIAL_SECURITY_CAP
+              ? ` (ลดหย่อนได้แค่ ${formatCurrency(SOCIAL_SECURITY_CAP)})`
+              : ''}
+          </Text>
+        </View>
 
         {FIELDS.map((f) => (
           <View key={f.key} style={styles.field}>
@@ -549,6 +693,19 @@ const styles = StyleSheet.create({
   heroSplitValue: { ...TEXT.title, color: COLORS.text, marginTop: 2 },
   heroFoot: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 12, lineHeight: 17 },
 
+  // การ์ด "คาดทั้งปี" — สีเตือนเพราะเป็นเลขพยากรณ์ ไม่ใช่เลขที่เกิดขึ้นจริงแล้ว
+  projectCard: {
+    ...card,
+    padding: 16,
+    marginTop: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.warning,
+  },
+  projectLabel: { ...TEXT.caption, color: COLORS.textSecondary },
+  projectValue: { ...TEXT.amount, color: COLORS.text, marginTop: 2 },
+  projectFoot: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 8, lineHeight: 17 },
+  projectWarn: { ...TEXT.hint, color: COLORS.warning, marginTop: 8, lineHeight: 16 },
+
   gainCard: { ...card, padding: 16, marginTop: 12, borderLeftWidth: 3, borderLeftColor: COLORS.accent },
   gainCardLabel: { ...TEXT.caption, color: COLORS.textSecondary },
   gainCardValue: { ...TEXT.amount, color: COLORS.text, marginTop: 2 },
@@ -585,6 +742,59 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   fillBtnText: { ...TEXT.caption, color: COLORS.primary, fontFamily: FONTS.medium },
+
+  // ── ตารางรายเดือน ──
+  tableTitle: { ...TEXT.subtitle, color: COLORS.text, marginTop: 16 },
+  tableHint: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 4, lineHeight: 16 },
+  mRowHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.divider,
+  },
+  mHeadCell: { ...TEXT.hint, color: COLORS.textSecondary },
+  mRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
+  // มือถือ: เดือนอยู่บรรทัดบน ช่องกรอกลงมาเป็น 2×2 — 4 ช่องเรียงแถวเดียวบนจอ 350px แคบเกินกรอกไม่ได้
+  mRowMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.divider,
+    paddingBottom: 10,
+  },
+  mMonthLabel: { ...TEXT.label, color: COLORS.text },
+  mMonthCell: { width: 44 },
+  mFields: { flexDirection: 'row', gap: 8, flex: 1, minWidth: 0 },
+  mFieldsMobile: { flexWrap: 'wrap', marginTop: 6 },
+  // flex + minWidth:0 คู่กันบังคับ — <input> บนเว็บมี intrinsic width ~20 ตัวอักษร ถ้าไม่ใส่จะล้นแถว
+  mInputCell: { flex: 1, minWidth: 0 },
+  mInputCellMobile: { flexBasis: '46%', flexGrow: 1 },
+  mMiniLabel: { ...TEXT.hint, color: COLORS.textSecondary, marginBottom: 3 },
+  mInput: {
+    ...TEXT.caption,
+    minWidth: 0,
+    color: COLORS.text,
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  mCopyCell: { width: 30 },
+  mCopyBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 6 },
+  mCopyText: { ...TEXT.hint, color: COLORS.primary },
+  mTotalRow: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  mTotalLabel: { ...TEXT.label, color: COLORS.text },
+  mTotalValue: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 3, lineHeight: 17 },
 
   field: { marginTop: 14 },
   fieldLabel: { ...TEXT.label, color: COLORS.textSecondary, marginBottom: 6 },

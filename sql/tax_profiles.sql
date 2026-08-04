@@ -11,6 +11,10 @@ create table if not exists public.tax_profiles (
   social_security numeric not null default 0,
   withheld numeric not null default 0,          -- ภาษีหัก ณ ที่จ่ายทั้งปี
   extra_deductions numeric not null default 0,  -- ลดหย่อนอื่นรวมก้อนเดียว
+  -- ⬇ แหล่งความจริงของเงินเดือน/โบนัส/หัก ณ ที่จ่าย/ประกันสังคม: 12 แถวรายเดือน
+  -- [{ "month":1, "salary":50000, "bonus":0, "withheld":1200, "socialSecurity":750 }, ...]
+  -- คอลัมน์รายปีด้านบนถูกเขียนเป็นค่ารวมที่ derive มาจากตัวนี้ (ไว้อ่านในคอนโซล ไม่ใช้คำนวณ)
+  months jsonb,
   gain_rules jsonb,                             -- กฎกำไรขายรายชนิด (null = ใช้ค่าเริ่มต้นในแอป)
   remitted_ratio numeric,                       -- สัดส่วนกำไรต่างประเทศที่นำเงินเข้าไทย (0–1)
   created_at timestamptz not null default now(),
@@ -22,6 +26,9 @@ create table if not exists public.tax_profiles (
 alter table public.tax_profiles add column if not exists gain_rules jsonb;
 alter table public.tax_profiles add column if not exists remitted_ratio numeric;
 alter table public.tax_profiles add column if not exists extra_deductions numeric not null default 0;
+-- เพิ่มทีหลัง: ย้ายเงินเดือน/โบนัส/WHT/ประกันสังคม มาเก็บเป็นรายเดือน
+-- แถวเก่าที่ months เป็น null แอปจะกระจายยอดรายปีลงรายเดือนให้เองตอนอ่าน (ยอดรวมไม่เปลี่ยน)
+alter table public.tax_profiles add column if not exists months jsonb;
 
 create index if not exists tax_profiles_user_year_idx on public.tax_profiles (user_id, year desc);
 

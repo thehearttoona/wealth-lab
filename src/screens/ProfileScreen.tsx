@@ -127,10 +127,8 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
+  // เหลือแค่ paddingTop — เพดานความกว้าง (เดิม 640) ถอดออกแล้ว ดู utils/responsive.ts
   contentDesktop: {
-    maxWidth: 640,
-    width: '100%',
-    alignSelf: 'center',
     paddingTop: 32,
   },
   screenTitle: {

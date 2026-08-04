@@ -2,6 +2,7 @@ import { InvestmentType, RealizedTrade } from '../types/investment';
 import {
   TaxProfile,
   TaxBracket,
+  TaxMonth,
   TAX_BRACKETS,
   SALARY_EXPENSE_RATE,
   SALARY_EXPENSE_CAP,
@@ -9,6 +10,7 @@ import {
   SOCIAL_SECURITY_CAP,
   DEFAULT_GAIN_RULES,
   GainTaxRule,
+  sumTaxMonths,
 } from '../types/tax';
 import { convertToTHB, toChristianYear } from './constants';
 
@@ -127,6 +129,8 @@ export interface TaxBreakdown {
   // ภาษีที่มาจากกำไรขายโดยเฉพาะ = ภาษีทั้งปี − ภาษีถ้าไม่มีกำไรก้อนนี้
   taxFromGains: number;
   gains: GainByType[];
+  /** กรอกไปแล้วกี่เดือนจาก 12 — ตัวเลขทั้งหมดข้างบนคิดจากเท่าที่กรอกจริง ไม่ได้เดาเดือนที่เหลือ */
+  filledMonths: number;
 }
 
 /**
@@ -142,11 +146,14 @@ export function calculateTax(
   const gains = gainsByType(trades, profile.year, profile);
   const gainIncome = gains.reduce((s, g) => s + g.assessable, 0);
 
-  const salaryIncome = profile.monthlySalary * profile.salaryMonths + profile.bonus;
+  // เงินเดือน/โบนัส/หัก ณ ที่จ่าย/ประกันสังคม มาจากตารางรายเดือนเท่านั้น
+  // ภาษีไทยคิดจากยอดรวมทั้งปี ดังนั้นการรวมตรงนี้ให้ผลเท่ากับตอนที่เคยเก็บเป็นรายปี
+  const m = sumTaxMonths(profile.months);
+  const salaryIncome = m.salary + m.bonus;
   const salaryExpense = Math.min(salaryIncome * SALARY_EXPENSE_RATE, SALARY_EXPENSE_CAP);
   const otherIncome = profile.otherIncome;
 
-  const socialSecurity = Math.min(profile.socialSecurity, SOCIAL_SECURITY_CAP);
+  const socialSecurity = Math.min(m.socialSecurity, SOCIAL_SECURITY_CAP);
   const totalDeductions = PERSONAL_ALLOWANCE + socialSecurity + profile.extraDeductions;
 
   const afterExpense = salaryIncome - salaryExpense + otherIncome;
@@ -171,12 +178,65 @@ export function calculateTax(
     totalDeductions,
     netIncome,
     tax,
-    withheld: profile.withheld,
-    balance: tax - profile.withheld,
+    withheld: m.withheld,
+    balance: tax - m.withheld,
     effectiveRate: assessableTotal > 0 ? tax / assessableTotal : 0,
     marginalRate: marginalRate(netIncome),
     taxFromGains,
     gains,
+    filledMonths: m.filledMonths,
+  };
+}
+
+export interface FullYearProjection {
+  filledMonths: number;
+  /** เดือนที่ใช้เป็นฐานประมาณ (1–12) */
+  basedOnMonth: number;
+  /** ผลลัพธ์ถ้าเดือนที่เหลือได้เท่าเดือนฐาน — null = กรอกครบ 12 เดือนแล้ว หรือยังไม่กรอกเลย */
+  projected: TaxBreakdown | null;
+}
+
+/**
+ * ประมาณการ "ทั้งปี" จากเดือนที่กรอกไปแล้ว
+ *
+ * ทำไมต้องมี: ถ้าเดือน ส.ค. กรอกไป 8 เดือน แล้วเอายอด 8 เดือนไปคิดขั้นบันไดตรง ๆ
+ * ภาษีจะออกมาต่ำกว่าความจริงหลายเท่า เพราะขั้นบันไดไม่เป็นเชิงเส้น
+ * (เงินเดือน 50,000: 8 เดือน → ฿4,200 แต่ทั้งปีจริง → ฿20,600 ต่ำไป ~5 เท่า)
+ * หน้าจอจึงต้องโชว์แยกกันสองเลข ไม่ใช่เลขเดียวที่กำกวม
+ *
+ * วิธีประมาณ: เดือนที่ยังไม่มีเงินเดือน ใช้ค่าของ "เดือนล่าสุดที่กรอก" (เงินเดือน/หัก ณ ที่จ่าย/ประกันสังคม)
+ * โบนัสไม่ประมาณให้ เพราะไม่ได้รับทุกเดือน — เดาให้จะทำให้ตัวเลขสูงเกินจริง
+ */
+export function projectFullYear(
+  profile: TaxProfile,
+  trades: RealizedTrade[] = []
+): FullYearProjection {
+  const t = sumTaxMonths(profile.months);
+  if (t.filledMonths === 0 || t.lastSalaryMonth === 0 || t.filledMonths >= 12) {
+    return { filledMonths: t.filledMonths, basedOnMonth: t.lastSalaryMonth, projected: null };
+  }
+
+  const base = profile.months.find((x) => x.month === t.lastSalaryMonth);
+  if (!base) {
+    return { filledMonths: t.filledMonths, basedOnMonth: 0, projected: null };
+  }
+
+  const projectedMonths: TaxMonth[] = profile.months.map((x) =>
+    (x.salary || 0) > 0
+      ? x
+      : {
+          month: x.month,
+          salary: base.salary,
+          bonus: 0,
+          withheld: base.withheld,
+          socialSecurity: base.socialSecurity,
+        }
+  );
+
+  return {
+    filledMonths: t.filledMonths,
+    basedOnMonth: t.lastSalaryMonth,
+    projected: calculateTax({ ...profile, months: projectedMonths }, trades),
   };
 }
 

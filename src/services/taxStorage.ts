@@ -1,36 +1,95 @@
 import { supabase, getUserId } from './supabase';
-import { TaxProfile } from '../types/tax';
+import { TaxProfile, TaxMonth, emptyTaxMonths, sumTaxMonths } from '../types/tax';
 
 // ข้อมูลภาษี 1 แถวต่อ 1 ปีภาษี (unique user_id + year) — ไม่ใช่ singleton แบบ investment_plan
 // เพราะต้องย้อนดูปีเก่าได้ และทั้งเงินเดือน/กฎกำไรขายเปลี่ยนได้ทุกปี
 // ต้องรัน sql/tax_profiles.sql ที่ Supabase ก่อน 1 ครั้ง
+//
+// เงินเดือน/โบนัส/หัก ณ ที่จ่าย/ประกันสังคม เก็บใน column jsonb `months` (12 แถว)
+// คอลัมน์รายปีเดิม (monthly_salary/salary_months/bonus/social_security/withheld) ยังเขียนค่ารวมลงไปด้วย
+// เพื่อให้แถวใน Supabase console อ่านรู้เรื่อง และเป็นทางถอยถ้า jsonb หายไป — แต่ "แหล่งความจริง" คือ months
+
+const num = (v: any): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/** บังคับให้ได้ 12 แถวเรียงตามเดือนเสมอ ไม่ว่า jsonb จะเก็บมาไม่ครบ/สลับลำดับ */
+const normalizeMonths = (raw: any): TaxMonth[] => {
+  const base = emptyTaxMonths();
+  if (!Array.isArray(raw)) return base;
+  raw.forEach((r) => {
+    const idx = num(r?.month) - 1;
+    if (idx < 0 || idx > 11) return;
+    base[idx] = {
+      month: idx + 1,
+      salary: num(r?.salary),
+      bonus: num(r?.bonus),
+      withheld: num(r?.withheld),
+      socialSecurity: num(r?.socialSecurity ?? r?.social_security),
+    };
+  });
+  return base;
+};
+
+/**
+ * แถวเก่าที่บันทึกไว้ตอนยังเก็บเป็นรายปี — กระจายลงรายเดือนแบบรักษายอดรวม
+ * (ภาษีคิดจากยอดรวม ดังนั้นการกระจายแบบนี้ให้ภาษีเท่าเดิมเป๊ะ แค่เดือนที่ลงอาจไม่ตรงสลิปจริง)
+ * ทำครั้งเดียวตอนอ่าน ผู้ใช้กดบันทึกทับก็จะกลายเป็น months ถาวร
+ */
+const monthsFromLegacyRow = (row: any): TaxMonth[] => {
+  const months = emptyTaxMonths();
+  const perMonth = num(row.monthly_salary);
+  const count = Math.min(12, Math.max(0, Math.round(num(row.salary_months))));
+  if (perMonth <= 0 && count <= 0) return months;
+
+  const spread = Math.max(1, count);
+  for (let i = 0; i < spread; i++) months[i].salary = perMonth;
+
+  // ยอดรวมรายปีที่ไม่รู้ว่าเกิดเดือนไหน → หารเท่ากันแล้วโยนเศษไปเดือนสุดท้ายที่ทำงาน
+  const spreadEvenly = (total: number, key: 'withheld' | 'socialSecurity') => {
+    if (total <= 0) return;
+    const each = Math.floor((total / spread) * 100) / 100;
+    for (let i = 0; i < spread; i++) months[i][key] = each;
+    months[spread - 1][key] = Math.round((total - each * (spread - 1)) * 100) / 100;
+  };
+  spreadEvenly(num(row.withheld), 'withheld');
+  spreadEvenly(num(row.social_security), 'socialSecurity');
+
+  // โบนัสไม่รู้เดือน — ลงเดือนสุดท้ายที่มีเงินเดือน (ไทยส่วนใหญ่จ่ายปลายปี)
+  months[spread - 1].bonus = num(row.bonus);
+  return months;
+};
 
 const mapFromDb = (row: any): TaxProfile => ({
   year: row.year,
-  monthlySalary: row.monthly_salary ?? 0,
-  salaryMonths: row.salary_months ?? 12,
-  bonus: row.bonus ?? 0,
-  otherIncome: row.other_income ?? 0,
-  socialSecurity: row.social_security ?? 0,
-  withheld: row.withheld ?? 0,
-  extraDeductions: row.extra_deductions ?? 0,
+  months: Array.isArray(row.months) && row.months.length > 0
+    ? normalizeMonths(row.months)
+    : monthsFromLegacyRow(row),
+  otherIncome: num(row.other_income),
+  extraDeductions: num(row.extra_deductions),
   gainRules: row.gain_rules && typeof row.gain_rules === 'object' ? row.gain_rules : undefined,
   remittedRatio: row.remitted_ratio ?? undefined,
 });
 
-const mapToDb = (p: TaxProfile, userId: string) => ({
-  user_id: userId,
-  year: p.year,
-  monthly_salary: p.monthlySalary,
-  salary_months: p.salaryMonths,
-  bonus: p.bonus,
-  other_income: p.otherIncome,
-  social_security: p.socialSecurity,
-  withheld: p.withheld,
-  extra_deductions: p.extraDeductions,
-  gain_rules: p.gainRules ?? null,
-  remitted_ratio: p.remittedRatio ?? null,
-});
+const mapToDb = (p: TaxProfile, userId: string) => {
+  const t = sumTaxMonths(p.months);
+  return {
+    user_id: userId,
+    year: p.year,
+    months: p.months,
+    // ค่ารวมที่ derive จาก months — เขียนไว้ให้แถวอ่านรู้เรื่อง ห้ามใช้เป็นแหล่งคำนวณ
+    monthly_salary: t.filledMonths > 0 ? Math.round(t.salary / Math.max(1, t.filledMonths)) : 0,
+    salary_months: t.filledMonths,
+    bonus: t.bonus,
+    social_security: t.socialSecurity,
+    withheld: t.withheld,
+    other_income: p.otherIncome,
+    extra_deductions: p.extraDeductions,
+    gain_rules: p.gainRules ?? null,
+    remitted_ratio: p.remittedRatio ?? null,
+  };
+};
 
 /** ยังไม่ได้รัน SQL — บอกให้หน้าจอโชว์คำแนะนำแทนที่จะเด้ง error ดิบ */
 export const isTaxTableMissing = (error: any): boolean =>

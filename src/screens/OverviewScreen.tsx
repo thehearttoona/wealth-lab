@@ -30,7 +30,6 @@ import {
 } from '../utils/activityLog';
 import MonthlyFlowChart from '../components/charts/MonthlyFlowChart';
 import CategoryBars from '../components/charts/CategoryBars';
-import { useResponsive } from '../utils/responsive';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Overview'>;
 
@@ -47,7 +46,6 @@ const kindColor = (kind: ActivityEvent['kind']): string => {
 
 export default function OverviewScreen() {
   const navigation = useNavigation<Nav>();
-  const { isDesktop } = useResponsive();
   const [loading, setLoading] = useState(true);
   const [worth, setWorth] = useState<NetWorthBreakdown | null>(null);
   const [days, setDays] = useState<ActivityDay[]>([]);
@@ -103,7 +101,8 @@ export default function OverviewScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={isDesktop ? styles.desktopWrap : undefined}>
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <View>
         {/* ── ① ตัวเลขเดียวที่หน้านี้มีแล้วที่อื่นไม่มี ── */}
         <View style={styles.heroCard}>
           <Text style={styles.heroLabel}>ความมั่งคั่งสุทธิ</Text>
@@ -245,7 +244,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  desktopWrap: { maxWidth: 680, width: '100%', alignSelf: 'center' },
 
   heroCard: {
     backgroundColor: COLORS.surface,

@@ -69,7 +69,8 @@ export default function IncomeScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={isDesktop ? styles.desktopInner : undefined}>
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <View>
 
         {/* ── Month Navigator ── */}
         <View style={styles.monthNav}>
@@ -162,7 +163,6 @@ export default function IncomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  desktopInner: { alignSelf: 'center', width: '100%', maxWidth: 800 },
 
   // ── Month Nav ──
   monthNav: {

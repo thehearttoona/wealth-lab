@@ -19,7 +19,6 @@ import { saveExpense, updateExpense, saveRecurringBill, updateRecurringBill } fr
 import { setPendingReturnDate } from '../services/pendingNavigation';
 import { EXPENSE_CATEGORIES, COLORS, formatCurrency, toChristianYear } from '../utils/constants';
 import { notify } from '../utils/dialog';
-import { useResponsive } from '../utils/responsive';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../services/supabase';
 
@@ -54,7 +53,6 @@ export default function AddExpenseScreen() {
   const navigation = useNavigation<AddExpenseScreenNavigationProp>();
   const route = useRoute<AddExpenseScreenRouteProp>();
   const { type, expense, bill, date: paramDate } = route.params;
-  const { isDesktop } = useResponsive();
 
   const isEditing = !!(expense || bill);
 
@@ -318,12 +316,8 @@ export default function AddExpenseScreen() {
   // ── Render ──
   return (
     <ScrollView style={styles.container}>
-      <View
-        style={[
-          styles.content,
-          isDesktop && { maxWidth: 600, alignSelf: 'center' as const, width: '100%' as any },
-        ]}
-      >
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <View style={styles.content}>
         {/* ════════════ DAILY ════════════ */}
         {type === 'daily' && (
           <>

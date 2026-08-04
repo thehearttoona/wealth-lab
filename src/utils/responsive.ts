@@ -8,8 +8,11 @@ const BREAKPOINTS = {
   wide: 1440,
 };
 
-const DESKTOP_MAX_WIDTH = 1200;
-const DESKTOP_CONTENT_MAX_WIDTH = 800;
+// จงใจไม่มีเพดานความกว้างสำหรับเดสก์ท็อปแล้ว — ทุกหน้าใช้ความกว้างเต็ม pane (หลังหัก sidebar)
+// เดิมมี DESKTOP_MAX_WIDTH = 1200 / DESKTOP_CONTENT_MAX_WIDTH = 800 ถูกถอดออกทั้งคู่
+// ถ้าจอกว้างขึ้นแล้วเนื้อหาดูโปร่งเกิน ให้แก้ด้วยการ "เพิ่มจำนวนคอลัมน์" ไม่ใช่ใส่เพดานกลับมา
+// (ดูตัวอย่างการคิดคอลัมน์จากความกว้างจริงที่ PortfolioScreen — GRID_COL_TARGET)
+// ยกเว้นเดียวที่ยังจำกัดความกว้างได้: การ์ดใน Modal และการ์ด login — เป็น overlay ไม่ใช่เนื้อหาหน้า
 
 export function useResponsive() {
   const [dimensions, setDimensions] = useState(Dimensions.get('window'));
@@ -36,10 +39,6 @@ export function useResponsive() {
     isMobile,
     isWide,
     isWeb,
-    // เพดานความกว้างของเลย์เอาต์หลายคอลัมน์ (หน้าหลัก/พอร์ต) — จอ 2560px จะได้ไม่ยืดจนอ่านไม่ไหว
-    maxWidth: DESKTOP_MAX_WIDTH,
-    // เพดานของเนื้อหาคอลัมน์เดียว (ลิสต์/ฟอร์ม)
-    contentMaxWidth: DESKTOP_CONTENT_MAX_WIDTH,
     // Sidebar width
     sidebarWidth: isWide ? 240 : 200,
   };

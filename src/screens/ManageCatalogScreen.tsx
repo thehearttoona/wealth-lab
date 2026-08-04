@@ -36,7 +36,6 @@ import { getAccounts } from '../services/accountStorage';
 import { getRateToTHB } from '../services/priceApi';
 import { COLORS } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
-import { useResponsive } from '../utils/responsive';
 
 type Tab = 'currency' | 'platform';
 
@@ -49,7 +48,6 @@ interface Usage {
 const EMPTY_USAGE: Usage = { currency: {}, platform: {} };
 
 export default function ManageCatalogScreen() {
-  const { isDesktop, contentMaxWidth } = useResponsive();
   const [tab, setTab] = useState<Tab>('currency');
   const [currencies, setCurrencies] = useState<UserCurrency[]>([]);
   const [platforms, setPlatforms] = useState<UserPlatform[]>([]);
@@ -324,12 +322,8 @@ export default function ManageCatalogScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={[
-          styles.listContent,
-          isDesktop && { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' as const },
-        ]}
-      >
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <ScrollView contentContainerStyle={styles.listContent}>
         {tableMissing && (
           <Text style={styles.warnBox}>
             ยังใช้ไม่ได้ — เอาไฟล์ `sql/catalog_currencies_platforms.sql` ไปรันที่ Supabase SQL editor ก่อน 1 ครั้ง

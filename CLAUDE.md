@@ -38,18 +38,53 @@ Every data domain has a `src/services/*Storage.ts` module wrapping Supabase. The
 - Some settings are per-user singletons (e.g. `investment_plan`) using `.maybeSingle()` + `upsert`.
 - Schema changes are applied by hand via SQL in the Supabase console (no migrations checked in). When adding a column, provide the idempotent `alter table ... add column if not exists ...` for the user to run.
 
-`src/services/` map: `storage.ts` (expenses + recurring bills), `incomeStorage`, `installmentStorage`, `monthlySummaryStorage`, `investmentStorage` (+ `getPortfolioSummary`), `portfolioGoalStorage`, `investmentPlanStorage`, plus non-storage services below.
+`src/services/` map: `storage.ts` (expenses + recurring bills), `incomeStorage`, `installmentStorage`, `monthlySummaryStorage`, `investmentStorage` (+ `getPortfolioSummary`), `portfolioGoalStorage`, `investmentPlanStorage`, `purchaseGoalStorage`, plus non-storage services below.
+
+### Tax — `src/utils/taxCalc.ts` + `src/types/tax.ts`
+Thai personal income tax (ภ.ง.ด.90/91) estimator. Brackets, the 50%-capped-at-100k salary expense, the 60k personal allowance, and the per-asset capital-gains rules are all **data**, not `if`s, so they can be edited per year.
+
+**Salary/bonus/withholding/social-security live in `TaxProfile.months` — 12 rows, stored as a `jsonb` column.** Two things to know:
+- **This is deliberately NOT read from `incomes`.** The tax screen owns its own numbers so there's never a second source of truth for the same fact. The "เติมจากรายรับ" button is an explicit one-time prefill into the monthly table, not a live link.
+- **Monthly entry does not make the tax more accurate** — Thai PIT is assessed on the annual total, so `40k×6 + 45k×6` and `42.5k×12` produce identical tax. Monthly exists for per-month withholding (which varies), mid-year raises, and separating "actual so far" from "projected full year".
+
+**Never show a partial-year total as the annual estimate.** Brackets are non-linear, so 8 months of data run straight through them understates the year badly (50k/mo → ฿4,200 vs ฿20,600 actual, ~5× low). `calculateTax` returns `filledMonths` and `projectFullYear()` returns a separate projection — the screen shows them as two distinct cards. A previous version silently overwrote `salaryMonths` with "months that have data" and produced exactly this bug.
+
+Known gaps (annual `extraDeductions` is one lumped field): no per-item deduction caps (RMF 500k, SSF 200k, retirement-group 500k, spouse/children/parents, insurance), no donation 10%/2× base, no dividends or dividend tax credit, and the constants aren't keyed by tax year. Needs `sql/tax_profiles.sql`.
+
+### Sell review — "ทบทวนการขาย" (`src/utils/sellReview.ts`)
+Answers "would I have done better holding?" by comparing each `realized_trades` row's `sellPrice` against today's price. Its purpose is to pick a **sell rule empirically** instead of guessing: mostly-sold-too-early → trailing stop / scale out; mostly-well-timed → don't bolt on an automatic rule. Requires no new user input.
+
+Guards that must not be removed — each exists because its absence produces a confidently wrong number:
+- Sales newer than `MIN_DAYS_TO_JUDGE` (30) are `too_recent` and excluded from both the counts **and** the money totals.
+- A ±`FLAT_BAND_PERCENT` (3%) band counts as `flat` — smaller moves are daily noise, not timing skill.
+- Fewer than `MIN_TRADES_FOR_DIAGNOSIS` (3) judged trades → `not_enough_data`; never diagnose a habit from one or two trades.
+- Thai funds have no price API (manual NAV), so those rows are `unknown`. The screen always prints how many trades fell out of the conclusion.
+- Prices are fetched once per `priceKeyOf` (type+symbol+currency), not per trade — Twelve Data's free tier is 800 req/day.
+
+The screen states the hindsight caveats on-page: today's price is one point in time, the proceeds were reinvested (so this is opportunity cost, not proof of a mistake), and tax/fees are not deducted.
+
+### Purchase goals — "ของที่อยากได้"
+A wishlist gated on trading performance: an item priced X can only be bought once **realized** profit reaches `multiplier × X` (default 10). Rules, all encoded in `src/utils/purchaseGoals.ts#planPurchaseGoals`:
+- **Realized only** (`summarizeRealized(trades).totalPnlTHB`). Unrealized profit never unlocks anything — the money has to actually be out.
+- **It's a queue, not a shared pool.** Items are ordered by `sortOrder`; the top item consumes its full quota before any profit flows to the next. Three items do *not* all unlock off one profit pot.
+- **Marking an item bought consumes `price × multiplier` permanently**, not just the price — the quota is spent, so the rest of the queue drops back and rebuilds.
+Needs `sql/purchase_goals.sql`. Entry points: gift-icon button in Portfolio's action row, plus a summary card in Portfolio's header grid (shown only when the queue is non-empty).
 
 ### Navigation — responsive fork
 `src/navigation/index.tsx` gates on `useAuth()` (shows `LoginScreen` when logged out), then picks a layout from `useResponsive().isDesktop`. Both branches share **one** `Stack.Navigator`; only the root screen and the chrome around it differ:
 - Desktop (≥1024px): `DesktopSidebar` is a persistent shell rendered **outside `NavigationContainer`**, so pushing a sub-screen (Accounts, ManageCatalog, …) keeps the sidebar on screen. The active tab is local state in `Navigation`, passed down to the Stack's root screen (`DesktopRootScreen`) through `DesktopTabContext` — don't move that state back inside the navigator. Tapping a sidebar item also `navigate`s back to the root route via `navigationRef`, otherwise the press looks dead while a pushed screen covers the pane.
 - Mobile: root screen is `MobileTabNavigator` (`@react-navigation` bottom tabs).
 
-`useResponsive()` (`src/utils/responsive.ts`) is the single source for breakpoints, `isDesktop/isTablet/isMobile/isWide`, `maxWidth` (1200, multi-column pages), `contentMaxWidth` (800, single-column lists/forms), and `sidebarWidth`. Screens frequently branch on it — e.g. Portfolio uses a `FlatList` 2-col grid on desktop but a `ScrollView` on mobile (a plain flex `FlatList` breaks scrolling on web).
+`useResponsive()` (`src/utils/responsive.ts`) is the single source for breakpoints, `isDesktop/isTablet/isMobile/isWide`, and `sidebarWidth`. Screens frequently branch on it — e.g. Portfolio uses a `FlatList` grid on desktop but a `ScrollView` on mobile (a plain flex `FlatList` breaks scrolling on web).
+
+**There is no desktop max-width anywhere.** `maxWidth` (1200) and `contentMaxWidth` (800) used to come from `useResponsive()` and were **removed from the hook and from all 15 screens** — desktop content fills the whole pane. When a wide monitor makes a page look sparse, the fix is **more columns, never a width cap**:
+- `PortfolioScreen` computes `gridCols` from the measured pane width against `GRID_COL_TARGET` (380px/card) and remounts the `FlatList` via `key={`desktop-${gridCols}col`}` — `numColumns` can't change in place.
+- Summary/queue cards use a wrap grid (`flexDirection: 'row'` + `flexWrap` + `flexBasis: N` + `flexGrow: 1` + `minWidth: 0`). See `styles.cardGrid`/`cardGridItem` in `PortfolioScreen` and `PurchaseGoalsScreen`.
+- The only things still width-capped are **overlays**: `Modal` cards (400–500) and the login card. Those are not page content.
+- **When locking a card's width to a number, override `flexBasis` too.** `flex: 1` compiles to `flex: 1 1 0%` on react-native-web, and `flex-basis: 0%` beats `width` — set `width` alone and the card collapses to zero.
 
 Two responsive traps that already bit once:
 - **Don't gate "stack it vertically" on `isMobile`** — the 768–1023 tablet band is neither `isMobile` nor `isDesktop`, so those rows stay side-by-side and get crushed. Branch on `!isDesktop`.
-- **`alignSelf: 'center'` + `width: '100%'` does nothing without a `maxWidth`.** Any desktop wrapper needs all three, or the page just stretches across a 2560px monitor.
 - **A `TextInput` in a flex row needs `minWidth: 0` on top of `flex: n`.** On web it renders as `<input>`, whose intrinsic width (~20 chars) becomes its automatic minimum size, so `flexShrink` can't shrink it. Measured: two inputs at `flex: 3` / `flex: 2` in a 279px card each stayed 192px wide — 141px of overflow — and dropped to 141/102 with `minWidth: 0`. Native doesn't show this, so it only appears on the deployed web app.
 
 Every `Modal` card must be a `ScrollView` with `maxHeight: '100%'` + `flexGrow: 0` (padding goes on `contentContainerStyle`). `public/index.html` sets `body { overflow: hidden }`, so a modal taller than the viewport doesn't just look bad — its save button becomes unreachable.

@@ -170,10 +170,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
+  // เหลือแค่ padding — เพดานความกว้าง (เดิม 900) ถอดออกแล้ว ดู utils/responsive.ts
   desktopWrapper: {
-    maxWidth: 900,
-    alignSelf: 'center',
-    width: '100%',
     paddingHorizontal: 16,
   },
   loadingContainer: {

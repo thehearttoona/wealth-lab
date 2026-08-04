@@ -37,6 +37,8 @@ import ProfileScreen from '../screens/ProfileScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import StatisticsScreen from '../screens/StatisticsScreen';
 import TaxScreen from '../screens/TaxScreen';
+import PurchaseGoalsScreen from '../screens/PurchaseGoalsScreen';
+import SellReviewScreen from '../screens/SellReviewScreen';
 import { refreshCurrencyCache } from '../services/currencyStorage';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
@@ -291,6 +293,30 @@ export default function Navigation() {
           name="Tax"
           component={TaxScreen}
           options={{ title: 'ภาษี' }}
+        />
+        <Stack.Screen
+          name="SellReview"
+          component={SellReviewScreen}
+          options={({ navigation }) => ({
+            title: 'ทบทวนการขาย',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
+          name="PurchaseGoals"
+          component={PurchaseGoalsScreen}
+          options={({ navigation }) => ({
+            title: 'ของที่อยากได้',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
         />
       </Stack.Navigator>
     </NavigationContainer>

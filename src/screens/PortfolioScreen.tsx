@@ -56,6 +56,9 @@ import { getHoldingAnnualGrowth } from '../utils/holdingAnalysis';
 import { useResponsive } from '../utils/responsive';
 import { TaxProfile, GAIN_RULE_LABELS, emptyTaxProfile } from '../types/tax';
 import { getTaxProfile } from '../services/taxStorage';
+import { PurchaseGoal } from '../types/purchaseGoal';
+import { getPurchaseGoals } from '../services/purchaseGoalStorage';
+import { planPurchaseGoals } from '../utils/purchaseGoals';
 import { calculateTax, estimateGainTax, taxYearOf } from '../utils/taxCalc';
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
@@ -73,9 +76,43 @@ const PRICE_REFRESH_MS = 5 * 60 * 1000;
 // ปีภาษีปัจจุบันเป็น พ.ศ. — ใช้ทั้งดึง TaxProfile และกรองไม้ที่ขายปีนี้
 const currentTaxYear = new Date().getFullYear() + 543;
 
+// ── ค่ากริดเดสก์ท็อป (ต้องตรงกับ styles.flatListRow / styles.cardGrid) ──
+// COL_TARGET = ความกว้างการ์ดที่อ่านสบาย: เนื้อในเป็นชื่อ + ราคา + กำไร ซึ่งกว้างเกิน ~420
+// ก็แค่เพิ่มที่ว่างกลางการ์ด ไม่ได้อ่านง่ายขึ้น จำนวนคอลัมน์จึงโตแทนความกว้างการ์ด
+const GRID_COL_TARGET = 380;
+const GRID_GAP = 12;
+const GRID_PADDING = 16;
+// เพดานคอลัมน์ — จอ 5K ที่ 12 คอลัมน์อ่านไม่ทันอยู่ดี และ FlatList แถวละ 12 ใบเริ่มหนัก
+const GRID_MAX_COLS = 6;
+// การ์ดสรุปด้านหัว (เป้าหมาย/ภาษี/ผลงานจริง/เงินรอลงทุน) — กว้างกว่าการ์ดรายการเพราะมี KPI 3 ช่อง
+const CARD_GRID_BASIS = 520;
+
 export default function PortfolioScreen() {
   const navigation = useNavigation<PortfolioScreenNavigationProp>();
-  const { isDesktop, maxWidth } = useResponsive();
+  const { isDesktop, width: windowWidth, sidebarWidth } = useResponsive();
+  // ── กริดเต็มจอ: ไม่จำกัด max-width แล้ว จอยิ่งกว้างยิ่งได้จำนวนคอลัมน์มากขึ้น ──
+  // ถ้าปล่อยเต็มจอโดยคง numColumns={2} ไว้ การ์ดจะอ้วน ~1140px บนจอ 2560 (แย่กว่าเดิม)
+  // จึงต้องคิดคอลัมน์จากความกว้างจริงของ pane โดยล็อกความกว้างการ์ดไว้ราว ๆ COL_TARGET
+  // ค่าเริ่มต้นเดาจาก window - sidebar เพื่อให้ paint แรกได้จำนวนคอลัมน์ถูกเลย
+  // (ไม่ใช้ 0 ไม่งั้น FlatList เปลี่ยน key → กระพริบ 1 เฟรม) แล้ว onLayout ค่อยแก้ให้ตรง
+  const [gridWidth, setGridWidth] = useState(() =>
+    isDesktop ? Math.max(0, windowWidth - sidebarWidth) : 0
+  );
+  const { gridCols, gridCardWidth } = useMemo(() => {
+    const usable = gridWidth - GRID_PADDING * 2;
+    if (!isDesktop) return { gridCols: 1, gridCardWidth: null as number | null };
+    // ยังไม่รู้ความกว้าง → 2 คอลัมน์แบบยืดเอง (ห้ามคืน 1 เพราะ columnWrapperStyle
+    // ใช้กับ numColumns=1 ไม่ได้ RN จะ warn)
+    if (usable <= 0) return { gridCols: 2, gridCardWidth: null as number | null };
+    const cols = Math.max(
+      2,
+      Math.min(GRID_MAX_COLS, Math.floor((usable + GRID_GAP) / (GRID_COL_TARGET + GRID_GAP)))
+    );
+    // ล็อกความกว้างเป็นตัวเลข ไม่ใช้ flex:1 — ไม่งั้นแถวสุดท้ายที่มีการ์ดไม่ครบคอลัมน์
+    // จะยืดเต็มแถว (เช่น 1 ใบใน 4 คอลัมน์ = อ้วนกว่าใบอื่น 4 เท่า)
+    const cardWidth = Math.floor((usable - GRID_GAP * (cols - 1)) / cols);
+    return { gridCols: cols, gridCardWidth: cardWidth };
+  }, [isDesktop, gridWidth]);
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [summary, setSummary] = useState<PortfolioSummary>({
     totalValue: 0,
@@ -127,6 +164,7 @@ export default function PortfolioScreen() {
   const [redCheckedCount, setRedCheckedCount] = useState(0);
   // ── การขายจริง: ตัวชี้วัดฝีมือที่วัดได้ (ต่างจากกำไรลอยตัว) ──
   const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
+  const [purchaseGoals, setPurchaseGoals] = useState<PurchaseGoal[]>([]);
   // ข้อมูลภาษีปีนี้ — null = ยังไม่ได้ตั้งค่าที่หน้า "ภาษี" (หรือยังไม่ได้รัน SQL)
   const [taxProfile, setTaxProfile] = useState<TaxProfile | null>(null);
   const [sellTarget, setSellTarget] = useState<Investment | null>(null);
@@ -173,6 +211,13 @@ export default function PortfolioScreen() {
       if (curList.length > 0) setCurrencyOptions(curList.map((c) => c.code));
     } catch {
       // ยังไม่ได้รัน SQL แคตตาล็อก → ใช้ค่าเริ่มต้น
+    }
+    try {
+      // ของที่อยากได้ — โชว์การ์ดสรุปคิว ไม่มีตาราง/ไม่มีของก็ไม่โชว์การ์ด
+      setPurchaseGoals(await getPurchaseGoals());
+    } catch {
+      // ยังไม่ได้รัน sql/purchase_goals.sql
+      setPurchaseGoals([]);
     }
     try {
       // ข้อมูลภาษีปีนี้ — ใช้ประมาณภาษีตอนขาย ไม่มีก็แค่ไม่โชว์บรรทัดภาษี
@@ -771,6 +816,17 @@ export default function PortfolioScreen() {
       <View style={[
         styles.investmentItem,
         isDesktop && styles.investmentItemDesktop,
+        // ความกว้างมาจากกริด (ดู gridCardWidth) — ยังไม่วัดได้ก็ปล่อย flex ของ
+        // investmentItemDesktop ยืดไปก่อน 1 เฟรม
+        // ต้องทับ flexBasis ด้วย: investmentItemDesktop มี flex:1 ซึ่ง rn-web แปลเป็น
+        // flex: 1 1 0% — flex-basis:0% ชนะ width ทำให้การ์ดยุบเป็น 0 ถ้าเซ็ตแต่ width
+        isDesktop && gridCardWidth != null && {
+          flexBasis: gridCardWidth,
+          flexGrow: 0,
+          flexShrink: 0,
+          width: gridCardWidth,
+          maxWidth: gridCardWidth,
+        },
       ]}>
         <TouchableOpacity
           style={styles.investmentContent}
@@ -883,6 +939,10 @@ export default function PortfolioScreen() {
   }, [tradesThisTaxYear, realizedTrades, taxProfile]);
 
   const realized = summarizeRealized(realizedTrades);
+
+  // คิวของที่อยากได้ — ใช้กำไร realized ก้อนเดียวกับการ์ด "ผลงานจริง" ด้านบน
+  // ไม่ห่อ useMemo เพราะ realized เองก็คิดใหม่ทุก render อยู่แล้ว ห่อไปก็ไม่ได้ประหยัดอะไร
+  const purchasePlan = planPurchaseGoals(purchaseGoals, realized.totalPnlTHB);
   // รายดีลแยกก้อน — ใช้โชว์ในลิสต์ "ที่ขายแล้ว" พร้อมปุ่มย้อนคืน (เรียงขายล่าสุดก่อนจาก query แล้ว)
   const realizedResults = realizedTrades.map(analyzeRealizedTrade);
 
@@ -1115,12 +1175,28 @@ export default function PortfolioScreen() {
             <Ionicons name="options-outline" size={18} color={COLORS.primary} />
             <Text style={styles.updateButtonText}></Text>
           </TouchableOpacity>
+          {/* ของที่อยากได้ — ปลดล็อกด้วยกำไรที่ขายจริง 10 เท่าของราคาของ */}
+          <TouchableOpacity
+            style={[styles.addButton, styles.updateButton]}
+            onPress={() => navigation.navigate('PurchaseGoals')}
+          >
+            <Ionicons name="gift-outline" size={18} color={COLORS.primary} />
+            <Text style={styles.updateButtonText}></Text>
+          </TouchableOpacity>
         </View>
 
+        {/* ── การ์ดสรุปด้านหัว ──
+            บนเดสก์ท็อปจัดเป็นกริด wrap: หน้านี้เต็มจอแล้ว ถ้าเรียงลงมาเป็นคอลัมน์เดียว
+            การ์ดจะกว้าง 2300px บนจอ 2560 — บรรทัดยาวจนอ่านไม่ไหว และต้องเลื่อนผ่าน
+            การ์ดสรุปทั้งหมดก่อนจะเจอรายการลงทุน */}
+        <View style={isDesktop ? styles.cardGrid : undefined}>
         {/* ── การ์ดภาษีจากกำไรที่ขายปีนี้ ──
             โชว์เฉพาะเมื่อมีไม้ที่ขายในปีภาษีนี้ ไม่งั้นเป็นการ์ดว่างกวนสายตา */}
         {taxThisYear && (
-          <TouchableOpacity style={styles.goalCard} onPress={() => navigation.navigate('Tax')}>
+          <TouchableOpacity
+            style={[styles.goalCard, isDesktop && styles.cardGridItem]}
+            onPress={() => navigation.navigate('Tax')}
+          >
             <View style={styles.goalCardHeader}>
               <Text style={styles.goalCardTitle}>
                 <Ionicons name="receipt-outline" size={18} color={COLORS.primary} /> ภาษีจากกำไรที่ขาย ปี {currentTaxYear}
@@ -1151,8 +1227,67 @@ export default function PortfolioScreen() {
           </TouchableOpacity>
         )}
 
+        {/* ── การ์ดของที่อยากได้ (คิว 10 เท่า) ──
+            โชว์เฉพาะเมื่อมีของในคิวจริง — ยังไม่ตั้งก็ไม่ต้องมีการ์ดเปล่ามากินที่
+            (เข้าไปเพิ่มได้จากปุ่มของขวัญบนแถวปุ่มด้านบน) */}
+        {purchasePlan.pending.length > 0 && (
+          <TouchableOpacity
+            style={[styles.goalCard, isDesktop && styles.cardGridItem]}
+            onPress={() => navigation.navigate('PurchaseGoals')}
+          >
+            <View style={styles.goalCardHeader}>
+              <Text style={styles.goalCardTitle}>
+                <Ionicons name="gift-outline" size={18} color={COLORS.primary} /> ของที่อยากได้
+              </Text>
+              <Text style={styles.goalCardEdit}>
+                ปลดล็อก {purchasePlan.unlockedCount}/{purchasePlan.pending.length}
+              </Text>
+            </View>
+
+            {purchasePlan.nextUp ? (
+              <>
+                <View style={styles.goalCardTopRow}>
+                  <Text style={styles.goalCardSub} numberOfLines={1}>
+                    คิวถัดไป: {purchasePlan.nextUp.goal.name}
+                  </Text>
+                  <Text style={styles.goalCardSub}>
+                    {(purchasePlan.nextUp.progressRatio * 100).toFixed(0)}%
+                  </Text>
+                </View>
+                <View style={styles.goalTrack}>
+                  <View
+                    style={[
+                      styles.goalFill,
+                      {
+                        width: `${Math.max(0, Math.min(100, purchasePlan.nextUp.progressRatio * 100))}%`,
+                        backgroundColor: COLORS.primary,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.goalCardSub}>
+                  ต้องกำไร {purchasePlan.nextUp.goal.multiplier}× ของราคา{' '}
+                  {formatCurrency(purchasePlan.nextUp.requiredTHB)} · ขาดอีก{' '}
+                  {formatCurrency(purchasePlan.nextUp.remainingTHB)}
+                </Text>
+              </>
+            ) : (
+              <Text style={[styles.tpSubText, { color: COLORS.success }]}>
+                ปลดล็อกครบทุกชิ้นในคิวแล้ว 🎉 กดเข้าไปกด "ซื้อแล้ว" ได้เลย
+              </Text>
+            )}
+
+            <Text style={styles.tpSubText}>
+              นับจากกำไรที่ขายจริง {formatCurrency(purchasePlan.realizedProfitTHB)}
+              {purchasePlan.spentTHB > 0
+                ? ` — กันไว้ให้ของที่ซื้อแล้ว ${formatCurrency(purchasePlan.spentTHB)} เหลือให้คิว ${formatCurrency(purchasePlan.availableTHB)}`
+                : ' — กำไรลอยตัวไม่นับ'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* ── การ์ดเป้าหมายพอร์ตรวม ── */}
-        <View style={styles.goalCard}>
+        <View style={[styles.goalCard, isDesktop && styles.cardGridItem]}>
           <View style={styles.goalCardHeader}>
             <Text style={styles.goalCardTitle}>
               <Ionicons name="disc-outline" size={18} color={COLORS.primary} /> เป้าหมายพอร์ตรวม
@@ -1227,7 +1362,7 @@ export default function PortfolioScreen() {
             โชว์เฉพาะเมื่อมีการขายบันทึกไว้จริง — ยังไม่มีก็ไม่ต้องมีการ์ดเปล่ามากินที่
             (ปุ่ม "ย้อนคืน" อยู่ในการ์ดนี้ พอเริ่มบันทึกขาย การ์ดจะโผล่มาเอง) */}
         {realized.tradeCount > 0 && (
-          <View style={styles.goalCard}>
+          <View style={[styles.goalCard, isDesktop && styles.cardGridItem]}>
             <Text style={styles.goalCardTitle}>
               <Ionicons name="ribbon-outline" size={18} color={COLORS.primary} /> ผลงานจริง (ที่ขายแล้ว)
             </Text>
@@ -1284,6 +1419,16 @@ export default function PortfolioScreen() {
                   {realized.worstTrade.pnlPercent >= 0 ? '+' : ''}{realized.worstTrade.pnlPercent.toFixed(1)}%
                 </Text>
               )}
+
+              {/* ทบทวนจังหวะขาย — เทียบราคาที่ขายไปกับราคาวันนี้ ตอบว่าควรใช้กฎขายแบบไหน
+                  อยู่ในการ์ดนี้เพราะเป็นเรื่องเดียวกับ "ผลงานจริง" แค่มองอีกมุม */}
+              <TouchableOpacity
+                style={styles.detailToggleInline}
+                onPress={() => navigation.navigate('SellReview')}
+              >
+                <Ionicons name="analytics-outline" size={14} color={COLORS.primary} />
+                <Text style={styles.detailToggleText}> ทบทวนจังหวะขาย — ขายแล้วมันขึ้นต่อไหม</Text>
+              </TouchableOpacity>
 
               {/* ── รายดีล + ปุ่มย้อนคืน: กดขายผิด/กรอกเลขผิด ต้องกู้กลับได้ ── */}
               <TouchableOpacity
@@ -1352,7 +1497,7 @@ export default function PortfolioScreen() {
         {/* การ์ดนี้โชว์ตลอดถ้ามีของที่เช็คแท่งเทียนได้ (คริปโต/หุ้น) —
             เมื่อก่อนซ่อนทั้งการ์ดตอนไม่มีสัญญาณ ทำให้แยกไม่ออกว่า "เช็คแล้วไม่มี" หรือ "พัง/ไม่ได้เช็ค" */}
         {redCheckedCount > 0 && (
-          <View style={styles.losersCard}>
+          <View style={[styles.losersCard, isDesktop && styles.cardGridItem]}>
             <View style={styles.cardTitleRow}>
               <Ionicons name="warning" size={16} color={COLORS.error} />
               <Text style={styles.losersTitle}>ถึงคิวลงไม้ — แดงติดกันครบรอบ</Text>
@@ -1381,7 +1526,7 @@ export default function PortfolioScreen() {
         {/* ── การ์ด "เงินรอลงทุน" — อยู่ก่อนรายการลงทุน ──
             ต้องเห็นก่อนเลื่อนดูหุ้น: มีเงินพร้อมลงเท่าไหร่ / ลงได้ครั้งละเท่าไหร่ แล้วค่อยไปเลือกตัว
             (เดิมอยู่ท้ายสุดหลังรายการหุ้น ต้องเลื่อนผ่านทั้งพอร์ตก่อนจะเจอ) */}
-        <View style={styles.goalCard}>
+        <View style={[styles.goalCard, isDesktop && styles.cardGridItem]}>
           <View style={styles.goalCardHeader}>
             <Text style={styles.goalCardTitle}>
               <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> เงินรอลงทุน · แบ่งลงกี่ครั้ง
@@ -1475,6 +1620,8 @@ export default function PortfolioScreen() {
             </>
           )}
         </View>
+        </View>
+        {/* ── จบกริดการ์ดสรุป ── */}
 
         <View style={styles.listHeader}>
           <View style={styles.listHeaderRow}>
@@ -1641,17 +1788,23 @@ export default function PortfolioScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[
-        styles.innerContainer,
-        isDesktop && [styles.innerContainerDesktop, { maxWidth }],
-      ]}>
+      <View
+        style={styles.innerContainer}
+        // วัดความกว้างจริงของ pane (หลังหัก sidebar) — ค่าที่เดาไว้ตอน mount อาจคลาดถ้า
+        // sidebar เปลี่ยนความกว้างที่ breakpoint 1440 หรือหน้าต่างย่อ/ขยาย
+        onLayout={(e) => {
+          const w = e.nativeEvent.layout.width;
+          if (Math.abs(w - gridWidth) > 1) setGridWidth(w);
+        }}
+      >
         {isDesktop ? (
           <FlatList
             data={visibleInvestments}
             renderItem={renderInvestmentItem}
             keyExtractor={(item) => item.id}
-            numColumns={2}
-            key="desktop-2col"
+            numColumns={gridCols}
+            // FlatList ไม่รับการเปลี่ยน numColumns กลางทาง ต้องบังคับ remount ด้วย key
+            key={`desktop-${gridCols}col`}
             columnWrapperStyle={styles.flatListRow}
             style={styles.list}
             contentContainerStyle={styles.listContent}
@@ -1985,9 +2138,25 @@ const styles = StyleSheet.create({
   innerContainer: {
     flex: 1,
   },
-  innerContainerDesktop: {
-    alignSelf: 'center',
-    width: '100%',
+  // เดสก์ท็อปใช้ความกว้างเต็ม pane — ไม่มี maxWidth/alignSelf:'center' แล้ว
+  // ที่ว่างที่ได้เพิ่มไปโตเป็น "จำนวนคอลัมน์" ไม่ใช่ "การ์ดอ้วนขึ้น" (ดู gridCols)
+  cardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    gap: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  cardGridItem: {
+    // flexBasis เป็นตัวคุมว่าแถวหนึ่งจะวางได้กี่ใบ, flexGrow ให้ใบที่เหลือกินที่ว่างจนหมดแถว
+    flexBasis: CARD_GRID_BASIS,
+    flexGrow: 1,
+    // การ์ดมี TextInput/ข้อความยาว — ขาด minWidth:0 แล้ว flexShrink จะทำงานไม่ได้บนเว็บ
+    minWidth: 0,
+    // margin เดิมของการ์ดมาจาก goalCard/losersCard ทับด้วย gap ของกริดแทน
+    marginHorizontal: 0,
+    marginBottom: 0,
   },
   header: {
     backgroundColor: COLORS.primary,

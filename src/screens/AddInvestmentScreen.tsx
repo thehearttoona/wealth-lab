@@ -19,7 +19,6 @@ import { updateInvestmentPrice, searchCryptoList, CryptoSearchResult, searchStoc
 import { searchFundList, FundCatalogItem } from '../services/fundCatalog';
 import { COLORS } from '../utils/constants';
 import { notify } from '../utils/dialog';
-import { useResponsive } from '../utils/responsive';
 
 type AddInvestmentScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -28,7 +27,6 @@ type AddInvestmentScreenNavigationProp = NativeStackNavigationProp<
 type AddInvestmentScreenRouteProp = RouteProp<RootStackParamList, 'AddInvestment'>;
 
 export default function AddInvestmentScreen() {
-  const { isDesktop } = useResponsive();
   const navigation = useNavigation<AddInvestmentScreenNavigationProp>();
   const route = useRoute<AddInvestmentScreenRouteProp>();
   const { investment } = route.params || {};
@@ -265,7 +263,8 @@ export default function AddInvestmentScreen() {
   return (
     <ScrollView style={styles.container}>
       {/* ฟอร์มกรอกทีละช่อง — บนเดสก์ท็อปคุมไว้ 600px เท่ากับฟอร์ม AddExpense/AddInstallment */}
-      <View style={[styles.content, isDesktop && styles.contentDesktop]}>
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <View style={styles.content}>
         <Text style={styles.label}>ประเภทการลงทุน</Text>
         <ScrollView
           horizontal
@@ -673,11 +672,6 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
-  },
-  contentDesktop: {
-    maxWidth: 600,
-    width: '100%',
-    alignSelf: 'center',
   },
   // คำอธิบายกฎแท่งแดง — ต้องอ่านแล้วเห็นภาพทันทีว่าจะเตือนตอนไหน ไม่ต้องเดา
   redRuleHint: {

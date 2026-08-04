@@ -47,7 +47,7 @@ const INCOME_DAY_TEXT = '#136B47';
 
 export default function HomeScreen() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
-  const { isDesktop, maxWidth } = useResponsive();
+  const { isDesktop } = useResponsive();
   const insets = useSafeAreaInsets();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [weekTotal, setWeekTotal] = useState(0);
@@ -860,7 +860,8 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={isDesktop ? [styles.desktopInner, { maxWidth }] : undefined}>
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <View>
 
         {/* ── Header ── */}
         <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
@@ -1091,12 +1092,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     textTransform: 'uppercase',
     color: COLORS.textSecondary,
-  },
-
-  // ── Desktop wrapper ──
-  desktopInner: {
-    alignSelf: 'center' as const,
-    width: '100%',
   },
 
   // ── Desktop header (title + add button) ──

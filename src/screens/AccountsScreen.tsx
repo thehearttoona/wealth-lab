@@ -22,7 +22,6 @@ import { getCurrencies } from '../services/currencyStorage';
 import { getPlatforms } from '../services/platformStorage';
 import { COLORS, getCurrencySymbol, formatCurrency } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
-import { useResponsive } from '../utils/responsive';
 
 const roleLabel = (role: AccountRole) =>
   ACCOUNT_ROLES.find((r) => r.value === role)?.label || role;
@@ -31,7 +30,6 @@ const roleIcon = (role: AccountRole) =>
 
 export default function AccountsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { isDesktop, contentMaxWidth } = useResponsive();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -138,12 +136,8 @@ export default function AccountsScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView
-        contentContainerStyle={[
-          styles.listContent,
-          isDesktop && { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' as const },
-        ]}
-      >
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <ScrollView contentContainerStyle={styles.listContent}>
         <Text style={styles.intro}>
           แยกบัญชีตามหน้าที่ของเงิน — ใช้จ่าย / รอลงทุน / พักรายได้ เพื่อ import statement แยกบัญชี และไม่ให้เงินโอนระหว่างกันนับซ้ำ
         </Text>

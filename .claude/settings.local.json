@@ -111,7 +111,13 @@
       "Read(//c/Program Files \\\\\\(x86\\\\\\)/Google/Chrome/Application/**)",
       "Bash(npx --yes serve -l 4599 .)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:4599/)",
-      "Workflow(code-review)"
+      "Workflow(code-review)",
+      "PowerShell(Out-File *)",
+      "PowerShell(Get-Content *)",
+      "Bash(node check-queue.mjs)",
+      "Bash(node check-tax.mjs)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(node check-sellreview.mjs)"
     ]
   }
 }

@@ -18,7 +18,6 @@ import { saveIncome, updateIncome, deleteIncome, INCOME_CATEGORIES } from '../se
 import { setPendingReturnDate } from '../services/pendingNavigation';
 import { COLORS, formatCurrency, toChristianYear } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
-import { useResponsive } from '../utils/responsive';
 
 type AddIncomeNavProp = NativeStackNavigationProp<RootStackParamList, 'AddIncome'>;
 type AddIncomeRouteProp = RouteProp<RootStackParamList, 'AddIncome'>;
@@ -28,7 +27,6 @@ export default function AddIncomeScreen() {
   const route = useRoute<AddIncomeRouteProp>();
   console.log(route.params);
   const { income, date: paramDate } = route.params;
-  const { isDesktop } = useResponsive();
 
   const isEditing = !!income;
 
@@ -120,7 +118,8 @@ export default function AddIncomeScreen() {
 
   return (
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
-      <View style={isDesktop ? styles.desktopInner : undefined}>
+      {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
+      <View>
 
         {/* ── Header ── */}
         <View style={styles.header}>
@@ -250,11 +249,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
-  },
-  desktopInner: {
-    alignSelf: 'center' as const,
-    width: '100%',
-    maxWidth: 640,
   },
 
   // ── Header ──
