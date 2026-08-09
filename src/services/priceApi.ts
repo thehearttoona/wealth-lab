@@ -352,19 +352,33 @@ export interface RedStreakAlert {
   dropPercent: number;  // % ที่ลงตลอดสตรีค (open แท่งแรก → close แท่งล่าสุด, ค่าติดลบ) — count=0 → 0
   every: number;        // กฎที่ใช้: ครบทุก ๆ กี่แท่ง
   met: boolean;         // ครบรอบแล้วหรือยัง (count >= every และหารลงตัว)
+  // ── low ของแท่งแดงในสตรีค (เก่า→ใหม่) ──
+  // ไว้ดูว่า "ราคาลงไปแตะเท่าไหร่จริง" ไม่ใช่แค่ราคาปิด — ใช้ตั้งไม้/ตั้ง limit ได้
+  // ว่างเมื่อ API ไม่ได้ให้ low มา (แท่งบางแท่งของ Yahoo เป็น null ได้)
+  lows: number[];
+  lowest: number | null;      // ต่ำสุดของสตรีค = จุดต่ำสุดที่ราคาลงไปแตะ
+  lowCurrency: string | null; // สกุลเงินของ lows/lowest (แปลงแล้วถ้าส่ง opts.currency มา)
 }
 
 // นับ "แท่งแดงติดกันล่าสุด" (แท่งแดง = close < open) จากแท่งท้ายสุดไล่ย้อนขึ้นไป
 // แจ้งเตือนเฉพาะเมื่อจำนวนแท่งแดงติดกันครบทุก ๆ `every` แท่ง (every, 2×every, 3×every…)
 // ค่าเริ่มต้น every=2 → เตือนที่ 2/4/6 เลขคี่ไม่เตือน (กฎเดิมของแอป)
 // คืน % ที่ลงตลอดสตรีค (ค่าติดลบ) — ไม่เข้าเงื่อนไข → null
-function recentEvenRedStreak(opens: any[], closes: any[], every = 2): RedStreakAlert | null {
+function recentEvenRedStreak(
+  opens: any[],
+  closes: any[],
+  lows: any[] = [],
+  every = 2,
+  lowCurrency: string | null = null
+): RedStreakAlert | null {
   const step = Number.isFinite(every) && every >= 1 ? Math.floor(every) : 2;
-  const pairs: [number, number][] = [];
+  // [open, close, low] — low เป็น NaN ได้ (Yahoo คืน null บางแท่ง) แต่แท่งนั้นยังนับเป็นแดงได้ปกติ
+  const pairs: [number, number, number][] = [];
   for (let i = 0; i < opens.length; i++) {
     const o = parseFloat(opens[i]);
     const c = parseFloat(closes[i]);
-    if (!isNaN(o) && !isNaN(c)) pairs.push([o, c]);
+    const l = parseFloat(lows[i]);
+    if (!isNaN(o) && !isNaN(c)) pairs.push([o, c, l]);
   }
   // นับแท่งแดงติดกันจากท้ายสุด
   let streak = 0;
@@ -376,15 +390,25 @@ function recentEvenRedStreak(opens: any[], closes: any[], every = 2): RedStreakA
   // คืนสถานะเสมอ แม้ยังไม่ครบรอบ — หน้าจอต้องบอกได้ว่า "กฎมีผลอยู่ แต่ยังไม่ถึงคิว"
   // ไม่งั้นตั้งกฎแล้วจอเงียบ แยกไม่ออกระหว่าง "ยังไม่ครบ" กับ "ตั้งไม่ติด"
   const met = streak >= step && streak % step === 0;
-  if (streak === 0 || pairs.length === 0) return { count: 0, dropPercent: 0, every: step, met: false };
+  if (streak === 0 || pairs.length === 0) {
+    return { count: 0, dropPercent: 0, every: step, met: false, lows: [], lowest: null, lowCurrency };
+  }
   const firstIdx = pairs.length - streak;
   const startOpen = pairs[firstIdx][0];
   const lastClose = pairs[pairs.length - 1][1];
+  // เอาแค่ low ของแท่งในสตรีค (ไม่ใช่ทุกแท่งที่ดึงมา) — ต้องตรงกับแท่งที่ทำให้เกิดสัญญาณ
+  const streakLows = pairs
+    .slice(firstIdx)
+    .map((p) => p[2])
+    .filter((l) => Number.isFinite(l) && l > 0);
   return {
     count: streak,
     dropPercent: ((lastClose - startOpen) / startOpen) * 100,
     every: step,
     met,
+    lows: streakLows,
+    lowest: streakLows.length > 0 ? Math.min(...streakLows) : null,
+    lowCurrency,
   };
 }
 
@@ -412,6 +436,24 @@ const inCurrentPeriod = (ms: number, interval: string): boolean =>
 export interface RedStreakOptions {
   interval?: string; // 'day' | 'week' | 'month' (ไม่ระบุ = day)
   every?: number;    // เตือนทุก ๆ N แท่ง (ไม่ระบุ = 2)
+  currency?: string; // สกุลเงินที่อยากได้ค่า low (ไม่ระบุ = ตามที่ API คืนมา)
+}
+
+// แปลง low ของสตรีคเป็นสกุลเงินปลายทาง — ใช้เรตสด (ชุดเดียวกับที่แปลงราคาปัจจุบัน)
+// เพื่อให้ low กับ "ราคาปัจจุบัน" บนการ์ดเทียบกันได้ ไม่ใช่คนละสกุล
+async function convertStreakLows(
+  alert: RedStreakAlert | null,
+  from: string | null,
+  to?: string
+): Promise<RedStreakAlert | null> {
+  if (!alert) return null;
+  if (!from || !to || from === to || alert.lows.length === 0) return alert;
+  try {
+    const lows = await Promise.all(alert.lows.map((l) => convertCurrency(l, from, to)));
+    return { ...alert, lows, lowest: Math.min(...lows), lowCurrency: to };
+  } catch {
+    return alert; // แปลงไม่ได้ก็คืนค่าดิบพร้อมสกุลต้นทาง ดีกว่าโชว์เลขผิดสกุล
+  }
 }
 
 // คืนข้อมูลแดงติดกันครบรอบในช่วงล่าสุด, null = ไม่เข้าเงื่อนไข/เช็คไม่ได้
@@ -434,7 +476,15 @@ export async function getTwoRedDays(
       // (ใช้ได้กับทุกกรอบเวลา — สัปดาห์/เดือนที่ยังไม่จบก็ถูกตัดด้วยเงื่อนไขเดียวกัน)
       const now = Date.now();
       const closed = data.filter((k) => Number(k[6]) <= now);
-      return recentEvenRedStreak(closed.map((k) => k[1]), closed.map((k) => k[4]), every);
+      // k[3] = low ของแท่ง — คู่เทรดเป็น USDT ถือเป็น USD แล้วค่อยแปลงตามสกุลของรายการ
+      const alert = recentEvenRedStreak(
+        closed.map((k) => k[1]),
+        closed.map((k) => k[4]),
+        closed.map((k) => k[3]),
+        every,
+        'USD'
+      );
+      return convertStreakLows(alert, 'USD', opts.currency);
     }
     if (type === 'stock_th' || type === 'stock_foreign') {
       const attempts = symbol.includes('.')
@@ -452,6 +502,7 @@ export async function getTwoRedDays(
         if (!q?.open || !q?.close) continue;
         let opens: any[] = q.open;
         let closes: any[] = q.close;
+        let lows: any[] = q.low || [];
         // ตัด "แท่งที่ยังไม่ปิด" ออกก่อนนับเสมอ — วิธีเช็คต่างกันตามกรอบเวลา
         const ts: number[] | undefined = result?.timestamp;
         const lastTs = ts?.[ts.length - 1];
@@ -470,8 +521,14 @@ export async function getTwoRedDays(
         if (dropLast) {
           opens = opens.slice(0, -1);
           closes = closes.slice(0, -1);
+          lows = lows.slice(0, -1);
         }
-        return recentEvenRedStreak(opens, closes, every);
+        // สกุลเงินของแท่งเทียน = สกุลของตลาด (SET → THB, NYSE → USD) ไม่ใช่สกุลที่ผู้ใช้ตั้งไว้
+        const srcCurrency: string | null = result?.meta?.currency
+          ? String(result.meta.currency).toUpperCase()
+          : null;
+        const alert = recentEvenRedStreak(opens, closes, lows, every, srcCurrency);
+        return convertStreakLows(alert, srcCurrency, opts.currency);
       }
       return null;
     }

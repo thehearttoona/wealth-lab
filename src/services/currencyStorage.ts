@@ -1,6 +1,7 @@
 import { supabase, getUserId } from './supabase';
 import { UserCurrency, DEFAULT_CURRENCIES } from '../types/investment';
 import { setCurrencyCatalog } from '../utils/constants';
+import { logActivity } from './activityLogStorage';
 
 const mapFromDb = (row: any): UserCurrency => ({
   id: row.id,
@@ -39,20 +40,52 @@ export const saveCurrency = async (c: UserCurrency): Promise<void> => {
   const userId = await getUserId();
   const { error } = await supabase.from('user_currencies').insert(mapToDb(c, userId));
   if (error) throw error;
+  await logActivity({
+    entity: 'currency',
+    action: 'create',
+    entityId: c.id,
+    summary: `เพิ่มสกุลเงิน ${c.code} เรต ${c.rateToTHB ?? '-'} บาท`,
+    payload: c,
+  });
 };
 
 export const updateCurrency = async (c: UserCurrency): Promise<void> => {
   const userId = await getUserId();
+  // เรตที่ตั้งเองมีผลกับ "ทุกยอดรวมในแอป" (convertToTHB) — เปลี่ยนเรตแล้วมูลค่าพอร์ตย้อนหลัง
+  // ก็เปลี่ยนตามทันที ต้องรู้ว่าเคยใช้เรตอะไรอยู่ตอนไหน ไม่งั้นเทียบตัวเลขข้ามวันไม่ได้
+  let before: UserCurrency | null = null;
+  try {
+    const { data } = await supabase.from('user_currencies').select('*').eq('id', c.id).maybeSingle();
+    before = data ? mapFromDb(data) : null;
+  } catch {
+    // อ่านไม่ได้ก็เขียนต่อ
+  }
   const { error } = await supabase
     .from('user_currencies')
     .update(mapToDb(c, userId))
     .eq('id', c.id);
   if (error) throw error;
+  await logActivity({
+    entity: 'currency',
+    action: 'update',
+    entityId: c.id,
+    summary:
+      before && before.rateToTHB !== c.rateToTHB
+        ? `แก้เรต ${c.code}: ${before.rateToTHB ?? '-'} → ${c.rateToTHB ?? '-'} บาท`
+        : `แก้สกุลเงิน ${c.code}`,
+    payload: { before, after: c },
+  });
 };
 
 export const deleteCurrency = async (id: string): Promise<void> => {
   const { error } = await supabase.from('user_currencies').delete().eq('id', id);
   if (error) throw error;
+  await logActivity({
+    entity: 'currency',
+    action: 'delete',
+    entityId: id,
+    summary: `ลบสกุลเงิน ${id}`,
+  });
 };
 
 // เติมค่าเริ่มต้นให้ครั้งแรก (THB/USD/EUR/JPY/CNY) — เรียกเมื่อรายการยังว่าง

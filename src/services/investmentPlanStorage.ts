@@ -1,5 +1,6 @@
 import { supabase, getUserId } from './supabase';
 import { convertToTHB } from '../utils/constants';
+import { logActivity } from './activityLogStorage';
 
 // เงินรอลงทุน 1 รายการ — จดแยกตามแหล่งเงิน/โบรกได้ (เช่น "Dime 5,000", "โบนัส 20,000")
 export interface DryPowderItem {
@@ -53,6 +54,14 @@ const OPTIONAL_COLUMNS = ['dry_powder_items', 'dry_powder_as_of', 'dry_powder'] 
 
 export const saveInvestmentPlan = async (plan: InvestmentPlan): Promise<void> => {
   const userId = await getUserId();
+  // singleton ต่อ user (upsert) — ยอดเงินรอลงทุนก้อนเดิมถูกทับหายทุกครั้งที่จดใหม่
+  // log ไว้จะได้เห็นว่าเติมเงินรอลงทุนเข้ามาเมื่อไหร่ ครั้งละเท่าไหร่ (ใช้คิดจังหวะ DCA จริง)
+  let before: InvestmentPlan | null = null;
+  try {
+    before = await getInvestmentPlan();
+  } catch {
+    // อ่านไม่ได้ก็เขียนต่อ
+  }
   let payload: Record<string, any> = {
     user_id: userId,
     salary_set_aside_percent: plan.setAsidePercent,
@@ -63,9 +72,23 @@ export const saveInvestmentPlan = async (plan: InvestmentPlan): Promise<void> =>
     dry_powder_items: plan.dryPowderItems ?? null,
   };
 
+  const logPlan = () =>
+    logActivity({
+      entity: 'investment_plan',
+      action: before ? 'update' : 'create',
+      summary:
+        before && before.dryPowder !== plan.dryPowder
+          ? `แก้เงินรอลงทุน ${before.dryPowder ?? 0} → ${plan.dryPowder ?? 0}`
+          : `บันทึกแผนลงทุน (กัน ${plan.setAsidePercent}% · ${plan.dcaRounds} ครั้ง/เดือน)`,
+      payload: { before, after: plan },
+    });
+
   for (let attempt = 0; attempt <= OPTIONAL_COLUMNS.length; attempt++) {
     const { error } = await supabase.from('investment_plan').upsert(payload);
-    if (!error) return;
+    if (!error) {
+      await logPlan();
+      return;
+    }
     const missing = OPTIONAL_COLUMNS.find(
       (c) => c in payload && new RegExp(c, 'i').test(error.message || '')
     );
@@ -79,6 +102,18 @@ export const saveInvestmentPlan = async (plan: InvestmentPlan): Promise<void> =>
 
 export const deleteInvestmentPlan = async (): Promise<void> => {
   const userId = await getUserId();
+  let before: InvestmentPlan | null = null;
+  try {
+    before = await getInvestmentPlan();
+  } catch {
+    // อ่านไม่ได้ก็ลบต่อ
+  }
   const { error } = await supabase.from('investment_plan').delete().eq('user_id', userId);
   if (error) throw error;
+  await logActivity({
+    entity: 'investment_plan',
+    action: 'delete',
+    summary: 'ลบแผนลงทุน',
+    payload: before ?? null,
+  });
 };

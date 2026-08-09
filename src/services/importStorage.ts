@@ -1,4 +1,5 @@
 import { supabase, getUserId } from './supabase';
+import { logActivity } from './activityLogStorage';
 
 export type ImportRowType = 'income' | 'expense' | 'transfer' | 'invest';
 
@@ -104,6 +105,15 @@ export const saveImportRows = async (rows: ImportRow[], accountId: string): Prom
     const { error } = await supabase.from('account_transfers').insert(transfers);
     if (error) throw error;
   }
+
+  // 1 แถวต่อการนำเข้า 1 ครั้ง — ไม่ log ต่อรายการ ไม่งั้นสเตตเมนต์เดือนเดียวท่วมไทม์ไลน์
+  await logActivity({
+    entity: 'import',
+    action: 'create',
+    entityId: accountId ?? undefined,
+    summary: `นำเข้าสเตตเมนต์ ${fresh.length} รายการ (รายรับ ${incomes.length} · รายจ่าย ${expenses.length} · โอน/ลงทุน ${transfers.length}) ข้ามซ้ำ ${skipped}`,
+    payload: { accountId: accountId ?? null, saved: fresh.length, skipped, rows: fresh },
+  });
 
   return { saved: fresh.length, skipped };
 };

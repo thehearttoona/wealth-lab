@@ -1,5 +1,6 @@
 import { RealizedTrade } from '../types/investment';
 import { supabase, getUserId } from './supabase';
+import { logActivity } from './activityLogStorage';
 
 // เก็บ "การขายที่เกิดขึ้นจริง" — ตารางแยกจาก investments โดยตั้งใจ
 // เพราะพอขายหมดแล้วรายการลงทุนจะถูกลบ แต่ประวัติผลตอบแทนจริงต้องอยู่ต่อ
@@ -50,9 +51,23 @@ export const saveRealizedTrade = async (trade: RealizedTrade): Promise<void> => 
   if (trade.platform) payload.platform = trade.platform;
   if (trade.sourceInvestment) payload.source_investment = trade.sourceInvestment;
 
+  const logSale = () =>
+    logActivity({
+      entity: 'realized_trade',
+      action: 'create',
+      entityId: trade.id,
+      summary:
+        `ขาย ${trade.symbol} ${trade.quantity} หน่วย @ ${trade.sellPrice} ${trade.currency}` +
+        ` (ทุน ${trade.buyPrice})` + (trade.platform ? ` · ${trade.platform}` : ''),
+      payload: trade,
+    });
+
   for (let attempt = 0; attempt <= OPTIONAL_COLUMNS.length; attempt++) {
     const { error } = await supabase.from('realized_trades').insert(payload);
-    if (!error) return;
+    if (!error) {
+      await logSale();
+      return;
+    }
     const missing = OPTIONAL_COLUMNS.find(
       (c) => c in payload && new RegExp(c, 'i').test(error.message || '')
     );
@@ -74,6 +89,22 @@ export const getRealizedTrades = async (): Promise<RealizedTrade[]> => {
 };
 
 export const deleteRealizedTrade = async (id: string): Promise<void> => {
+  // อ่านก่อนลบ — เส้นทางนี้คือ "ย้อนคืนการขาย" ต้องเห็นในไทม์ไลน์ว่าเคยขายแล้วถอนคืน
+  // ไม่ใช่หายไปเงียบ ๆ เหมือนไม่เคยขาย
+  let before: RealizedTrade | null = null;
+  try {
+    const { data } = await supabase.from('realized_trades').select('*').eq('id', id).maybeSingle();
+    before = data ? mapFromDb(data) : null;
+  } catch {
+    // อ่านไม่ได้ก็ลบต่อ ห้ามขวาง
+  }
   const { error } = await supabase.from('realized_trades').delete().eq('id', id);
   if (error) throw error;
+  await logActivity({
+    entity: 'realized_trade',
+    action: 'delete',
+    entityId: id,
+    summary: before ? `ย้อนคืนการขาย ${before.symbol} ${before.quantity} หน่วย` : `ย้อนคืนการขาย ${id}`,
+    payload: before ?? { id },
+  });
 };

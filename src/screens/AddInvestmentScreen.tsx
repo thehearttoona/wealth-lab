@@ -674,11 +674,13 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   // คำอธิบายกฎแท่งแดง — ต้องอ่านแล้วเห็นภาพทันทีว่าจะเตือนตอนไหน ไม่ต้องเดา
+  // marginTop ต้องเป็นบวก: styles.input ไม่มี marginBottom เลย ค่าติดลบทำให้ข้อความ
+  // ทับกล่อง input ที่อยู่เหนือมันขึ้นมา (เจอบนเว็บจริง)
   redRuleHint: {
     fontSize: 11,
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
-    marginTop: -8,
+    marginTop: 8,
     marginBottom: 12,
     lineHeight: 18,
   },

@@ -1,6 +1,23 @@
 import { Investment, Transaction, PortfolioSummary, InvestmentType } from '../types/investment';
 import { convertToTHB } from '../utils/constants';
 import { supabase, getUserId } from './supabase';
+import { logActivity, logActivityBatch } from './activityLogStorage';
+
+// ข้อความสรุปสั้น ๆ ของไม้หนึ่ง — เก็บไว้ใน log เพื่ออ่านไทม์ไลน์ได้โดยไม่ต้องแกะ payload
+const investSummary = (inv: Investment): string =>
+  `${inv.symbol || inv.name} ${inv.quantity} หน่วย @ ${inv.buyPrice} ${inv.currency || 'THB'}` +
+  (inv.platform ? ` · ${inv.platform}` : '');
+
+// ดึงแถวก่อนลบ เพื่อให้ log เก็บของที่กำลังจะหายไปได้ (ลบแล้วไม่มีทางย้อนดูอีก)
+// best-effort: อ่านไม่ได้ก็ปล่อยผ่าน ห้ามขวางการลบ
+const fetchInvestmentsForLog = async (ids: string[]): Promise<Investment[]> => {
+  try {
+    const { data } = await supabase.from('investments').select('*').in('id', ids);
+    return (data || []).map(mapInvestmentFromDb);
+  } catch {
+    return [];
+  }
+};
 
 const mapInvestmentFromDb = (row: any): Investment => ({
   id: row.id,
@@ -109,6 +126,14 @@ export const saveInvestment = async (investment: Investment): Promise<void> => {
   await withOptionalColumnFallback(mapInvestmentToDb(investment, userId), (p) =>
     supabase.from('investments').insert(p)
   );
+  // log หลังเขียนสำเร็จเท่านั้น — ไม่งั้นจะมีเหตุการณ์ที่ไม่ได้เกิดขึ้นจริงอยู่ในไทม์ไลน์
+  await logActivity({
+    entity: 'investment',
+    action: 'create',
+    entityId: investment.id,
+    summary: `ซื้อ ${investSummary(investment)}`,
+    payload: investment,
+  });
 };
 
 export const getInvestments = async (): Promise<Investment[]> => {
@@ -122,9 +147,19 @@ export const getInvestments = async (): Promise<Investment[]> => {
 
 export const updateInvestment = async (investment: Investment): Promise<void> => {
   const userId = await getUserId();
+  // อ่านค่าเดิมไว้ก่อนทับ — จุดสำคัญของ log: ต้องรู้ว่า "แก้จากอะไรเป็นอะไร"
+  // ไม่งั้นการแก้ราคาซื้อย้อนหลังจะดูเหมือนเป็นราคาที่ซื้อมาจริงตั้งแต่แรก
+  const [before] = await fetchInvestmentsForLog([investment.id]);
   await withOptionalColumnFallback(mapInvestmentToDb(investment, userId), (p) =>
     supabase.from('investments').update(p).eq('id', investment.id)
   );
+  await logActivity({
+    entity: 'investment',
+    action: 'update',
+    entityId: investment.id,
+    summary: `แก้ไข ${investSummary(investment)}`,
+    payload: { before: before ?? null, after: investment },
+  });
 };
 
 // อัปเดตเฉพาะ "ราคาปัจจุบัน" ของหลายรายการ — ใช้กับปุ่มรีเฟรชและ auto refresh ทุก 5 นาที
@@ -142,6 +177,8 @@ export const updateInvestmentPrices = async (
   );
   const failed = results.find((r) => r.error);
   if (failed?.error) throw failed.error;
+  // จงใจไม่ log ที่นี่ — auto refresh ทุก 5 นาที × ทุกรายการ จะกลายเป็นขยะท่วมตาราง
+  // (ดูเหตุผลเต็มใน activityLogStorage.ts)
 };
 
 // เพิ่มหลายรายการพร้อมกัน (bulk insert) — ใช้ในหน้า "จัดการตามแพลตฟอร์ม"
@@ -152,28 +189,65 @@ export const saveInvestments = async (investments: Investment[]): Promise<void> 
     investments.map((inv) => mapInvestmentToDb(inv, userId)) as Record<string, any>[],
     (p) => supabase.from('investments').insert(p)
   );
+  await logActivityBatch(
+    investments.map((inv) => ({
+      entity: 'investment' as const,
+      action: 'create' as const,
+      entityId: inv.id,
+      summary: `ซื้อ ${investSummary(inv)}`,
+      payload: inv,
+    }))
+  );
 };
 
 // เปลี่ยน platform ของหลายรายการพร้อมกัน (bulk update) — RLS กรองให้เฉพาะของ user เองอยู่แล้ว
 export const updateInvestmentsPlatform = async (ids: string[], platform: string | null): Promise<void> => {
   if (ids.length === 0) return;
+  const before = await fetchInvestmentsForLog(ids);
   const { error } = await supabase
     .from('investments')
     .update({ platform: platform || null })
     .in('id', ids);
   if (error) throw error;
+  await logActivityBatch(
+    ids.map((id) => {
+      const prev = before.find((inv) => inv.id === id);
+      return {
+        entity: 'investment' as const,
+        action: 'update' as const,
+        entityId: id,
+        summary: `ย้ายแพลตฟอร์ม ${prev?.symbol || id}: ${prev?.platform || 'ไม่ระบุ'} → ${platform || 'ไม่ระบุ'}`,
+        payload: { field: 'platform', before: prev?.platform ?? null, after: platform ?? null },
+      };
+    })
+  );
 };
 
 // ลบหลายรายการพร้อมกัน (ลบ transactions ที่ผูกอยู่ก่อน) — bulk delete
 export const deleteInvestments = async (ids: string[]): Promise<void> => {
   if (ids.length === 0) return;
+  // อ่านก่อนลบ: หลังลบข้อมูลหายจาก DB ถ้าไม่เก็บตอนนี้ก็ไม่มีทางรู้ว่าเคยมีอะไร
+  const before = await fetchInvestmentsForLog(ids);
   const { error: txError } = await supabase.from('transactions').delete().in('investment_id', ids);
   if (txError) throw txError;
   const { error } = await supabase.from('investments').delete().in('id', ids);
   if (error) throw error;
+  await logActivityBatch(
+    ids.map((id) => {
+      const prev = before.find((inv) => inv.id === id);
+      return {
+        entity: 'investment' as const,
+        action: 'delete' as const,
+        entityId: id,
+        summary: `ลบ ${prev ? investSummary(prev) : id}`,
+        payload: prev ?? { id },
+      };
+    })
+  );
 };
 
 export const deleteInvestment = async (id: string): Promise<void> => {
+  const [before] = await fetchInvestmentsForLog([id]);
   const { error: txError } = await supabase
     .from('transactions')
     .delete()
@@ -182,6 +256,13 @@ export const deleteInvestment = async (id: string): Promise<void> => {
 
   const { error } = await supabase.from('investments').delete().eq('id', id);
   if (error) throw error;
+  await logActivity({
+    entity: 'investment',
+    action: 'delete',
+    entityId: id,
+    summary: `ลบ ${before ? investSummary(before) : id}`,
+    payload: before ?? { id },
+  });
 };
 
 // Transactions

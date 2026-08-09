@@ -117,7 +117,17 @@
       "Bash(node check-queue.mjs)",
       "Bash(node check-tax.mjs)",
       "Bash(echo \"exit=$?\")",
-      "Bash(node check-sellreview.mjs)"
+      "Bash(node check-sellreview.mjs)",
+      "Bash(node -e \"const f=require\\('./public/funds.json'\\);console.log\\('entries',f.length\\);console.log\\(JSON.stringify\\(f[0]\\)\\)\")",
+      "Bash(echo \"EXIT=$?\")",
+      "Read(//c/Users/narin/.claude/agents/**)",
+      "Read(//c/Users/narin/.claude/**)",
+      "WebSearch",
+      "WebFetch(domain:api-docs.innovestxonline.com)",
+      "WebFetch(domain:developer.settrade.com)",
+      "WebFetch(domain:www.binance.th)",
+      "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 40)",
+      "Bash(node *)"
     ]
   }
 }

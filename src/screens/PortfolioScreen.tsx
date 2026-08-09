@@ -87,6 +87,69 @@ const GRID_MAX_COLS = 6;
 // การ์ดสรุปด้านหัว (เป้าหมาย/ภาษี/ผลงานจริง/เงินรอลงทุน) — กว้างกว่าการ์ดรายการเพราะมี KPI 3 ช่อง
 const CARD_GRID_BASIS = 520;
 
+// ── เครื่องหมายแพลตฟอร์มมุมขวาบนของการ์ด ──
+// ไม่ได้ดึงโลโก้จริงจากเน็ต: ชื่อแพลตฟอร์มเป็นข้อความที่ผู้ใช้พิมพ์เองได้อิสระ (user_platforms)
+// จับคู่กับโดเมนไม่ได้ทุกตัว และการยิงขอ favicon ก็คือส่งชื่อแพลตฟอร์มที่เราถือออกไปนอกแอป
+// จึงทำเป็นตัวย่อ + สีประจำแบรนด์ในเครื่อง ทำงานออฟไลน์ ไม่มีรูปแตก
+const PLATFORM_BRANDS: { keys: string[]; short: string; color: string }[] = [
+  { keys: ['binance'], short: 'BN', color: '#F0B90B' },
+  { keys: ['bitkub'], short: 'BK', color: '#16A34A' },
+  { keys: ['bybit'], short: 'BY', color: '#F7A600' },
+  { keys: ['okx', 'okex'], short: 'OK', color: '#2B2B2B' },
+  { keys: ['gate'], short: 'GT', color: '#2354E6' },
+  { keys: ['dime'], short: 'DM', color: '#00C48C' },
+  { keys: ['innovestx', 'innovest', 'scbs'], short: 'IX', color: '#4B2E83' },
+  { keys: ['liberator'], short: 'LB', color: '#111827' },
+  { keys: ['settrade'], short: 'ST', color: '#0F5AA8' },
+  { keys: ['webull'], short: 'WB', color: '#1F6FEB' },
+  { keys: ['interactive', 'ibkr'], short: 'IB', color: '#D4212A' },
+  { keys: ['kbank', 'กสิกร', 'k-my', 'kmy'], short: 'KB', color: '#0B8E36' },
+  { keys: ['scb', 'ไทยพาณิชย์'], short: 'SC', color: '#4B2E83' },
+  { keys: ['krungsri', 'กรุงศรี'], short: 'KS', color: '#A28C57' },
+  { keys: ['ktb', 'krungthai', 'กรุงไทย'], short: 'KT', color: '#00A0E9' },
+  { keys: ['bualuang', 'bbl', 'บัวหลวง'], short: 'BL', color: '#1A4C8B' },
+  { keys: ['finnomena'], short: 'FN', color: '#1F7A5C' },
+  { keys: ['ทอง', 'gold', 'ห้างทอง', 'ausiris', 'ylg'], short: 'AU', color: '#B8860B' },
+];
+
+// เทียบ "ต้องโตอีกกี่ %" กับ "ที่ทำมาได้แล้วกี่ %" → เป้านี้ไกลหรือใกล้เมื่อเทียบกับฝีมือจริง
+// นี่คือข้อมูลใหม่จริง ๆ ของบรรทัดนี้ (จำนวนเงิน/% ที่ต้องโต บรรทัดบนบอกไปแล้ว)
+// ไม่พูดเป็น "อีกกี่รอบ" เพราะ 0.5 รอบ ไม่มีใครนึกภาพออก
+const compareToTrackRecord = (needPercent: number, donePercent: number): string => {
+  const ratio = needPercent / donePercent;
+  if (ratio <= 0.55) return 'ยังไม่ถึงครึ่งของที่ทำมาได้ — เป้าอยู่ในระยะที่เคยทำได้แล้ว';
+  if (ratio <= 1.1) return 'ประมาณเท่ากับที่ทำมาได้ — เป้าอยู่ในระยะที่เคยทำได้แล้ว';
+  if (ratio <= 2.5) return `มากกว่าที่ทำมาได้ ~${ratio.toFixed(1)} เท่า`;
+  return `มากกว่าที่ทำมาได้ ~${Math.round(ratio)} เท่า — เป้านี้ต้องใช้เวลาอีกพอตัว`;
+};
+
+// ช่วงเวลาเป็นข้อความไทย — ต่ำกว่า 1 ปีพูดเป็นเดือน เกินนั้นพูดเป็นปี (+เศษเดือน)
+// "18 เดือน" อ่านแล้วต้องหารในหัว "1 ปี 6 เดือน" เห็นภาพทันที
+const formatMonthsSpan = (months: number): string => {
+  const m = Math.round(months);
+  if (m < 12) return `${m} เดือน`;
+  const years = Math.floor(m / 12);
+  const rest = m % 12;
+  return rest === 0 ? `${years} ปี` : `${years} ปี ${rest} เดือน`;
+};
+
+// สีสำรองสำหรับแพลตฟอร์มที่ไม่รู้จัก — เลือกจากชื่อแบบคงที่ ชื่อเดิมได้สีเดิมทุกครั้ง
+const PLATFORM_FALLBACK_COLORS = ['#5B6B8C', '#7A5C8E', '#3F7C6A', '#8C6239', '#4A6F8A', '#7C5A5A'];
+
+const platformMark = (name: string): { short: string; color: string } => {
+  const lower = name.trim().toLowerCase();
+  const hit = PLATFORM_BRANDS.find((b) => b.keys.some((k) => lower.includes(k)));
+  if (hit) return { short: hit.short, color: hit.color };
+  // ตัวย่อ: อักษรแรกของสองคำแรก (ชื่อไทยคำเดียวก็เอา 2 ตัวแรก) — ต้องได้อะไรออกมาเสมอ
+  const words = name.trim().split(/[\s\-_/·•]+/).filter(Boolean);
+  const short = (
+    words.length >= 2 ? words[0][0] + words[1][0] : name.trim().slice(0, 2)
+  ).toUpperCase();
+  let hash = 0;
+  for (let i = 0; i < lower.length; i++) hash = (hash * 31 + lower.charCodeAt(i)) % 100000;
+  return { short, color: PLATFORM_FALLBACK_COLORS[hash % PLATFORM_FALLBACK_COLORS.length] };
+};
+
 export default function PortfolioScreen() {
   const navigation = useNavigation<PortfolioScreenNavigationProp>();
   const { isDesktop, width: windowWidth, sidebarWidth } = useResponsive();
@@ -157,6 +220,11 @@ export default function PortfolioScreen() {
       every: number;
       met: boolean;          // ครบรอบแล้วหรือยัง — ยังไม่ครบก็เก็บไว้ เพื่อโชว์ความคืบหน้าที่การ์ดรายตัว
       custom: boolean;       // ตั้งกฎเองไว้ไหม (ไม่ได้ใช้ค่าเริ่มต้น) — ใช้ตัดสินว่าจะโชว์บรรทัดกฎไหม
+      // low ของแท่งแดงในสตรีค (เก่า→ใหม่) + ต่ำสุด — ราคาที่ลงไปแตะจริง ใช้ตั้งไม้/ตั้ง limit
+      lows: number[];
+      lowest: number | null;
+      lowCurrency: string | null; // สกุลที่แปลงมาแล้ว (null = API ไม่บอกสกุล) — ใช้ตอน format
+      currency: string;           // สกุลของรายการ — ใช้เป็น fallback ตอน API ไม่บอกสกุลของแท่ง
     }[]
   >([]);
   // เช็คเสร็จหรือยัง — ต้องบอกให้รู้ว่า "เช็คแล้วไม่มี" ต่างจาก "ยังไม่ได้เช็ค/เช็คไม่ได้"
@@ -241,6 +309,8 @@ export default function PortfolioScreen() {
         alert: await getTwoRedDays(i.type, i.symbol, {
           interval: i.redInterval || DEFAULT_RED_INTERVAL,
           every: i.redEvery || DEFAULT_RED_EVERY,
+          // ขอ low เป็นสกุลเดียวกับที่การ์ดโชว์ราคา ไม่งั้นเทียบกับ "ราคาปัจจุบัน" ไม่ได้
+          currency: i.currency,
         }),
       }))
     )
@@ -259,6 +329,11 @@ export default function PortfolioScreen() {
               every: r.alert!.every,
               met: r.alert!.met,
               custom: !!r.inv.redInterval || !!r.inv.redEvery,
+              lows: r.alert!.lows,
+              lowest: r.alert!.lowest,
+              // แปลงแล้วก็เป็นสกุลของรายการ, แปลงไม่ได้ก็เป็นสกุลต้นทางที่ API บอก
+              lowCurrency: r.alert!.lowCurrency,
+              currency: r.inv.currency || 'THB',
             }))
             // เรียงจากลบเยอะสุด → น้อยสุด (dropPercent เป็นค่าลบ)
             .sort((a, b) => a.dropPercent - b.dropPercent)
@@ -804,6 +879,23 @@ export default function PortfolioScreen() {
   const redUnit = (interval: RedInterval): string =>
     RED_INTERVALS.find((r) => r.value === interval)?.unit ?? 'วัน';
 
+  // ── ยอด LOW ของแท่งแดงในสตรีค ──
+  // ราคาปิดบอกแค่ว่าแท่งแดง แต่ราคาที่ "ลงไปแตะจริง" คือ low — ใช้ตั้งไม้/ตั้ง limit ได้
+  // โชว์ท้ายสุด 3 แท่ง (เก่า→ใหม่) กันบรรทัดยาวตอนสตรีค 6-8 แท่ง แล้วต่อด้วยต่ำสุดจริงของทั้งสตรีค
+  const redLowText = (a: {
+    lows: number[];
+    lowest: number | null;
+    lowCurrency: string | null;
+    currency: string;
+  }): string | null => {
+    if (a.lowest == null || a.lows.length === 0) return null;
+    const cur = a.lowCurrency || a.currency;
+    const shown = a.lows.slice(-3);
+    const list = shown.map((l) => formatCurrencyWithType(l, cur)).join(' · ');
+    if (shown.length === a.lows.length) return `LOW แท่งแดง: ${list}`;
+    return `LOW แท่งแดง: … ${list} · ต่ำสุด ${formatCurrencyWithType(a.lowest, cur)}`;
+  };
+
   const renderInvestmentItem = ({ item }: { item: Investment }) => {
     const { currentPriceNative, value, profit, profitPercent } = calcItemStats(item);
     const isProfit = profit >= 0;
@@ -811,6 +903,10 @@ export default function PortfolioScreen() {
     const growth = getHoldingAnnualGrowth(item.buyDate, item.buyPrice, currentPriceNative);
     // แดงติดกันครบคู่ = ถึงคิวลงไม้ตามกฎ "ลงทุก 2 แท่งแดง" — ต้องเห็นที่ตัวหุ้น ไม่ใช่แค่การ์ดสรุป
     const redAlert = redAlertByKey.get(`${item.type}:${item.symbol}`);
+    // บรรทัดรอง = ชื่อเต็มเท่านั้น (แพลตฟอร์มย้ายไปมุมขวาบนแล้ว)
+    // ไม่มีตัวย่อ → ชื่อเต็มขึ้นไปเป็นบรรทัดหลัก บรรทัดรองก็ไม่ต้องซ้ำ
+    const subtitle = item.symbol ? item.name : '';
+    const mark = item.platform ? platformMark(item.platform) : null;
 
     return (
       <View style={[
@@ -835,12 +931,16 @@ export default function PortfolioScreen() {
           <View style={styles.investmentLeft}>
             <View style={styles.investmentHeader}>
               <Ionicons name={getTypeIcon(item.type) as any} size={24} color={COLORS.primary} />
+              {/* ชื่อย่อเป็นตัวหลัก ชื่อเต็มเป็นตัวรอง — เวลาไล่ดูพอร์ตคนจำ/หาด้วยตัวย่อ
+                  (BTC, PTT) ไม่ใช่ชื่อเต็ม และชื่อเต็มยาวกว่าจนกินพื้นที่การ์ด
+                  ไม่มีตัวย่อ (ทอง/อื่น ๆ) → ชื่อเต็มขึ้นเป็นตัวหลักแทน ไม่ปล่อยหัวการ์ดว่าง */}
               <View style={styles.investmentInfo}>
-                <Text style={styles.investmentName}>{item.name}</Text>
-                <Text style={styles.investmentSymbol}>
-                  {item.symbol}
-                  {item.platform ? ` • ${item.platform}` : ''}
-                </Text>
+                <Text style={styles.investmentName}>{item.symbol || item.name}</Text>
+                {!!subtitle && (
+                  <Text style={styles.investmentSymbol} numberOfLines={1}>
+                    {subtitle}
+                  </Text>
+                )}
               </View>
             </View>
             {/* ป้ายแดง = ครบรอบแล้ว ถึงคิวลงไม้จริง */}
@@ -861,6 +961,11 @@ export default function PortfolioScreen() {
                 {redAlert.every}
               </Text>
             )}
+            {/* LOW ของแท่งแดงที่นับได้ — โชว์ทั้งตอนครบรอบและตอนตั้งกฎเองแต่ยังไม่ครบ
+                (ตัวที่ใช้ค่าเริ่มต้นและยังไม่ครบรอบไม่โชว์ จะได้ไม่รกทั้งพอร์ต) */}
+            {redAlert && (redAlert.met || redAlert.custom) && redLowText(redAlert) && (
+              <Text style={styles.redRuleText}>{redLowText(redAlert)}</Text>
+            )}
             <View style={styles.investmentDetails}>
               <Text style={styles.investmentQuantity}>
                 {item.quantity} หน่วย @ {formatCurrencyWithType(item.buyPrice, item.currency)}
@@ -871,24 +976,42 @@ export default function PortfolioScreen() {
             </View>
           </View>
           <View style={styles.investmentRight}>
-            <Text style={styles.investmentValue}>{formatCurrency(value)}</Text>
-            <Text style={[styles.investmentProfit, isProfit ? styles.profitPositive : styles.profitNegative]}>
-              {isProfit ? '+' : ''}{formatCurrency(profit)}
-            </Text>
-            <Text style={[styles.investmentPercent, isProfit ? styles.profitPositive : styles.profitNegative]}>
-              {isProfit ? '+' : ''}{profitPercent.toFixed(2)}%
-            </Text>
+            {/* แพลตฟอร์มอยู่มุมขวาบน: เป็นข้อมูล "ของอยู่ที่ไหน" ไม่ใช่ตัวเลขผลตอบแทน
+                จับตาแล้วรู้ทันทีว่าแต่ละไม้อยู่เจ้าไหน โดยไม่ไปเบียดชื่อย่อทางซ้าย */}
+            {mark && (
+              <View style={styles.platformTag}>
+                <View style={[styles.platformLogo, { backgroundColor: mark.color }]}>
+                  <Text style={styles.platformLogoText}>{mark.short}</Text>
+                </View>
+                {/* จอแคบการ์ดกว้างไม่ถึง 340 — ปล่อยชื่อยาวเต็มจะไปบีบบรรทัด
+                    "จำนวน @ ราคา" ทางซ้ายให้ตก จึงตัดสั้นลงอีก (ตัวย่อในโลโก้ยังบอกได้) */}
+                <Text
+                  style={[styles.platformTagText, !isDesktop && styles.platformTagTextNarrow]}
+                  numberOfLines={1}
+                >
+                  {item.platform}
+                </Text>
+              </View>
+            )}
+            {/* ตัวเลขอยู่กลางพื้นที่ที่เหลือ (flex:1) — ไม่งั้นป้ายแพลตฟอร์มดันชุดตัวเลขลงล่าง */}
+            <View style={styles.investmentNums}>
+              <Text style={styles.investmentValue}>{formatCurrency(value)}</Text>
+              <Text style={[styles.investmentProfit, isProfit ? styles.profitPositive : styles.profitNegative]}>
+                {isProfit ? '+' : ''}{formatCurrency(profit)}
+              </Text>
+              <Text style={[styles.investmentPercent, isProfit ? styles.profitPositive : styles.profitNegative]}>
+                {isProfit ? '+' : ''}{profitPercent.toFixed(2)}%
+              </Text>
+            </View>
           </View>
         </TouchableOpacity>
-        {(growth.tooNew || growth.annualReturnPercent != null) && (
+        {/* ถือยังไม่ถึง 3 เดือน = ไม่โชว์อะไรเลย (เดิมพิมพ์ "ยังประเมินโต/ปีไม่ได้")
+            ยังคง annualize เฉพาะตัวที่ถือ >= 3 เดือนเหมือนเดิม — ช่วงสั้นกว่านั้นเลขเพี้ยนสูง */}
+        {growth.annualReturnPercent != null && (
           <View style={styles.tpRow}>
-            {growth.tooNew ? (
-              <Text style={styles.tpSubText}>ถือ &lt; 3 เดือน ยังประเมินโต/ปีไม่ได้</Text>
-            ) : (
-              <Text style={styles.tpSubText}>
-                AVG โตเฉลี่ย ~{growth.annualReturnPercent! >= 0 ? '+' : ''}{growth.annualReturnPercent!.toFixed(1)}%/ปี
-              </Text>
-            )}
+            <Text style={styles.tpSubText}>
+              AVG โตเฉลี่ย ~{growth.annualReturnPercent >= 0 ? '+' : ''}{growth.annualReturnPercent.toFixed(1)}%/ปี
+            </Text>
           </View>
         )}
         <View style={styles.itemActionRow}>
@@ -912,9 +1035,14 @@ export default function PortfolioScreen() {
   const isProfit = summary.totalProfit >= 0;
 
   // วิเคราะห์เป้าหมายพอร์ตรวม — วันเริ่มพอร์ต = วันซื้อแรกสุด
-  const portfolioStartDate = investments.length > 0
-    ? investments.reduce((earliest, inv) => (inv.buyDate < earliest ? inv.buyDate : earliest), investments[0].buyDate)
-    : null;
+  // ต้องกรองวันที่ที่ใช้ไม่ได้ออกก่อน: การหา "เก่าสุด" เทียบด้วยสตริง ดังนั้น buyDate ที่ว่าง
+  // ('' < ทุกวันที่) จะชนะเสมอ แล้วทุกอย่างที่คิดจากวันเริ่มพอร์ตก็กลายเป็น Invalid Date เงียบ ๆ
+  const portfolioStartDate = (() => {
+    const valid = investments
+      .map((i) => i.buyDate)
+      .filter((d) => !!d && !Number.isNaN(new Date(toChristianYear(d)).getTime()));
+    return valid.length > 0 ? valid.reduce((earliest, d) => (d < earliest ? d : earliest)) : null;
+  })();
   // ฐานคำนวณเป้าหมาย = ต้นทุนที่ลงจริง (ไม่รวมกำไรที่ยังไม่ได้ขาย/unrealized)
   // กำไรลอยตัวยังไม่เกิดจริงจนกว่าจะปิดออเดอร์ จึงไม่นับรวมในทุกส่วนของการคำนวณถึงเป้า
   // ผลตอบแทนจริงจากการขาย — ตัวนี้คือ "ฝีมือที่วัดได้" ใช้แทนเลขคาดหวังถ้ามีข้อมูลพอ
@@ -969,19 +1097,31 @@ export default function PortfolioScreen() {
   // งบรายเดือน/วินัยการกันเงิน เอาออกจากหน้านี้แล้ว — ดูที่หน้าหลัก
   const dcaRoundsCount = plan?.dcaRounds && plan.dcaRounds > 0 ? plan.dcaRounds : null;
 
-  // ── "ถ้าขายตอนนี้ ต้องทำกำไรก้อนนี้ซ้ำอีกกี่รอบถึงเป้า" ──
-  // สมมติฐานตรงไปตรงมา: ขายได้เงินก้อนนี้แล้วเอาลงทุนซ้ำทั้งก้อน รอบต่อไปได้กำไร % เท่าเดิม
-  // → ทุกรอบคูณด้วย (1 + กำไร%) จึงเป็นทบต้น ไม่ใช่บวกกำไรก้อนเดิมซ้ำ ๆ
-  //   n = ln(เป้า / มูลค่าปัจจุบัน) / ln(1 + กำไร%)
-  const roundsToGoal = (() => {
+  // ── ช่องว่างถึงเป้า วัดด้วย "มูลค่าจริง" (ไม่ใช่ต้นทุนแบบแถบความคืบหน้า) ──
+  // ทำไมต้องมีเลขชุดนี้: แถบวัดด้วย "เงินต้นที่ลงไปแล้ว" (79%) ซึ่งไม่ใช่ระยะห่างจากเป้าจริง ๆ
+  // — มูลค่าพอร์ตวันนี้ 92.5k ห่างเป้า 100k แค่ 8% ไม่ใช่ 21%
+  //   needPercent = เป้า/มูลค่าตอนนี้ − 1 → ต้องโตอีกกี่ % จากของที่ถืออยู่
+  //   roundMonths = พอร์ตอายุกี่เดือนแล้ว → เอาไปบอกว่ากำไร % ที่ทำมาใช้เวลาเท่าไหร่
+  // ไม่แปลงเป็น "อีกกี่ปีถึงเป้า" — นั่นคือพยากรณ์วันที่ ซึ่งจงใจไม่โชว์บนหน้านี้
+  const goalGap = (() => {
     const target = goal?.targetAmount;
     if (!target || target <= 0 || summary.totalValue <= 0) return null;
-    if (summary.totalValue >= target) return { reached: true, rounds: 0 };
-    const r = summary.totalProfitPercent / 100;
-    if (r <= 0) return null; // ยังไม่มีกำไร คำนวณไม่ได้
+    // อายุพอร์ต = จากวันซื้อไม้แรกถึงวันนี้ คือเวลาที่ใช้ทำกำไร % ก้อนที่กำลังพูดถึง
+    // (ผ่าน toChristianYear เพราะวันที่ที่เก็บมาอาจเป็น พ.ศ. — new Date('2568-..') จะเพี้ยน)
+    const startMs = portfolioStartDate ? new Date(toChristianYear(portfolioStartDate)).getTime() : NaN;
+    const months = Number.isFinite(startMs)
+      ? (Date.now() - startMs) / (365.25 * 24 * 60 * 60 * 1000 / 12)
+      : null;
+    // < 1 เดือน หรือวันที่เพี้ยน (ติดลบ) → ไม่ต้องบอกเวลา ดีกว่าบอกเลขที่ไม่มีความหมาย
+    const roundMonths = months != null && months >= 1 ? months : null;
+    if (target - summary.totalValue <= 0) {
+      return { reached: true, gap: 0, needPercent: 0, roundMonths };
+    }
     return {
       reached: false,
-      rounds: Math.ceil(Math.log(target / summary.totalValue) / Math.log(1 + r)),
+      gap: target - summary.totalValue,
+      needPercent: ((target - summary.totalValue) / summary.totalValue) * 100,
+      roundMonths,
     };
   })();
 
@@ -1110,15 +1250,11 @@ export default function PortfolioScreen() {
                 ({isProfit ? '+' : ''}{summary.totalProfitPercent.toFixed(2)}%)
               </Text>
             </View>
-            <Text style={styles.summaryCost}>ลงทุนไปแล้ว {formatCurrency(summary.totalCost)}</Text>
-            {/* โชว์เสมอ — เคยซ่อนไว้ตอนยังไม่มีการขาย แล้วกลายเป็นว่ามองไม่เห็นว่ามีฟีเจอร์นี้อยู่
-                ยังไม่เคยขาย เลขจะเท่ากับกำไรลอยตัวด้านบน จึงบอกไปตรง ๆ แทนที่จะโชว์ ฿0 เฉย ๆ */}
-            <Text style={styles.summaryLifetime}>
-              กำไรสะสม {lifetimeProfit >= 0 ? '+' : ''}{formatCurrency(lifetimeProfit)}
-              {realized.tradeCount > 0
-                ? `  ·  ลอยตัว ${summary.totalProfit >= 0 ? '+' : ''}${formatCurrency(summary.totalProfit)} + ขายแล้ว ${realized.totalPnlTHB >= 0 ? '+' : ''}${formatCurrency(realized.totalPnlTHB)}`
-                : '  ·  ยังไม่เคยบันทึกการขาย — พอเริ่มขาย เลขนี้จะไม่ถอยหลังอีก'}
-            </Text>
+            {/* ต้นทุนโชว์บรรทัดนี้เฉพาะตอนยังไม่ตั้งเป้า — ตั้งเป้าแล้วส่วนเป้าหมายด้านล่าง
+                มี "ต้นทุนที่ลงไปแล้ว" ยอดเดียวกัน (summary.totalCost ตัวเดียวกัน) อยู่แล้ว */}
+            {!goalAnalysis && (
+              <Text style={styles.summaryCost}>ลงทุนไปแล้ว {formatCurrency(summary.totalCost)}</Text>
+            )}
             {/* ต้องบอกให้รู้ว่าเลขที่เห็นสดแค่ไหน ไม่งั้น auto refresh จะกลายเป็นกล่องดำ
                 ว่าอัปเดตแล้วหรือยัง — และกองทุนที่กรอก NAV เองก็จะเข้าใจผิดว่าค้าง */}
             <Text style={styles.summaryRefreshedAt}>
@@ -1128,6 +1264,101 @@ export default function PortfolioScreen() {
                   ? `ราคาอัปเดต ${lastPriceRefresh.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} · อัตโนมัติทุก 5 นาที`
                   : 'ยังไม่ได้ดึงราคารอบนี้'}
             </Text>
+
+            {/* ── เป้าหมายพอร์ตรวม: ย้ายขึ้นมาอยู่ในหัวพอร์ต (ไม่มีการ์ดแยกอีกแล้ว) ──
+                "ตอนนี้เท่าไหร่" กับ "เทียบเป้าแล้วอยู่ไหน" อ่านต่อกันในกล่องเดียว
+                สีทุกตัวต้องเป็นชุดพื้นน้ำเงิน (ขาว/ขาวโปร่ง) — COLORS.text/primary จะจมพื้น */}
+            <View style={styles.headerGoalDivider} />
+            <View style={styles.headerGoalTitleRow}>
+              <Text style={styles.headerGoalTitle}>
+                <Ionicons name="disc-outline" size={16} color="#ffffff" /> เป้าหมายพอร์ตรวม
+              </Text>
+              <TouchableOpacity onPress={openGoalModal}>
+                <Text style={styles.headerGoalEdit}>{goal ? 'แก้ไข' : 'ตั้งเป้า'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {!goalAnalysis ? (
+              <Text style={styles.headerGoalEmpty}>
+                ปักยอดพอร์ตที่อยากได้ แล้วระบบจะสรุปให้ว่าไปได้กี่ % และต้องลงเดือนละเท่าไหร่ถึงจะทันกรอบเวลา
+              </Text>
+            ) : (
+              <>
+                {/* ป้ายต้องบอกให้ชัดว่าแถบนี้วัด "เงินต้นที่ลงไป" ไม่ใช่ระยะห่างจากเป้า
+                    เดิมเขียนว่า "ไปได้ 79%" ซึ่งชนกับบรรทัดล่างที่บอกว่าเหลืออีกแค่ 8% */}
+                <View style={styles.goalCardTopRow}>
+                  <Text style={styles.headerGoalSub}>
+                    ลงเงินไปแล้ว {formatCurrency(goalAnalysis.currentValue)}
+                  </Text>
+                  <Text style={styles.headerGoalSub}>
+                    {goalAnalysis.reached ? 'ลงครบเป้าแล้ว 🎉' : `${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}% ของเป้า`}
+                  </Text>
+                </View>
+                <View style={styles.headerGoalTrack}>
+                  <View
+                    style={[
+                      styles.goalFill,
+                      {
+                        width: `${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100))}%`,
+                        // บนพื้นน้ำเงินต้องเติมด้วยสีขาว — COLORS.primary คือสีพื้นเอง มองไม่เห็นแถบ
+                        backgroundColor: goalAnalysis.reached ? COLORS.success : '#ffffff',
+                      },
+                    ]}
+                  />
+                </View>
+                {/* "ยังไม่ได้ลงอีก" ไม่ใช่ "ขาดอีก" — เงินก้อนนี้คือเงินต้นที่ยังไม่ได้ลง
+                    คนละเรื่องกับระยะห่างจากเป้าในบรรทัดถัดไป (ซึ่งกำไรลอยตัวช่วยไปแล้ว) */}
+                <Text style={styles.headerGoalSub}>
+                  เป้า {formatCurrency(goalAnalysis.targetAmount)}
+                  {!goalAnalysis.reached && ` • ยังไม่ได้ลงอีก ${formatCurrency(goalAnalysis.remaining)}`}
+                </Text>
+
+                {/* บรรทัดวิเคราะห์ — เขียนเป็นภาษาคน ไม่อธิบายวิธีคิดของ UI ตัวเอง
+                    ให้ทางเลือกสองทางที่ลงมือได้จริง: รอให้พอร์ตโตอีกกี่ % หรือเติมเงินอีกเท่าไหร่ */}
+                {goalGap && (
+                  <Text style={styles.headerGoalHint}>
+                    {goalGap.reached
+                      ? 'มูลค่าพอร์ตตอนนี้เลยเป้าไปแล้ว 🎉 (แถบด้านบนนับแต่เงินต้นที่ลง จึงยังไม่เต็ม)'
+                      : `เหลืออีก ${formatCurrency(goalGap.gap)} ถึงเป้า — พอร์ตต้องโตอีก ${goalGap.needPercent.toFixed(1)}% หรือเติมเงินใหม่เท่านี้`}
+                  </Text>
+                )}
+
+                {/* เทียบระยะที่เหลือกับฝีมือที่ทำมาได้จริง + เวลาที่ใช้ไป (ข้อเท็จจริง ไม่ใช่พยากรณ์)
+                    บรรทัดนี้ตอบคำถามเดียว: "เป้านี้ไกลไหม เทียบกับที่ฉันทำมาได้แล้ว" */}
+                {goalGap && !goalGap.reached && summary.totalProfitPercent > 0 && (
+                  <Text style={styles.headerGoalNote}>
+                    ที่ผ่านมาทำกำไรได้ +{summary.totalProfitPercent.toFixed(2)}%
+                    {goalGap.roundMonths != null ? ` ใน ~${formatMonthsSpan(goalGap.roundMonths)}` : ''}
+                    {' · '}ที่ต้องโตอีก {goalGap.needPercent.toFixed(1)}%{' '}
+                    {compareToTrackRecord(goalGap.needPercent, summary.totalProfitPercent)}
+                  </Text>
+                )}
+
+                {/* แถบความคืบหน้าคิดจาก "ต้นทุนที่ยังอยู่ในพอร์ต" — ขายแล้วต้นทุนก้อนนั้นออกไป แถบเลยถอย
+                    ทั้งที่เงินยังอยู่กับเรา จงใจไม่เอาไปบวกในแถบ (จะนับซ้ำตอนเอาเงินไปลงไม้ใหม่)
+                    แต่ต้องบอกให้เห็นว่ากำไรที่เก็บไปแล้วมีอยู่จริง ไม่งั้นการขายจะดูเหมือนถอยหลังเปล่า ๆ */}
+                {realized.totalPnlTHB > 0 && (
+                  <Text style={styles.headerGoalNote}>
+                    + เก็บกำไรจริงไปแล้ว {formatCurrency(realized.totalPnlTHB)} จาก {realized.tradeCount} ดีล — เงินก้อนนี้อยู่นอกพอร์ต แถบด้านบนจึงยังไม่นับให้
+                  </Text>
+                )}
+
+                {/* ตั้งใจไม่โชว์ "คาดถึงเป้าในอีกกี่ปี" และแถว KPI คาดการณ์ — เป็นเลขพยากรณ์
+                    ที่ยังไม่เกิดจริง อ่านแล้วเข้าใจผิดว่าถึงเป้าแล้ว */}
+              </>
+            )}
+
+            {/* กำไรสะสม = กำไรลอยตัว + กำไรที่ขายแล้ว — เลขที่ไม่ถอยหลังตอนขาย
+                โชว์เฉพาะเมื่อเคยขายแล้วจริง: ก่อนมีการขาย เลขนี้เท่ากับกำไรลอยตัวที่อยู่บนสุด
+                เป๊ะ ๆ (บรรทัดเดิมเลยกลายเป็นเลขซ้ำ + ประโยคยาวที่ยังไม่เกี่ยวกับผู้ใช้)
+                พอขายไม้แรก บรรทัดนี้จะโผล่มาเองพร้อมรายละเอียดว่ามาจากลอยตัวเท่าไหร่/ขายแล้วเท่าไหร่ */}
+            {realized.tradeCount > 0 && (
+              <Text style={styles.headerGoalNote}>
+                กำไรสะสม {lifetimeProfit >= 0 ? '+' : ''}{formatCurrency(lifetimeProfit)}
+                {'  ·  '}ลอยตัว {summary.totalProfit >= 0 ? '+' : ''}{formatCurrency(summary.totalProfit)}
+                {' + ขายแล้ว '}{realized.totalPnlTHB >= 0 ? '+' : ''}{formatCurrency(realized.totalPnlTHB)}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -1286,78 +1517,6 @@ export default function PortfolioScreen() {
           </TouchableOpacity>
         )}
 
-        {/* ── การ์ดเป้าหมายพอร์ตรวม ── */}
-        <View style={[styles.goalCard, isDesktop && styles.cardGridItem]}>
-          <View style={styles.goalCardHeader}>
-            <Text style={styles.goalCardTitle}>
-              <Ionicons name="disc-outline" size={18} color={COLORS.primary} /> เป้าหมายพอร์ตรวม
-            </Text>
-            <TouchableOpacity onPress={openGoalModal}>
-              <Text style={styles.goalCardEdit}>{goal ? 'แก้ไข' : 'ตั้งเป้า'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {!goalAnalysis ? (
-            <Text style={styles.goalCardEmpty}>
-              ปักยอดพอร์ตที่อยากได้ แล้วระบบจะสรุปให้ว่าไปได้กี่ % และต้องลงเดือนละเท่าไหร่ถึงจะทันกรอบเวลา
-            </Text>
-          ) : (
-            <>
-              <View style={styles.goalCardTopRow}>
-                <Text style={styles.goalCardSub}>
-                  ต้นทุนที่ลงไปแล้ว {formatCurrency(goalAnalysis.currentValue)}
-                </Text>
-                <Text style={styles.goalCardSub}>
-                  {goalAnalysis.reached ? 'ถึงเป้าแล้ว 🎉' : `ไปได้ ${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}%`}
-                </Text>
-              </View>
-              <View style={styles.goalTrack}>
-                <View
-                  style={[
-                    styles.goalFill,
-                    {
-                      width: `${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100))}%`,
-                      backgroundColor: goalAnalysis.reached ? COLORS.success : COLORS.primary,
-                    },
-                  ]}
-                />
-              </View>
-              <Text style={styles.goalCardSub}>
-                เป้า {formatCurrency(goalAnalysis.targetAmount)}
-                {!goalAnalysis.reached && ` • ขาดอีก ${formatCurrency(goalAnalysis.remaining)}`}
-              </Text>
-
-              {/* ถ้าขายตอนนี้แล้วลงทุนซ้ำทั้งก้อน ต้องทำกำไร % เท่านี้อีกกี่รอบถึงเป้า (ทบต้น) */}
-              {roundsToGoal && (
-                <Text style={styles.tpSubText}>
-                  {roundsToGoal.reached
-                    ? 'ถ้าขายตอนนี้ มูลค่าถึงเป้าแล้ว 🎉'
-                    : `ถ้าขายตอนนี้ (+${summary.totalProfitPercent.toFixed(2)}% = ${formatCurrency(summary.totalProfit)}) แล้วลงทุนซ้ำทั้งก้อนได้ % เท่าเดิม → อีก ~${roundsToGoal.rounds} รอบถึงเป้า`}
-                </Text>
-              )}
-
-              {/* แถบความคืบหน้าคิดจาก "ต้นทุนที่ยังอยู่ในพอร์ต" — ขายแล้วต้นทุนก้อนนั้นออกไป แถบเลยถอย
-                  ทั้งที่เงินยังอยู่กับเรา จงใจไม่เอาไปบวกในแถบ (จะนับซ้ำตอนเอาเงินไปลงไม้ใหม่)
-                  แต่ต้องบอกให้เห็นว่ากำไรที่เก็บไปแล้วมีอยู่จริง ไม่งั้นการขายจะดูเหมือนถอยหลังเปล่า ๆ */}
-              {realized.totalPnlTHB > 0 && (
-                <Text style={styles.tpSubText}>
-                  + เก็บกำไรจริงไปแล้ว {formatCurrency(realized.totalPnlTHB)} จาก {realized.tradeCount} ดีล — เงินก้อนนี้อยู่นอกพอร์ต แถบด้านบนจึงยังไม่นับให้
-                </Text>
-              )}
-
-              {/* ตั้งใจไม่โชว์ "คาดถึงเป้าในอีกกี่ปี" และแถว KPI คาดการณ์บนการ์ดนี้
-                  — เป็นเลขพยากรณ์ที่ยังไม่เกิดจริง อ่านแล้วเข้าใจผิดว่าถึงเป้าแล้ว
-                  ตัวเลข "ต้องลง/ครั้ง" ตามกรอบเวลายังดูได้ในปุ่ม "ดูรายละเอียดแผน" ด้านล่าง */}
-
-              {/* งบใช้จ่ายรายเดือน (เงินเดือน/ใช้ไปแล้ว/เหลือใช้ได้อีก) เอาออกจากหน้านี้แล้ว
-                  — ดูที่หน้าหลักได้อยู่แล้ว (Income / Expense / Balance) ไม่ต้องมีซ้ำ */}
-            </>
-          )}
-
-          {/* เงินรอลงทุนไม่โชว์ซ้ำที่นี่ — การ์ดเต็ม (จดยอด/แบ่งกี่ครั้ง/รายการย่อย)
-              อยู่ถัดลงไปก่อน "รายการลงทุน" แล้ว */}
-        </View>
-
         {/* ── ผลงานจริง (realized): กำไรที่ขายแล้วเท่านั้น ไม่นับกำไรลอยตัว ──
             โชว์เฉพาะเมื่อมีการขายบันทึกไว้จริง — ยังไม่มีก็ไม่ต้องมีการ์ดเปล่ามากินที่
             (ปุ่ม "ย้อนคืน" อยู่ในการ์ดนี้ พอเริ่มบันทึกขาย การ์ดจะโผล่มาเอง) */}
@@ -1512,12 +1671,16 @@ export default function PortfolioScreen() {
               </Text>
             ) : null}
             {redAlertsMet.map((a) => (
-              <View key={`${a.type}:${a.symbol}`} style={styles.loserRow}>
-                <Text style={styles.loserName} numberOfLines={1}>
-                  {a.symbol || a.name}{' '}
-                  <Text style={styles.tpSubText}>· แดง {a.count} {redUnit(a.interval)}ติดกัน</Text>
-                </Text>
-                <Text style={styles.loserPct}>{a.dropPercent.toFixed(2)}%</Text>
+              <View key={`${a.type}:${a.symbol}`}>
+                <View style={styles.loserRow}>
+                  <Text style={styles.loserName} numberOfLines={1}>
+                    {a.symbol || a.name}{' '}
+                    <Text style={styles.tpSubText}>· แดง {a.count} {redUnit(a.interval)}ติดกัน</Text>
+                  </Text>
+                  <Text style={styles.loserPct}>{a.dropPercent.toFixed(2)}%</Text>
+                </View>
+                {/* LOW = ราคาที่ลงไปแตะจริงในแท่งแดงพวกนั้น ไม่ใช่ราคาปิด — เอาไปตั้งไม้ได้เลย */}
+                {redLowText(a) && <Text style={styles.redRuleText}>{redLowText(a)}</Text>}
               </View>
             ))}
           </View>
@@ -2178,6 +2341,8 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     color: '#ffffff',
   },
+  // ── กล่องสรุปในหัวพอร์ต (พื้นน้ำเงิน COLORS.primary) ──
+  // ทุกสีในกล่องนี้ต้องเป็นขาว/ขาวโปร่ง — COLORS.text/textSecondary/primary จมพื้นมองไม่เห็น
   summaryContainer: {
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 0,
@@ -2213,24 +2378,73 @@ const styles = StyleSheet.create({
     opacity: 0.9,
     marginTop: 8,
   },
-  // "กำไรสะสม" — เลขที่ไม่ถอยหลังตอนขาย จงใจแยกเส้นคั่นให้เห็นว่าเป็นคนละชั้นกับกำไรลอยตัวด้านบน
-  summaryLifetime: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: '#ffffff',
-    opacity: 0.85,
-    marginTop: 6,
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.25)',
-    alignSelf: 'stretch',
-  },
   summaryRefreshedAt: {
     fontSize: 11,
     fontFamily: 'NotoSansThai_300Light',
     color: '#ffffff',
     opacity: 0.7,
     marginTop: 6,
+  },
+  // ── ส่วน "เป้าหมายพอร์ตรวม" ที่ย้ายขึ้นมาอยู่ในกล่องสรุปนี้ (ไม่มีการ์ดแยกแล้ว) ──
+  headerGoalDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    marginTop: 14,
+    marginBottom: 10,
+  },
+  headerGoalTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  headerGoalTitle: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: '#ffffff',
+  },
+  headerGoalEdit: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: '#ffffff',
+    opacity: 0.85,
+  },
+  headerGoalSub: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: '#ffffff',
+    opacity: 0.9,
+  },
+  headerGoalNote: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: '#ffffff',
+    opacity: 0.75,
+    marginTop: 4,
+  },
+  // บรรทัดวิเคราะห์ "อีกกี่รอบถึงเป้า" — เน้นกว่า note ทั่วไป (ทึบกว่า + น้ำหนักตัวอักษรมากกว่า)
+  // แต่ยังเบากว่าหัวข้อ เพื่อไม่ไปแย่งสายตาจากยอดมูลค่ารวมด้านบน
+  headerGoalHint: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_500Medium',
+    color: '#ffffff',
+    opacity: 0.95,
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  headerGoalEmpty: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: '#ffffff',
+    opacity: 0.85,
+    lineHeight: 18,
+  },
+  headerGoalTrack: {
+    height: 8,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginVertical: 6,
   },
   profitPositive: {
     color: COLORS.success,
@@ -2836,7 +3050,10 @@ const styles = StyleSheet.create({
   },
   flatListRow: {
     gap: 12,
-    marginHorizontal:16
+    marginHorizontal:16,
+    // การ์ดในแถวเดียวกันสูงเท่ากันเสมอ (ค่า default ของ flexbox อยู่แล้ว แต่เขียนไว้ให้ชัด
+    // เพราะ investmentContent พึ่ง stretch นี้ในการดูดพื้นที่ส่วนเกิน)
+    alignItems: 'stretch',
   },
   investmentItem: {
     backgroundColor: COLORS.surface,
@@ -2855,13 +3072,21 @@ const styles = StyleSheet.create({
     flex: 1,
     maxWidth: '49%' as any,
   },
+  // flex:1 = ตัวดูดความสูงส่วนเกินของการ์ด
+  // การ์ดในแถวเดียวกันถูกยืดสูงเท่ากัน (flatListRow) แต่เนื้อในสูงไม่เท่ากัน — บางใบมี
+  // บรรทัดกฎแท่งแดง (redRuleText) หรือ tpRow บางใบไม่มี ถ้าไม่มีตัวไหนยืด ที่ว่างจะไปกอง
+  // ใต้แถวปุ่ม ขาย/ลบ กลายเป็นการ์ดเนื้อในไม่เต็มกล่อง
   investmentContent: {
+    flex: 1,
     padding: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  // กระจายหัวการ์ด (ชื่อ/สัญลักษณ์) ไว้บน รายละเอียด (จำนวน/ราคา) ไว้ล่าง
+  // ที่ว่างจึงไปอยู่กลางการ์ดแทนที่จะกองท้าย อ่านแล้วเต็มกล่องกว่า
   investmentLeft: {
     flex: 1,
+    justifyContent: 'space-between',
   },
   investmentHeader: {
     flexDirection: 'row',
@@ -2937,8 +3162,45 @@ const styles = StyleSheet.create({
   },
   investmentRight: {
     alignItems: 'flex-end',
-    justifyContent: 'center',
     marginLeft: 16,
+    // ไม่ตั้ง maxWidth เป็น % — ชื่อแพลตฟอร์มยาว ๆ ถูกคุมด้วย platformTagText.maxWidth แทน
+  },
+  // ตัวเลข (มูลค่า/กำไร/%) ยังอยู่กลางแนวตั้งเหมือนเดิม โดยกินพื้นที่ที่เหลือจากป้ายแพลตฟอร์ม
+  investmentNums: {
+    flex: 1,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  // ── ป้ายแพลตฟอร์มมุมขวาบน ──
+  platformTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 6,
+  },
+  platformLogo: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  platformLogoText: {
+    fontSize: 9,
+    // สีขาวบนพื้นแบรนด์ — ตัวย่อสั้น 2 ตัว ขนาดเล็ก จึงใช้ SemiBold ให้ยังอ่านออก
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+  platformTagText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+    // ชื่อยาว (เช่น "Interactive Brokers") ต้องตัดคำ ไม่ใช่ดันการ์ดหรือบีบตัวเลขทางขวา
+    maxWidth: 108,
+  },
+  platformTagTextNarrow: {
+    maxWidth: 76,
   },
   investmentValue: {
     fontSize: 18,

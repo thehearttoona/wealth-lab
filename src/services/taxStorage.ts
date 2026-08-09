@@ -1,5 +1,6 @@
 import { supabase, getUserId } from './supabase';
 import { TaxProfile, TaxMonth, emptyTaxMonths, sumTaxMonths } from '../types/tax';
+import { logActivity } from './activityLogStorage';
 
 // ข้อมูลภาษี 1 แถวต่อ 1 ปีภาษี (unique user_id + year) — ไม่ใช่ singleton แบบ investment_plan
 // เพราะต้องย้อนดูปีเก่าได้ และทั้งเงินเดือน/กฎกำไรขายเปลี่ยนได้ทุกปี
@@ -122,9 +123,30 @@ export const saveTaxProfile = async (profile: TaxProfile): Promise<void> => {
     .from('tax_profiles')
     .upsert(mapToDb(profile, userId), { onConflict: 'user_id,year' });
   if (error) throw error;
+  // upsert ทับทั้งปี — ไม่ log ก็ไม่รู้ว่ากรอกเงินเดือน/หัก ณ ที่จ่ายไว้เท่าไหร่ก่อนแก้
+  await logActivity({
+    entity: 'tax_profile',
+    action: 'update',
+    entityId: String(profile.year),
+    summary: `บันทึกข้อมูลภาษีปี ${profile.year}`,
+    payload: profile,
+  });
 };
 
 export const deleteTaxProfile = async (year: number): Promise<void> => {
+  let before: TaxProfile | null = null;
+  try {
+    before = await getTaxProfile(year);
+  } catch {
+    // อ่านไม่ได้ก็ลบต่อ
+  }
   const { error } = await supabase.from('tax_profiles').delete().eq('year', year);
   if (error) throw error;
+  await logActivity({
+    entity: 'tax_profile',
+    action: 'delete',
+    entityId: String(year),
+    summary: `ลบข้อมูลภาษีปี ${year}`,
+    payload: before ?? { year },
+  });
 };

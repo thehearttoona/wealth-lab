@@ -1,4 +1,5 @@
 import { supabase, getUserId } from './supabase';
+import { logActivity } from './activityLogStorage';
 
 // เปลี่ยนชื่อสกุลเงิน/แพลตฟอร์มแล้วต้องไล่แก้ของที่ใช้อยู่ให้ครบ
 // เพราะ investments/accounts/realized_trades เก็บเป็น "string ดิบ" ไม่ได้อ้าง id
@@ -43,6 +44,21 @@ export const renameCurrencyEverywhere = async (oldCode: string, newCode: string)
   ignoreMissingTable(realized.error);
   bump(realized.data);
 
+  // rename แก้ข้อมูลหลายตารางพร้อมกันและไม่มี transaction — ต้องมีร่องรอยว่าเปลี่ยนอะไรไปกี่แถว
+  await logActivity({
+    entity: 'currency',
+    action: 'update',
+    summary: `เปลี่ยนชื่อสกุลเงิน ${oldCode} → ${newCode} (แก้ ${touched} แถว)`,
+    payload: {
+      oldCode,
+      newCode,
+      touched,
+      investments: inv.data?.length ?? 0,
+      accounts: acc.data?.length ?? 0,
+      realizedTrades: realized.data?.length ?? 0,
+    },
+  });
+
   return touched;
 };
 
@@ -67,6 +83,22 @@ export const renamePlatformEverywhere = async (oldName: string, newName: string)
     .select('id');
   if (acc.error) throw acc.error;
   touched += acc.data?.length ?? 0;
+
+  // หมายเหตุที่ต้องอยู่ใน log ด้วย: ฟังก์ชันนี้ไม่ได้แก้ realized_trades.platform (ช่องว่างที่รู้อยู่)
+  // ประวัติการขายจะยังค้างชื่อแพลตฟอร์มเดิม — เห็นใน payload ได้ว่าตอนนั้น rename อะไรไป
+  await logActivity({
+    entity: 'platform',
+    action: 'update',
+    summary: `เปลี่ยนชื่อแพลตฟอร์ม ${oldName} → ${newName} (แก้ ${touched} แถว)`,
+    payload: {
+      oldName,
+      newName,
+      touched,
+      investments: inv.data?.length ?? 0,
+      accounts: acc.data?.length ?? 0,
+      realizedTradesNotUpdated: true,
+    },
+  });
 
   return touched;
 };

@@ -1,6 +1,7 @@
 import { supabase, getUserId } from './supabase';
 import { UserPlatform, INVESTMENT_PLATFORMS } from '../types/investment';
 import { isCatalogTableMissing } from './currencyStorage';
+import { logActivity } from './activityLogStorage';
 
 const mapFromDb = (row: any): UserPlatform => ({
   id: row.id,
@@ -31,6 +32,13 @@ export const savePlatform = async (p: UserPlatform): Promise<void> => {
   const userId = await getUserId();
   const { error } = await supabase.from('user_platforms').insert(mapToDb(p, userId));
   if (error) throw error;
+  await logActivity({
+    entity: 'platform',
+    action: 'create',
+    entityId: p.id,
+    summary: `เพิ่มแพลตฟอร์ม ${p.name}`,
+    payload: p,
+  });
 };
 
 export const updatePlatform = async (p: UserPlatform): Promise<void> => {
@@ -40,11 +48,24 @@ export const updatePlatform = async (p: UserPlatform): Promise<void> => {
     .update(mapToDb(p, userId))
     .eq('id', p.id);
   if (error) throw error;
+  await logActivity({
+    entity: 'platform',
+    action: 'update',
+    entityId: p.id,
+    summary: `แก้แพลตฟอร์ม ${p.name}`,
+    payload: p,
+  });
 };
 
 export const deletePlatform = async (id: string): Promise<void> => {
   const { error } = await supabase.from('user_platforms').delete().eq('id', id);
   if (error) throw error;
+  await logActivity({
+    entity: 'platform',
+    action: 'delete',
+    entityId: id,
+    summary: `ลบแพลตฟอร์ม ${id}`,
+  });
 };
 
 // เติมค่าเริ่มต้นครั้งแรก = แพลตฟอร์มยอดนิยม + ชื่อที่ผู้ใช้เคยพิมพ์ไว้เองในรายการลงทุน/บัญชี
