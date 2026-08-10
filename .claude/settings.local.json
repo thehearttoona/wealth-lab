@@ -127,7 +127,8 @@
       "WebFetch(domain:developer.settrade.com)",
       "WebFetch(domain:www.binance.th)",
       "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 40)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "PowerShell(npx tsc --noEmitฃ)"
     ]
   }
 }

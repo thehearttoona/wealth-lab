@@ -881,7 +881,8 @@ export default function PortfolioScreen() {
 
   // ── ยอด LOW ของแท่งแดงในสตรีค ──
   // ราคาปิดบอกแค่ว่าแท่งแดง แต่ราคาที่ "ลงไปแตะจริง" คือ low — ใช้ตั้งไม้/ตั้ง limit ได้
-  // โชว์ท้ายสุด 3 แท่ง (เก่า→ใหม่) กันบรรทัดยาวตอนสตรีค 6-8 แท่ง แล้วต่อด้วยต่ำสุดจริงของทั้งสตรีค
+  // โชว์ค่าเดียว = ต่ำสุดของทั้งสตรีค เพราะนั่นคือเลขที่เอาไปตั้ง limit จริง
+  // (เคยลิสต์ low ของทุกแท่ง เก่า→ใหม่ แล้วอ่านแล้วงงว่าเลขไหนคือเลขไหน)
   const redLowText = (a: {
     lows: number[];
     lowest: number | null;
@@ -890,10 +891,7 @@ export default function PortfolioScreen() {
   }): string | null => {
     if (a.lowest == null || a.lows.length === 0) return null;
     const cur = a.lowCurrency || a.currency;
-    const shown = a.lows.slice(-3);
-    const list = shown.map((l) => formatCurrencyWithType(l, cur)).join(' · ');
-    if (shown.length === a.lows.length) return `LOW แท่งแดง: ${list}`;
-    return `LOW แท่งแดง: … ${list} · ต่ำสุด ${formatCurrencyWithType(a.lowest, cur)}`;
+    return `ราคาต่ำสุดที่ลงไปแตะ: ${formatCurrencyWithType(a.lowest, cur)}`;
   };
 
   const renderInvestmentItem = ({ item }: { item: Investment }) => {
