@@ -22,6 +22,17 @@ type MenuItem = { route: keyof RootStackParamList; label: string; hint: string; 
 // เมนูที่เคยกระจายอยู่ตามหน้าอื่น (หรือเข้าไม่ถึงเลย) รวมมาไว้ที่เดียวให้หาเจอ
 const MENU_GROUPS: { title: string; items: MenuItem[] }[] = [
   {
+    title: 'ตั้งค่า',
+    items: [
+      {
+        route: 'PersonalInfo',
+        label: 'ข้อมูลส่วนตัว',
+        hint: 'อายุ สถานภาพ คนในอุปการะ — ใช้แนะนำสิทธิ์ลดหย่อนภาษี',
+        icon: 'person-circle-outline',
+      },
+    ],
+  },
+  {
     title: 'สรุป & วิเคราะห์',
     items: [
       { route: 'Overview', label: 'ภาพรวมการเงิน', hint: 'รายจ่าย + พอร์ต รวมในหน้าเดียว', icon: 'analytics-outline' },

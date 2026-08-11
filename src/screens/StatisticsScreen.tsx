@@ -81,7 +81,7 @@ export default function StatisticsScreen() {
 
         {insight.actionable && (
           <View style={styles.actionableContainer}>
-            <Text style={styles.actionableLabel}>💡 คำแนะนำ:</Text>
+            <Text style={styles.actionableLabel}>คำแนะนำ:</Text>
             <Text style={styles.actionableText}>{insight.actionable}</Text>
           </View>
         )}
@@ -151,7 +151,7 @@ export default function StatisticsScreen() {
                 </View>
 
                 <View style={[styles.tipBox, isDesktop && styles.bottomBoxDesktop]}>
-                  <Text style={styles.tipTitle}>💡 เคล็ดลับ</Text>
+                  <Text style={styles.tipTitle}>เคล็ดลับ</Text>
                   <Text style={styles.tipText}>
                     บันทึกข้อมูลสม่ำเสมอเพื่อให้ AI วิเคราะห์ได้แม่นยำยิ่งขึ้น
                   </Text>

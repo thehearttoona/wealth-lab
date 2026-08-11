@@ -11,6 +11,8 @@ import {
   Modal,
   TextInput,
   AppState,
+  StyleProp,
+  TextStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -40,7 +42,14 @@ import {
   updateInvestmentPrices,
   saveInvestment,
 } from '../services/investmentStorage';
-import { formatCurrency, formatCurrencyWithType, convertToTHB, toChristianYear, COLORS } from '../utils/constants';
+import {
+  formatCurrency,
+  formatCurrencyWithType,
+  convertToTHB,
+  convertFromTHB,
+  toChristianYear,
+  COLORS,
+} from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
 import { fetchPricesForItems, isPriceRefreshable, getTwoRedDays } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
@@ -60,6 +69,8 @@ import { PurchaseGoal } from '../types/purchaseGoal';
 import { getPurchaseGoals } from '../services/purchaseGoalStorage';
 import { planPurchaseGoals } from '../utils/purchaseGoals';
 import { calculateTax, estimateGainTax, taxYearOf } from '../utils/taxCalc';
+import { UserProfile, incomeExemptionFor } from '../types/userProfile';
+import { getUserProfile } from '../services/userProfileStorage';
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -72,6 +83,49 @@ type PortfolioScreenNavigationProp = NativeStackNavigationProp<
 // (หมดแล้วจะ fallback ไป Yahoo proxy ให้เอง ราคายังมาแต่ช้าลง) — ตัวกันหลักคือ
 // interval หยุดเมื่อแท็บซ่อน/แอปลงพื้นหลัง/สลับไปหน้าอื่น ดูใน useEffect ด้านล่าง
 const PRICE_REFRESH_MS = 5 * 60 * 1000;
+
+// จังหวะ "เช็คว่าถึงรอบหรือยัง" — ไม่ใช่รอบรีเฟรช รอบจริงมาจาก nextRefreshAt ตัวเดียว
+// (เดิม interval ยิงทุก 5 นาทีตรง ๆ ซึ่งไม่ผูกกับเวลาที่ดึงสำเร็จจริง กดปุ่มรีเฟรชเองแล้ว
+//  นาฬิกาตัวนั้นไม่ขยับ ตัวนับถอยหลังกับเวลายิงจริงจะไม่ตรงกัน)
+const PRICE_TICK_MS = 5 * 1000;
+
+// mm:ss — ปัดขึ้นเพื่อไม่ให้โชว์ 0:00 ค้างทั้งวินาทีสุดท้าย
+const formatCountdown = (ms: number): string => {
+  const total = Math.ceil(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
+
+// ── สถานะราคา + นับถอยหลังรอบถัดไป (มุมขวาบนของหัวพอร์ต) ──
+// แยกเป็นคอมโพเนนต์ต่างหากเพราะต้องวาดใหม่ทุกวินาที — ถ้าเก็บ tick ไว้ใน PortfolioScreen
+// ทั้งหน้า (FlatList ทุกแถว + การ์ดสรุปทุกใบ) จะถูก re-render วินาทีละครั้ง
+const PriceRefreshStatus: React.FC<{
+  isUpdating: boolean;
+  lastRefresh: Date | null;
+  nextRefreshAt: Date | null;
+  style?: StyleProp<TextStyle>;
+}> = ({ isUpdating, lastRefresh, nextRefreshAt, style }) => {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (isUpdating || !nextRefreshAt) return;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [isUpdating, nextRefreshAt]);
+
+  if (isUpdating) return <Text style={style}>กำลังดึงราคา...</Text>;
+  if (!lastRefresh) return <Text style={style}>ยังไม่ได้ดึงราคารอบนี้</Text>;
+
+  const at = lastRefresh.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+  const leftMs = nextRefreshAt ? nextRefreshAt.getTime() - Date.now() : null;
+  // ครบรอบแล้วแต่ยังไม่ได้ยิง (แท็บซ่อนอยู่ / รอ tick ถัดไป) — บอกว่ากำลังจะยิง ไม่ใช่นับเป็นเลขติดลบ
+  const countdown = leftMs == null ? null : leftMs <= 0 ? 'กำลังจะอัปเดต' : `อีก ${formatCountdown(leftMs)}`;
+
+  return (
+    <Text style={style}>
+      ราคาอัปเดต {at}
+      {countdown ? ` · ${countdown}` : ''}
+    </Text>
+  );
+};
 
 // ปีภาษีปัจจุบันเป็น พ.ศ. — ใช้ทั้งดึง TaxProfile และกรองไม้ที่ขายปีนี้
 const currentTaxYear = new Date().getFullYear() + 543;
@@ -187,11 +241,15 @@ export default function PortfolioScreen() {
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   // เวลาที่ดึงราคาสำเร็จครั้งล่าสุด — โชว์ข้างปุ่มรีเฟรช และใช้ตัดสินว่าราคาเก่าพอจะยิงใหม่หรือยัง
   const [lastPriceRefresh, setLastPriceRefresh] = useState<Date | null>(null);
+  // กำหนดยิงรอบถัดไป = เวลาที่เริ่มยิงรอบล่าสุด + 5 นาที — เป็นทั้งเงื่อนไขที่ interval ใช้ตัดสิน
+  // และเลขที่ตัวนับถอยหลังโชว์ ทั้งสองอย่างจึงตรงกันเสมอ (แหล่งความจริงเดียว)
+  // ตั้งตอน "เริ่มยิง" ไม่ใช่ตอนสำเร็จ ไม่งั้นรอบที่ fail จะวนยิงใหม่ทุก tick จนเปลืองโควตา
+  const [nextRefreshAt, setNextRefreshAt] = useState<Date | null>(null);
   // หน้านี้กำลังถูกดูอยู่ไหม — auto refresh ต้องหยุดเมื่อสลับไปหน้าอื่น
   const [screenFocused, setScreenFocused] = useState(false);
   // refs: ตัว interval อ่านค่าล่าสุดได้โดยไม่ต้องผูก dependency แล้ว re-create interval ทุกครั้งที่ state ขยับ
   const investmentsRef = useRef<Investment[]>([]);
-  const lastPriceRefreshRef = useRef<Date | null>(null);
+  const nextRefreshAtRef = useRef<Date | null>(null);
   const refreshInFlight = useRef(false);
   const [goal, setGoal] = useState<PortfolioGoal | null>(null);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
@@ -235,6 +293,8 @@ export default function PortfolioScreen() {
   const [purchaseGoals, setPurchaseGoals] = useState<PurchaseGoal[]>([]);
   // ข้อมูลภาษีปีนี้ — null = ยังไม่ได้ตั้งค่าที่หน้า "ภาษี" (หรือยังไม่ได้รัน SQL)
   const [taxProfile, setTaxProfile] = useState<TaxProfile | null>(null);
+  // ข้อมูลส่วนตัว — ใช้แค่ยกเว้นเงินได้ 190,000 (อายุ 65+/ผู้พิการ) ให้เลขภาษีตรงกับหน้าภาษี
+  const [person, setPerson] = useState<UserProfile | null>(null);
   const [sellTarget, setSellTarget] = useState<Investment | null>(null);
   const [sellQtyInput, setSellQtyInput] = useState('');
   const [sellPriceInput, setSellPriceInput] = useState('');
@@ -293,6 +353,12 @@ export default function PortfolioScreen() {
     } catch {
       // ยังไม่ได้รัน sql/tax_profiles.sql — การ์ดภาษีจะบอกให้ไปตั้งค่าเอง
       setTaxProfile(null);
+    }
+    try {
+      // ข้อมูลส่วนตัว — ของเสริม ไม่มีก็คิดภาษีต่อได้ (แค่ไม่มียกเว้นเงินได้ 190,000)
+      setPerson(await getUserProfile());
+    } catch {
+      setPerson(null);
     }
     // (เลิกดึงรายรับ/รายจ่ายมาที่หน้านี้แล้ว — งบรายเดือนดูที่หน้าหลัก)
 
@@ -698,7 +764,6 @@ export default function PortfolioScreen() {
   // ให้ interval อ่านค่าล่าสุดผ่าน ref ได้ ไม่ต้องใส่ investments เป็น dependency
   // (ไม่งั้นราคาขยับทีเดียว interval ถูกสร้างใหม่ทั้งตัว นาฬิกาเลื่อนไปเรื่อย ๆ ไม่ครบ 5 นาทีจริง)
   useEffect(() => { investmentsRef.current = investments; }, [investments]);
-  useEffect(() => { lastPriceRefreshRef.current = lastPriceRefresh; }, [lastPriceRefresh]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -733,6 +798,12 @@ export default function PortfolioScreen() {
         if (!opts.silent) notify('ไม่มีรายการที่ดึงราคาอัตโนมัติได้ (กองทุนต้องกรอก NAV เอง)');
         return;
       }
+
+      // นับรอบถัดไปจากตรงนี้ — วางหลังเช็ค items แล้ว เพราะพอร์ตที่ยังไม่มีตัวดึงราคาได้
+      // ต้องไม่ถูกเลื่อนไปอีก 5 นาที (ไม่งั้นรอบแรกหลังเพิ่มหุ้นตัวแรกจะช้าไปทั้งรอบ)
+      const due = new Date(Date.now() + PRICE_REFRESH_MS);
+      nextRefreshAtRef.current = due;
+      setNextRefreshAt(due);
 
       refreshInFlight.current = true;
       if (!opts.silent) setIsUpdatingPrices(true);
@@ -790,21 +861,26 @@ export default function PortfolioScreen() {
         ? typeof document === 'undefined' || document.visibilityState === 'visible'
         : AppState.currentState === 'active';
 
+    // ถึงกำหนดหรือยัง — ยังไม่เคยยิงเลย (null) ก็ถือว่าถึง
+    const isDue = () => {
+      const due = nextRefreshAtRef.current;
+      return !due || Date.now() >= due.getTime();
+    };
+
     const start = () => {
       if (timer) return;
       timer = setInterval(() => {
-        if (isVisible()) refreshPrices({ silent: true });
-      }, PRICE_REFRESH_MS);
+        if (isVisible() && isDue()) refreshPrices({ silent: true });
+      }, PRICE_TICK_MS);
     };
     const stop = () => {
       if (timer) clearInterval(timer);
       timer = null;
     };
 
-    // กลับมาดูหน้านี้อีกครั้ง: ยิงเลยถ้าราคาเก่ากว่า 5 นาที ไม่ต้องรอครบรอบถัดไป
+    // กลับมาดูหน้านี้อีกครั้ง: ยิงเลยถ้าเลยกำหนดไปแล้ว ไม่ต้องรอ tick ถัดไป
     const refreshIfStale = () => {
-      const last = lastPriceRefreshRef.current;
-      if (!last || Date.now() - last.getTime() >= PRICE_REFRESH_MS) refreshPrices({ silent: true });
+      if (isDue()) refreshPrices({ silent: true });
     };
 
     const onVisibilityChange = () => {
@@ -836,13 +912,13 @@ export default function PortfolioScreen() {
     };
   }, [screenFocused, refreshPrices]);
 
-  // รอบแรกหลังข้อมูลโหลดเสร็จ (และตอนเพิ่ม/ลบรายการ) — ยิงถ้าราคาเก่ากว่า 5 นาที
+  // รอบแรกหลังข้อมูลโหลดเสร็จ (และตอนเพิ่ม/ลบรายการ) — ยิงถ้าเลยกำหนดรอบถัดไปแล้ว
   // ผูกกับ investments.length ไม่ใช่ตัว array เพราะ refreshPrices เองก็ setInvestments
   // ถ้าผูกทั้ง array จะวนไม่จบ
   useEffect(() => {
     if (!screenFocused || investments.length === 0) return;
-    const last = lastPriceRefreshRef.current;
-    if (!last || Date.now() - last.getTime() >= PRICE_REFRESH_MS) refreshPrices({ silent: true });
+    const due = nextRefreshAtRef.current;
+    if (!due || Date.now() >= due.getTime()) refreshPrices({ silent: true });
   }, [screenFocused, investments.length, refreshPrices]);
 
   const getTypeIcon = (type: string) => {
@@ -889,9 +965,20 @@ export default function PortfolioScreen() {
     lowCurrency: string | null;
     currency: string;
   }): string | null => {
+    const v = redLowValue(a);
+    return v ? `ราคาต่ำสุดที่ลงไปแตะ: ${v}` : null;
+  };
+
+  // เลข LOW ล้วน ๆ ไม่มีคำอธิบายนำ — ใช้ในการ์ดสรุป "ถึงคิวลงไม้" ที่บริบทชัดอยู่แล้ว
+  // ส่วนการ์ดรายตัวในลิสต์ยังใช้ redLowText ที่มีคำอธิบาย เพราะเลขลอย ๆ ใต้ราคาซื้อ/ราคาปัจจุบันจะงง
+  const redLowValue = (a: {
+    lows: number[];
+    lowest: number | null;
+    lowCurrency: string | null;
+    currency: string;
+  }): string | null => {
     if (a.lowest == null || a.lows.length === 0) return null;
-    const cur = a.lowCurrency || a.currency;
-    return `ราคาต่ำสุดที่ลงไปแตะ: ${formatCurrencyWithType(a.lowest, cur)}`;
+    return formatCurrencyWithType(a.lowest, a.lowCurrency || a.currency);
   };
 
   const renderInvestmentItem = ({ item }: { item: Investment }) => {
@@ -1053,16 +1140,22 @@ export default function PortfolioScreen() {
   // สรุปภาษีจากกำไรที่ขายปีนี้ — null = ปีนี้ยังไม่มีการขาย (ไม่ต้องโชว์การ์ด)
   // ถ้ายังไม่ได้กรอกเงินเดือน ใช้โปรไฟล์เปล่าไปก่อน: ภาษีจะคิดจากกำไรล้วน ๆ ซึ่งต่ำกว่าจริง
   // แต่ดีกว่าซ่อนตัวเลข — การ์ดเขียนกำกับไว้ว่ายังไม่ใช่ขั้นจริง
+  // ต้องส่ง opts ชุดเดียวกับหน้าภาษี ไม่งั้นการ์ดนี้กับหน้าภาษีจะโชว์เลขคนละตัว
+  const taxOpts = useMemo(
+    () => ({ incomeExemption: incomeExemptionFor(person, currentTaxYear).amount }),
+    [person]
+  );
+
   const taxThisYear = useMemo(() => {
     if (tradesThisTaxYear.length === 0) return null;
-    const b = calculateTax(taxProfile ?? emptyTaxProfile(currentTaxYear), realizedTrades);
+    const b = calculateTax(taxProfile ?? emptyTaxProfile(currentTaxYear), realizedTrades, taxOpts);
     return {
       grossGain: b.gains.reduce((s, g) => s + g.gain, 0),
       assessable: b.gainIncome,
       tax: b.taxFromGains,
       marginalRate: b.marginalRate,
     };
-  }, [tradesThisTaxYear, realizedTrades, taxProfile]);
+  }, [tradesThisTaxYear, realizedTrades, taxProfile, taxOpts]);
 
   const realized = summarizeRealized(realizedTrades);
 
@@ -1136,6 +1229,10 @@ export default function PortfolioScreen() {
   const powderTotalRounds = dcaRoundsCount ? dcaRoundsCount * powderMonths : null;
   const powderPerRound = powderTotalRounds && dryPowder > 0 ? dryPowder / powderTotalRounds : null;
   const powderEveryDays = dcaRoundsCount ? 30 / dcaRoundsCount : null;
+  // ยอดที่จดไว้เป็นคนละสกุล (บาท/ดอลลาร์) รวมกันเป็นบาทไว้แล้ว — โชว์คู่กับดอลลาร์ด้วย
+  // เพราะไม้ที่ลงบน Binance คิดเป็น USD จะได้ไม่ต้องหารในหัวเองทุกครั้ง
+  const dryPowderUSD = dryPowder > 0 ? convertFromTHB(dryPowder, 'USD') : 0;
+  const powderPerRoundUSD = powderPerRound != null ? convertFromTHB(powderPerRound, 'USD') : null;
   // ซื้อไปแล้วกี่รายการหลังวันที่จดยอด — สัญญาณว่ายอดที่จดไว้เก่าแล้ว
   const boughtSincePowder = (() => {
     const asOf = plan?.dryPowderAsOf;
@@ -1234,8 +1331,19 @@ export default function PortfolioScreen() {
           isDesktop && styles.headerDesktop,
         ]}>
           <View style={styles.headerTitleContainer}>
-            <Ionicons name="briefcase-outline" size={24} color="#ffffff" />
-            <Text style={styles.headerTitle}> พอร์ตการลงทุน</Text>
+            <View style={styles.headerTitleLeft}>
+              <Ionicons name="briefcase-outline" size={24} color="#ffffff" />
+              <Text style={styles.headerTitle}> พอร์ตการลงทุน</Text>
+            </View>
+            {/* สถานะราคาอยู่มุมขวาบน — ต้องบอกให้รู้ว่าเลขที่เห็นสดแค่ไหน ไม่งั้น auto refresh
+                จะกลายเป็นกล่องดำว่าอัปเดตแล้วหรือยัง และกองทุนที่กรอก NAV เองก็จะดูเหมือนค้าง
+                เดิมแทรกอยู่กลางกองตัวเลข (ใต้ % กำไร) ทำให้ยอดกับเป้าหมายถูกดันห่างกัน */}
+            <PriceRefreshStatus
+              isUpdating={isUpdatingPrices}
+              lastRefresh={lastPriceRefresh}
+              nextRefreshAt={nextRefreshAt}
+              style={styles.summaryRefreshedAt}
+            />
           </View>
           <View style={styles.summaryContainer}>
             <Text style={styles.summaryLabel}>มูลค่ารวม</Text>
@@ -1253,15 +1361,6 @@ export default function PortfolioScreen() {
             {!goalAnalysis && (
               <Text style={styles.summaryCost}>ลงทุนไปแล้ว {formatCurrency(summary.totalCost)}</Text>
             )}
-            {/* ต้องบอกให้รู้ว่าเลขที่เห็นสดแค่ไหน ไม่งั้น auto refresh จะกลายเป็นกล่องดำ
-                ว่าอัปเดตแล้วหรือยัง — และกองทุนที่กรอก NAV เองก็จะเข้าใจผิดว่าค้าง */}
-            <Text style={styles.summaryRefreshedAt}>
-              {isUpdatingPrices
-                ? 'กำลังดึงราคา...'
-                : lastPriceRefresh
-                  ? `ราคาอัปเดต ${lastPriceRefresh.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} · อัตโนมัติทุก 5 นาที`
-                  : 'ยังไม่ได้ดึงราคารอบนี้'}
-            </Text>
 
             {/* ── เป้าหมายพอร์ตรวม: ย้ายขึ้นมาอยู่ในหัวพอร์ต (ไม่มีการ์ดแยกอีกแล้ว) ──
                 "ตอนนี้เท่าไหร่" กับ "เทียบเป้าแล้วอยู่ไหน" อ่านต่อกันในกล่องเดียว
@@ -1669,16 +1768,17 @@ export default function PortfolioScreen() {
               </Text>
             ) : null}
             {redAlertsMet.map((a) => (
-              <View key={`${a.type}:${a.symbol}`}>
-                <View style={styles.loserRow}>
-                  <Text style={styles.loserName} numberOfLines={1}>
-                    {a.symbol || a.name}{' '}
-                    <Text style={styles.tpSubText}>· แดง {a.count} {redUnit(a.interval)}ติดกัน</Text>
-                  </Text>
-                  <Text style={styles.loserPct}>{a.dropPercent.toFixed(2)}%</Text>
-                </View>
-                {/* LOW = ราคาที่ลงไปแตะจริงในแท่งแดงพวกนั้น ไม่ใช่ราคาปิด — เอาไปตั้งไม้ได้เลย */}
-                {redLowText(a) && <Text style={styles.redRuleText}>{redLowText(a)}</Text>}
+              <View key={`${a.type}:${a.symbol}`} style={styles.loserRow}>
+                <Text style={styles.loserName} numberOfLines={1}>
+                  {a.symbol || a.name}{' '}
+                  <Text style={styles.tpSubText}>· แดง {a.count} {redUnit(a.interval)}ติดกัน</Text>
+                </Text>
+                {/* LOW ต่อท้าย % เลย ไม่ต้องมีบรรทัดคำอธิบายแยก — ในการ์ดที่ทุกแถวเป็น "ตัวที่ร่วง"
+                    ราคาที่ตามหลัง % ย่อมหมายถึงจุดต่ำสุดที่ลงไปแตะอยู่แล้ว (เอาไปตั้ง limit ได้เลย) */}
+                <Text style={styles.loserPct}>
+                  {a.dropPercent.toFixed(2)}%
+                  {redLowValue(a) ? <Text style={styles.loserLow}> · {redLowValue(a)}</Text> : null}
+                </Text>
               </View>
             ))}
           </View>
@@ -1757,15 +1857,25 @@ export default function PortfolioScreen() {
                   เงินรอลงทุนที่จดไว้
                   {powderItemCount > 0 ? ` (รวม ${powderItemCount} รายการ)` : ''}
                 </Text>
-                <Text style={styles.planLineValue}>{formatCurrency(dryPowder)}</Text>
+                <View style={styles.dualCurrencyValue}>
+                  <Text style={styles.planLineValue}>฿{formatCurrency(dryPowder)}</Text>
+                  <Text style={styles.dualCurrencySub}>≈ {formatCurrencyWithType(dryPowderUSD, 'USD')}</Text>
+                </View>
               </View>
               <View style={[styles.planLine, styles.reserveTotalRow]}>
-                <Text style={styles.reserveTotalLabel}>
+                <Text style={[styles.reserveTotalLabel, { flex: 1 }]}>
                   ลงได้ครั้งละ ({dcaRoundsCount} ครั้ง/ด. × {powderMonths} ด. = {powderTotalRounds} ครั้ง)
                 </Text>
-                <Text style={styles.reserveTotalValue}>
-                  {powderPerRound == null ? '—' : formatCurrency(powderPerRound)}
-                </Text>
+                <View style={styles.dualCurrencyValue}>
+                  <Text style={styles.reserveTotalValue}>
+                    {powderPerRound == null ? '—' : `฿${formatCurrency(powderPerRound)}`}
+                  </Text>
+                  {powderPerRoundUSD != null && (
+                    <Text style={styles.dualCurrencySub}>
+                      ≈ {formatCurrencyWithType(powderPerRoundUSD, 'USD')}
+                    </Text>
+                  )}
+                </View>
               </View>
               {/* "ซื้อทุก ๆ กี่วัน" ไม่ต้องมีบรรทัดแยก — โชว์อยู่ข้างปุ่ม −/+ ด้านบนแล้ว */}
               {boughtSincePowder ? (
@@ -2084,7 +2194,8 @@ export default function PortfolioScreen() {
                       pnl,
                       sellTarget.type,
                       taxProfile ?? emptyTaxProfile(currentTaxYear),
-                      tradesThisTaxYear
+                      tradesThisTaxYear,
+                      taxOpts
                     );
                     return (
                       <>
@@ -2331,7 +2442,15 @@ const styles = StyleSheet.create({
   headerTitleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
     marginBottom: 16,
+  },
+  // ต้องมีกล่องซ้ายครอบไอคอน+ชื่อ ไม่งั้น space-between จะดันไอคอนกับชื่อแยกออกจากกัน
+  headerTitleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
   },
   headerTitle: {
     fontSize: 24,
@@ -2376,12 +2495,14 @@ const styles = StyleSheet.create({
     opacity: 0.9,
     marginTop: 8,
   },
+  // อยู่มุมขวาบนคู่กับชื่อหน้า — flexShrink ให้ตัดบรรทัดในคอลัมน์ขวาแทนที่จะดันชื่อหน้าจนล้น
   summaryRefreshedAt: {
     fontSize: 11,
     fontFamily: 'NotoSansThai_300Light',
     color: '#ffffff',
     opacity: 0.7,
-    marginTop: 6,
+    flexShrink: 1,
+    textAlign: 'right',
   },
   // ── ส่วน "เป้าหมายพอร์ตรวม" ที่ย้ายขึ้นมาอยู่ในกล่องสรุปนี้ (ไม่มีการ์ดแยกแล้ว) ──
   headerGoalDivider: {
@@ -2584,6 +2705,17 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textAlign: 'right',
   },
+  // ยอดสองสกุลในบรรทัดเดียว — บาทเป็นตัวหลัก ดอลลาร์ห้อยข้างล่างตัวเล็กกว่า
+  // (ห้ามวางเรียงกันแนวนอน บนจอแคบสองยอดจะดันกันจนเลข wrap กลางตัว)
+  dualCurrencyValue: {
+    alignItems: 'flex-end',
+  },
+  dualCurrencySub: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 1,
+  },
   // ชิปเลือก "แบ่งลงกี่เดือน" ของเงินรอลงทุน
   chipRow: {
     flexDirection: 'row',
@@ -2684,6 +2816,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.error,
+  },
+  // ราคาต่ำสุดที่ต่อท้าย % — สีเทาเพื่อไม่ให้แข่งกับตัวเลข % ที่เป็นพระเอกของแถว
+  loserLow: {
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
   },
   // ปุ่มสลับโหมดของการ์ดวางแผนถึงเป้า (ยุบ 3 ตารางเหลือ 1)
   reserveTotalRow: {

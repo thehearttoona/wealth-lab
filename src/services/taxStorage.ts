@@ -1,5 +1,14 @@
 import { supabase, getUserId } from './supabase';
-import { TaxProfile, TaxMonth, emptyTaxMonths, sumTaxMonths } from '../types/tax';
+import {
+  TaxProfile,
+  TaxMonth,
+  DeductionMap,
+  TaxYearFacts,
+  TaxYearFactKey,
+  TAX_YEAR_FACT_FIELDS,
+  emptyTaxMonths,
+  sumTaxMonths,
+} from '../types/tax';
 import { logActivity } from './activityLogStorage';
 
 // ข้อมูลภาษี 1 แถวต่อ 1 ปีภาษี (unique user_id + year) — ไม่ใช่ singleton แบบ investment_plan
@@ -62,16 +71,52 @@ const monthsFromLegacyRow = (row: any): TaxMonth[] => {
   return months;
 };
 
-const mapFromDb = (row: any): TaxProfile => ({
-  year: row.year,
-  months: Array.isArray(row.months) && row.months.length > 0
-    ? normalizeMonths(row.months)
-    : monthsFromLegacyRow(row),
-  otherIncome: num(row.other_income),
-  extraDeductions: num(row.extra_deductions),
-  gainRules: row.gain_rules && typeof row.gain_rules === 'object' ? row.gain_rules : undefined,
-  remittedRatio: row.remitted_ratio ?? undefined,
-});
+/**
+ * ลดหย่อนแยกรายการ — แถวเก่าที่มีแต่ extra_deductions ก้อนเดียว ให้ย้ายไปคีย์ 'other'
+ * จะได้ไม่หายไปเงียบ ๆ ตอนหน้าจอเปลี่ยนมาอ่าน deductions แล้วผู้ใช้เห็นภาษีเด้งขึ้นโดยไม่รู้สาเหตุ
+ */
+const normalizeDeductions = (raw: any, legacyTotal: number): DeductionMap | undefined => {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const out: DeductionMap = {};
+    Object.entries(raw).forEach(([k, v]) => {
+      const n = num(v);
+      if (n > 0) out[k] = n;
+    });
+    if (Object.keys(out).length > 0) return out;
+  }
+  return legacyTotal > 0 ? { other: legacyTotal } : undefined;
+};
+
+/**
+ * ข้อเท็จจริงรายปี — เก็บเฉพาะคีย์ที่รู้จักและเป็น boolean จริง
+ * ค่าที่ไม่ได้ตอบต้องไม่โผล่เป็นคีย์เลย เพราะ `undefined` (ยังไม่ตอบ) กับ `false` (ตอบว่าไม่)
+ * ให้คำแนะนำสิทธิ์คนละแบบ — ถ้าปล่อยให้ null กลายเป็น false คนที่ยังไม่ตอบจะเห็นว่า "ใช้ไม่ได้"
+ */
+const normalizeYearFacts = (raw: any): TaxYearFacts | undefined => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: TaxYearFacts = {};
+  TAX_YEAR_FACT_FIELDS.forEach(({ key }) => {
+    const v = (raw as Record<TaxYearFactKey, unknown>)[key];
+    if (typeof v === 'boolean') out[key] = v;
+  });
+  return Object.keys(out).length > 0 ? out : undefined;
+};
+
+const mapFromDb = (row: any): TaxProfile => {
+  const legacyExtra = num(row.extra_deductions);
+  return {
+    year: row.year,
+    months: Array.isArray(row.months) && row.months.length > 0
+      ? normalizeMonths(row.months)
+      : monthsFromLegacyRow(row),
+    otherIncome: num(row.other_income),
+    deductions: normalizeDeductions(row.deductions, legacyExtra),
+    extraDeductions: legacyExtra,
+    yearFacts: normalizeYearFacts(row.year_facts),
+    gainRules: row.gain_rules && typeof row.gain_rules === 'object' ? row.gain_rules : undefined,
+    remittedRatio: row.remitted_ratio ?? undefined,
+  };
+};
 
 const mapToDb = (p: TaxProfile, userId: string) => {
   const t = sumTaxMonths(p.months);
@@ -86,7 +131,12 @@ const mapToDb = (p: TaxProfile, userId: string) => {
     social_security: t.socialSecurity,
     withheld: t.withheld,
     other_income: p.otherIncome,
-    extra_deductions: p.extraDeductions,
+    deductions: p.deductions ?? null,
+    // ยอดรวมที่กรอก (ก่อนตัดเพดาน) — derive จาก deductions ไว้ให้แถวอ่านรู้เรื่องและเป็นทางถอย
+    extra_deductions: p.deductions
+      ? Object.values(p.deductions).reduce((s, v) => s + num(v), 0)
+      : p.extraDeductions,
+    year_facts: p.yearFacts ?? null,
     gain_rules: p.gainRules ?? null,
     remitted_ratio: p.remittedRatio ?? null,
   };
@@ -119,9 +169,17 @@ export const getTaxYears = async (): Promise<number[]> => {
 
 export const saveTaxProfile = async (profile: TaxProfile): Promise<void> => {
   const userId = await getUserId();
-  const { error } = await supabase
+  const row: Record<string, any> = mapToDb(profile, userId);
+  let { error } = await supabase
     .from('tax_profiles')
-    .upsert(mapToDb(profile, userId), { onConflict: 'user_id,year' });
+    .upsert(row, { onConflict: 'user_id,year' });
+  // ยังไม่ได้รัน sql/tax_year_facts.sql → คอลัมน์ไม่มี แล้ว "ทั้งแถว" บันทึกไม่ผ่าน
+  // เงินเดือนทั้งปีต้องไม่หายไปเพราะคำถามใช่/ไม่ใช่ 5 ข้อ จึงตัดคอลัมน์ที่ไม่มีออกแล้วลองซ้ำ
+  // (แพตเทิร์นเดียวกับ investmentStorage/realizedStorage — ดู §4 ใน CLAUDE.md)
+  if (error && /year_facts/i.test(error.message || '')) {
+    delete row.year_facts;
+    ({ error } = await supabase.from('tax_profiles').upsert(row, { onConflict: 'user_id,year' }));
+  }
   if (error) throw error;
   // upsert ทับทั้งปี — ไม่ log ก็ไม่รู้ว่ากรอกเงินเดือน/หัก ณ ที่จ่ายไว้เท่าไหร่ก่อนแก้
   await logActivity({

@@ -37,6 +37,7 @@ These are ranked by how often they've already caused a bug.
 10. **Dialogs go through `utils/dialog.ts`** (`notify`, `await confirmAsk`). `react-native-web` silently no-ops `Alert.alert` with buttons. Don't hand-roll `window.confirm` in a screen again. Icons: `@expo/vector-icons` (Ionicons) only. Colors: `COLORS` in `utils/constants.ts` only.
 11. **Don't make `refreshCurrencyCache()` fire-and-forget.** See §5.2 — totals paint with hardcoded fallback rates and stay wrong until remount.
 12. **Thai everywhere.** New user-facing strings and code comments in Thai, to match. Dates with year > 2400 (Buddhist era) go through `toChristianYear()`.
+13. **Never declare a component inside a screen's render body.** A wrapper defined in the function body (`const Section = ({...}) => ...`) is a *new component type* on every render, so React unmounts and remounts its whole subtree — every `TextInput` inside loses focus after the first keystroke and the screen becomes unfillable. This shipped in `TaxScreen` and made the entire tax form impossible to type into. Hoist to module scope and pass state down as props (`Section` there is the reference fix).
 
 ---
 
@@ -171,7 +172,8 @@ Thai personal income tax (ภ.ง.ด.90/91) estimator. Brackets, the 50%-capped
 - **Losses clamp at 0 per asset type** — Thai law gives individuals no loss carry-forward against salary, so a losing crypto year must not reduce tax on wages.
 - **Gain tax is a difference, not `gain × marginalRate`** — a large gain spans brackets. `estimateGainTax` literally runs `calculateTax` twice (with and without the gain injected as `otherIncome`) so the sell form, the portfolio card and the tax screen can never disagree.
 - `taxYearOf()` round-trips through `toChristianYear` then adds 543, so grouping is always BE regardless of how the date was stored.
-- **Known gaps:** `extraDeductions` is one lumped field — no per-item caps (RMF 500k, SSF 200k, retirement group 500k, spouse/children/parents, insurance), no donation 10%/2× base, no dividends or dividend tax credit, and the constants aren't keyed by tax year.
+- **Social-security limits are keyed by tax year** (`socialSecurityLimits(year)` over `SOCIAL_SECURITY_BASE_STEPS`): base cap 15,000→**17,500 from BE 2569**, 20,000 from 2572, 23,000 from 2575, so the monthly max goes 750→875→1,000→1,150 and the annual deduction cap 9,000→10,500→12,000→13,800. The screen lets you pick past years, so never collapse this back to one constant.
+- **Known gaps:** `extraDeductions` is one lumped field — no per-item caps (RMF 500k, SSF 200k, retirement group 500k, spouse/children/parents, insurance), no donation 10%/2× base, no dividends or dividend tax credit. Brackets and allowances (unlike the social-security caps) are still single constants, not keyed by tax year.
 
 ### 6.2 Sell review — "ทบทวนการขาย" (`utils/sellReview.ts`, 179)
 Answers "would I have done better holding?" by comparing each `realized_trades` row's sell price against today's price, then prescribing a sell rule **empirically** rather than by guess: mostly-sold-too-early → trailing stop / scale out; mostly-well-timed → don't bolt on an automatic rule. Needs no new user input.

@@ -37,6 +37,7 @@ import ProfileScreen from '../screens/ProfileScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import StatisticsScreen from '../screens/StatisticsScreen';
 import TaxScreen from '../screens/TaxScreen';
+import PersonalInfoScreen from '../screens/PersonalInfoScreen';
 import PurchaseGoalsScreen from '../screens/PurchaseGoalsScreen';
 import SellReviewScreen from '../screens/SellReviewScreen';
 import { refreshCurrencyCache } from '../services/currencyStorage';
@@ -293,6 +294,11 @@ export default function Navigation() {
           name="Tax"
           component={TaxScreen}
           options={{ title: 'ภาษี' }}
+        />
+        <Stack.Screen
+          name="PersonalInfo"
+          component={PersonalInfoScreen}
+          options={{ title: 'ข้อมูลส่วนตัว' }}
         />
         <Stack.Screen
           name="SellReview"

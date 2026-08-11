@@ -115,6 +115,13 @@ export const formatCurrencyWithType = (amount: number, currency?: string): strin
 export const convertToTHB = (amount: number, currency?: string): number =>
   amount * (currencyRates[currency || 'THB'] || 1);
 
+// แปลงบาทกลับเป็นสกุลอื่น (ตรงข้ามกับ convertToTHB) — ใช้เรตชุดเดียวกัน ยอดจึงกลับไปกลับมาได้ตรง
+// ใช้กับยอดรวมที่รวมมาเป็นบาทแล้ว แต่อยากโชว์คู่กันว่าเทียบเป็นดอลลาร์ได้เท่าไหร่
+export const convertFromTHB = (amountTHB: number, currency?: string): number => {
+  const rate = currencyRates[currency || 'THB'] || 1;
+  return rate > 0 ? amountTHB / rate : amountTHB;
+};
+
 // สกุลไหนยังไม่มีเรต = ถูกคิดเป็น 1:1 กับบาท ใช้เตือนในหน้าจัดการสกุลเงิน
 export const hasCurrencyRate = (code: string): boolean => currencyRates[code] > 0;
 
