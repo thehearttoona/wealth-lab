@@ -36,6 +36,8 @@ const mapInvestmentFromDb = (row: any): Investment => ({
   targetDate: row.target_date ?? undefined,
   redInterval: row.red_interval ?? undefined,
   redEvery: row.red_every ?? undefined,
+  redAckCount: row.red_ack_count ?? undefined,
+  redAckStreakAt: row.red_ack_streak_at ?? undefined,
 });
 
 const mapInvestmentToDb = (inv: Investment, userId: string) => ({
@@ -55,13 +57,20 @@ const mapInvestmentToDb = (inv: Investment, userId: string) => ({
   target_date: inv.targetDate ?? null,
   red_interval: inv.redInterval ?? null,
   red_every: inv.redEvery ?? null,
+  red_ack_count: inv.redAckCount ?? null,
+  red_ack_streak_at: inv.redAckStreakAt ?? null,
   user_id: userId,
 });
 
 // คอลัมน์ที่เพิ่มทีหลัง — ถ้ายังไม่ได้รัน SQL ให้ตัดทิ้งเฉพาะตัวที่ error ฟ้องชื่อมา แล้วลองใหม่
 // (วิธีเดียวกับ investmentPlanStorage) กันไม่ให้ "บันทึกการลงทุนไม่ได้เลย" เพราะลืมรัน SQL
 // ตัดทีละตัว ไม่ทิ้งทั้งชุด เผื่อรัน SQL ไปแค่บางส่วน
-const OPTIONAL_COLUMNS = ['red_interval', 'red_every'] as const;
+const OPTIONAL_COLUMNS = [
+  'red_interval',
+  'red_every',
+  'red_ack_count',
+  'red_ack_streak_at',
+] as const;
 
 // รับได้ทั้งแถวเดียวและหลายแถว (bulk insert ก็ต้องตัดคอลัมน์เหมือนกัน)
 const withOptionalColumnFallback = async <T extends Record<string, any> | Record<string, any>[]>(
@@ -179,6 +188,36 @@ export const updateInvestmentPrices = async (
   if (failed?.error) throw failed.error;
   // จงใจไม่ log ที่นี่ — auto refresh ทุก 5 นาที × ทุกรายการ จะกลายเป็นขยะท่วมตาราง
   // (ดูเหตุผลเต็มใน activityLogStorage.ts)
+};
+
+// ── "ซื้อเพิ่มแล้วรอบนี้" / "เปิดแจ้งเตือนอีกครั้ง" ──
+// แตะแค่ 2 คอลัมน์เหมือน updateInvestmentPrices ไม่ส่งทั้งแถวขึ้นไป —
+// ผู้ใช้กดปุ่มนี้จากการ์ดสรุป ซึ่งถือข้อมูลในหน้าจอที่อาจเก่ากว่า DB อยู่ (แก้จากอีกแท็บ/อีกเครื่อง)
+// ส่ง count = null เพื่อล้างการปิดแจ้งเตือน
+export const setRedAck = async (
+  id: string,
+  count: number | null,
+  streakStartAt: number | null
+): Promise<void> => {
+  const payload = {
+    red_ack_count: count,
+    red_ack_streak_at: streakStartAt != null ? new Date(streakStartAt).toISOString() : null,
+  };
+  const { error } = await supabase.from('investments').update(payload).eq('id', id);
+  if (error) {
+    // ยังไม่ได้รัน sql/investments_red_ack.sql — บอกให้ชัด ไม่ใช่ปล่อยเงียบแล้วปุ่มเหมือนกดไม่ติด
+    if (/red_ack/i.test(error.message || '')) {
+      throw new Error('ยังไม่ได้เพิ่มคอลัมน์ red_ack — รัน sql/investments_red_ack.sql ที่ Supabase ก่อน');
+    }
+    throw error;
+  }
+  await logActivity({
+    entity: 'investment',
+    action: 'update',
+    entityId: id,
+    summary: count != null ? `ซื้อเพิ่มแล้ว — ปิดแจ้งเตือนแดง ${count} แท่ง` : 'เปิดแจ้งเตือนแท่งแดงอีกครั้ง',
+    payload,
+  });
 };
 
 // เพิ่มหลายรายการพร้อมกัน (bulk insert) — ใช้ในหน้า "จัดการตามแพลตฟอร์ม"

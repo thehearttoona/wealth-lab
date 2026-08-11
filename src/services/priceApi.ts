@@ -358,6 +358,10 @@ export interface RedStreakAlert {
   lows: number[];
   lowest: number | null;      // ต่ำสุดของสตรีค = จุดต่ำสุดที่ราคาลงไปแตะ
   lowCurrency: string | null; // สกุลเงินของ lows/lowest (แปลงแล้วถ้าส่ง opts.currency มา)
+  // เวลาเปิดของ "แท่งแดงแท่งแรก" ในสตรีคปัจจุบัน (ms epoch), null = API ไม่ได้ให้เวลามา
+  // มีไว้เพื่อแยก "สตรีคเดิมที่กดปิดแจ้งเตือนไปแล้ว" ออกจาก "สตรีคใหม่ที่ยาวเท่ากันพอดี"
+  // ถ้าเทียบด้วยจำนวนแท่งอย่างเดียว แดง 2 วันรอบใหม่จะถูกกลืนหายไปกับรอบเก่าที่กดปิดไว้
+  streakStartAt: number | null;
 }
 
 // นับ "แท่งแดงติดกันล่าสุด" (แท่งแดง = close < open) จากแท่งท้ายสุดไล่ย้อนขึ้นไป
@@ -369,16 +373,19 @@ function recentEvenRedStreak(
   closes: any[],
   lows: any[] = [],
   every = 2,
-  lowCurrency: string | null = null
+  lowCurrency: string | null = null,
+  // เวลาเปิดของแต่ละแท่ง (ms epoch) เรียงคู่กับ opens/closes — ไม่ส่งมาก็ยังนับสตรีคได้ปกติ
+  times: any[] = []
 ): RedStreakAlert | null {
   const step = Number.isFinite(every) && every >= 1 ? Math.floor(every) : 2;
-  // [open, close, low] — low เป็น NaN ได้ (Yahoo คืน null บางแท่ง) แต่แท่งนั้นยังนับเป็นแดงได้ปกติ
-  const pairs: [number, number, number][] = [];
+  // [open, close, low, time] — low/time เป็น NaN ได้ (Yahoo คืน null บางแท่ง) แต่แท่งนั้นยังนับเป็นแดงได้ปกติ
+  const pairs: [number, number, number, number][] = [];
   for (let i = 0; i < opens.length; i++) {
     const o = parseFloat(opens[i]);
     const c = parseFloat(closes[i]);
     const l = parseFloat(lows[i]);
-    if (!isNaN(o) && !isNaN(c)) pairs.push([o, c, l]);
+    const t = Number(times[i]);
+    if (!isNaN(o) && !isNaN(c)) pairs.push([o, c, l, t]);
   }
   // นับแท่งแดงติดกันจากท้ายสุด
   let streak = 0;
@@ -391,7 +398,16 @@ function recentEvenRedStreak(
   // ไม่งั้นตั้งกฎแล้วจอเงียบ แยกไม่ออกระหว่าง "ยังไม่ครบ" กับ "ตั้งไม่ติด"
   const met = streak >= step && streak % step === 0;
   if (streak === 0 || pairs.length === 0) {
-    return { count: 0, dropPercent: 0, every: step, met: false, lows: [], lowest: null, lowCurrency };
+    return {
+      count: 0,
+      dropPercent: 0,
+      every: step,
+      met: false,
+      lows: [],
+      lowest: null,
+      lowCurrency,
+      streakStartAt: null,
+    };
   }
   const firstIdx = pairs.length - streak;
   const startOpen = pairs[firstIdx][0];
@@ -409,6 +425,8 @@ function recentEvenRedStreak(
     lows: streakLows,
     lowest: streakLows.length > 0 ? Math.min(...streakLows) : null,
     lowCurrency,
+    // เวลาเปิดของแท่งแดงแท่งแรกในสตรีค — ใช้ตัดสินว่า "ปิดแจ้งเตือนที่กดไว้" ยังเป็นรอบเดิมอยู่ไหม
+    streakStartAt: Number.isFinite(pairs[firstIdx][3]) ? pairs[firstIdx][3] : null,
   };
 }
 
@@ -482,7 +500,8 @@ export async function getTwoRedDays(
         closed.map((k) => k[4]),
         closed.map((k) => k[3]),
         every,
-        'USD'
+        'USD',
+        closed.map((k) => k[0]) // openTime (ms)
       );
       return convertStreakLows(alert, 'USD', opts.currency);
     }
@@ -505,6 +524,8 @@ export async function getTwoRedDays(
         let lows: any[] = q.low || [];
         // ตัด "แท่งที่ยังไม่ปิด" ออกก่อนนับเสมอ — วิธีเช็คต่างกันตามกรอบเวลา
         const ts: number[] | undefined = result?.timestamp;
+        // เวลาเปิดของแต่ละแท่งเป็น ms (Yahoo คืนหน่วยวินาที) — ต้องถูกตัดพร้อมกับ opens/closes/lows
+        let times: any[] = (ts || []).map((t) => Number(t) * 1000);
         const lastTs = ts?.[ts.length - 1];
         let dropLast = false;
         if (lastTs != null) {
@@ -522,12 +543,13 @@ export async function getTwoRedDays(
           opens = opens.slice(0, -1);
           closes = closes.slice(0, -1);
           lows = lows.slice(0, -1);
+          times = times.slice(0, -1);
         }
         // สกุลเงินของแท่งเทียน = สกุลของตลาด (SET → THB, NYSE → USD) ไม่ใช่สกุลที่ผู้ใช้ตั้งไว้
         const srcCurrency: string | null = result?.meta?.currency
           ? String(result.meta.currency).toUpperCase()
           : null;
-        const alert = recentEvenRedStreak(opens, closes, lows, every, srcCurrency);
+        const alert = recentEvenRedStreak(opens, closes, lows, every, srcCurrency, times);
         return convertStreakLows(alert, srcCurrency, opts.currency);
       }
       return null;

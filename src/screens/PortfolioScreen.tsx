@@ -41,7 +41,9 @@ import {
   updateInvestment,
   updateInvestmentPrices,
   saveInvestment,
+  setRedAck,
 } from '../services/investmentStorage';
+import { isRedAckActive, isRedAckStale } from '../utils/redAlert';
 import {
   formatCurrency,
   formatCurrencyWithType,
@@ -269,6 +271,7 @@ export default function PortfolioScreen() {
   // แท่งแดงติดกันเป็นเลขคู่ (2/4/6…) = สัญญาณลงไม้ตามกฎ "ลงทุก  2 แท่งแดง"
   const [redAlerts, setRedAlerts] = useState<
     {
+      id: string;            // id ของรายการลงทุน — ต้องมีเพื่อกด "ซื้อเพิ่มแล้ว" เขียนกลับได้
       type: InvestmentType;
       symbol: string;
       name: string;
@@ -283,6 +286,9 @@ export default function PortfolioScreen() {
       lowest: number | null;
       lowCurrency: string | null; // สกุลที่แปลงมาแล้ว (null = API ไม่บอกสกุล) — ใช้ตอน format
       currency: string;           // สกุลของรายการ — ใช้เป็น fallback ตอน API ไม่บอกสกุลของแท่ง
+      // กด "ซื้อเพิ่มแล้ว" ปิดแจ้งเตือนรอบนี้ไว้หรือยัง (ดู utils/redAlert)
+      acked: boolean;
+      streakStartAt: number | null; // เวลาเปิดแท่งแรกของสตรีค — ใช้ตอนบันทึกการปิดแจ้งเตือน
     }[]
   >([]);
   // เช็คเสร็จหรือยัง — ต้องบอกให้รู้ว่า "เช็คแล้วไม่มี" ต่างจาก "ยังไม่ได้เช็ค/เช็คไม่ได้"
@@ -303,6 +309,7 @@ export default function PortfolioScreen() {
   const [sellNotesInput, setSellNotesInput] = useState('');   // ขายเพราะอะไร — ไว้ทบทวนฝีมือย้อนหลัง
   const [sellToPowder, setSellToPowder] = useState(true);     // เงินที่ขายได้ → เข้าเงินรอลงทุนเลย
   const [showRealizedList, setShowRealizedList] = useState(false); // กาง/ยุบรายดีลที่ขายแล้ว
+  const [showRedAcked, setShowRedAcked] = useState(false);         // กาง/ยุบตัวที่กด "ซื้อเพิ่มแล้ว"
   // ── ตัวกรองรายการลงทุน — ยุบไว้เป็นค่าเริ่มต้น กดกางเมื่อพอร์ตเริ่มเยอะ ──
   const [showFilter, setShowFilter] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -380,11 +387,30 @@ export default function PortfolioScreen() {
         }),
       }))
     )
-      .then((results) =>
+      .then((results) => {
+        const usable = results.filter((r) => r.alert !== null);
+        // ล้าง "ซื้อเพิ่มแล้ว" ที่หมดอายุแล้ว (สตรีคขาด หรือแดงต่อจนครบรอบใหม่) ออกจาก DB
+        // ไม่ล้างทิ้ง แถวจะค้างสถานะของรอบที่จบไปนานแล้ว แล้วรอบถัดไปจะอ่านผิด
+        // best-effort: เขียนไม่ได้ (ยังไม่รัน SQL) ก็ไม่ขวางการโชว์ผล
+        const staleIds = usable.filter((r) => isRedAckStale(r.inv, r.alert!)).map((r) => r.inv.id);
+        staleIds.forEach((id) => {
+          setRedAck(id, null, null).catch(() => {});
+        });
+        if (staleIds.length > 0) {
+          // ล้างในหน่วยความจำด้วย — หน้าแก้ไขการลงทุนรับ Investment จากลิสต์นี้ไปตรง ๆ
+          // ไม่ล้าง จะไปโชว์ว่า "ซื้อเพิ่มแล้ว" ของรอบที่จบไปแล้ว
+          setInvestments((list) =>
+            list.map((inv) =>
+              staleIds.includes(inv.id)
+                ? { ...inv, redAckCount: undefined, redAckStreakAt: undefined }
+                : inv
+            )
+          );
+        }
         setRedAlerts(
-          results
-            .filter((r) => r.alert !== null)
+          usable
             .map((r) => ({
+              id: r.inv.id,
               // เก็บ type ไว้ด้วย — ใช้จับคู่กับรายการลงทุนตอนติดป้ายในลิสต์ (symbol เดียวกันข้ามประเภทได้)
               type: r.inv.type,
               symbol: r.inv.symbol,
@@ -400,13 +426,53 @@ export default function PortfolioScreen() {
               // แปลงแล้วก็เป็นสกุลของรายการ, แปลงไม่ได้ก็เป็นสกุลต้นทางที่ API บอก
               lowCurrency: r.alert!.lowCurrency,
               currency: r.inv.currency || 'THB',
+              acked: isRedAckActive(r.inv, r.alert!),
+              streakStartAt: r.alert!.streakStartAt,
             }))
             // เรียงจากลบเยอะสุด → น้อยสุด (dropPercent เป็นค่าลบ)
             .sort((a, b) => a.dropPercent - b.dropPercent)
-        )
-      )
+        );
+      })
       .catch(() => setRedAlerts([]))
       .finally(() => setRedChecking(false));
+  };
+
+  // ── "ซื้อเพิ่มแล้ว" / "เปิดแจ้งเตือนอีกครั้ง" ──
+  // จงใจไม่ไปเพิ่มจำนวน/ปรับต้นทุนของไม้ให้เอง — ลงไปกี่หน่วย ราคาเท่าไหร่ มีแต่ผู้ใช้ที่รู้
+  // ปุ่มนี้ตอบคำถามเดียวคือ "รอบนี้ทำแล้ว" เพื่อให้การ์ดเหลือแต่ตัวที่ยังไม่ได้ลง
+  // ids เป็น array เพราะหนึ่งบรรทัดในการ์ดอาจมาจากหลายไม้ (ตัวเดียวกันคนละโบรก) —
+  // แท่งเทียนเป็นชุดเดียวกัน กด "ซื้อเพิ่มแล้ว" ทีเดียวต้องปิดให้ครบทุกไม้ของตัวนั้น
+  const toggleRedAck = async (
+    a: { ids: string[]; count: number; streakStartAt: number | null },
+    next: boolean
+  ) => {
+    const before = redAlerts;
+    const inGroup = (id: string) => a.ids.includes(id);
+    // อัปเดตจอก่อน แล้วค่อยเขียน DB — กดแล้วต้องเห็นผลทันที ไม่ใช่รอ round-trip
+    setRedAlerts((list) => list.map((x) => (inGroup(x.id) ? { ...x, acked: next } : x)));
+    try {
+      await Promise.all(
+        a.ids.map((id) => setRedAck(id, next ? a.count : null, next ? a.streakStartAt : null))
+      );
+      // ให้ข้อมูลในมือ (ใช้ตอน refresh ราคา/คำนวณต่อ) ตรงกับที่เพิ่งเขียนลง DB
+      setInvestments((list) =>
+        list.map((inv) =>
+          inGroup(inv.id)
+            ? {
+                ...inv,
+                redAckCount: next ? a.count : undefined,
+                redAckStreakAt:
+                  next && a.streakStartAt != null
+                    ? new Date(a.streakStartAt).toISOString()
+                    : undefined,
+              }
+            : inv
+        )
+      );
+    } catch (e: any) {
+      setRedAlerts(before); // เขียนไม่ติด → จอต้องกลับไปตรงกับ DB ไม่ใช่โชว์ว่าปิดแล้วทั้งที่ไม่ได้ปิด
+      await notify(e?.message || 'บันทึกไม่สำเร็จ', 'ข้อผิดพลาด');
+    }
   };
 
   // ── บันทึกการขาย: ปลดล็อก "ผลตอบแทนจริง" แทนการเดาเลขคาดหวัง ──
@@ -948,8 +1014,28 @@ export default function PortfolioScreen() {
   // ตารางค้นสถานะแท่งแดง ต่อ 1 รายการลงทุน — สร้างครั้งเดียว ไม่ต้องวนหาในทุกแถว
   // (เก็บทุกตัวรวมที่ยังไม่ครบรอบ การ์ดรายตัวเอาไปโชว์ความคืบหน้าได้)
   const redAlertByKey = new Map(redAlerts.map((a) => [`${a.type}:${a.symbol}`, a]));
-  // เฉพาะตัวที่ครบรอบจริง — ใช้ในการ์ดสรุป "ถึงคิวลงไม้"
-  const redAlertsMet = redAlerts.filter((a) => a.met);
+  // ยุบแถวของ "ตัวเดียวกัน" ให้เหลือบรรทัดเดียว — ถือ INTC ไว้ 2 โบรกก็เป็นแท่งเทียนชุดเดียวกัน
+  // สองบรรทัดที่เลขเหมือนกันเป๊ะคือเสียงรบกวน ไม่ใช่ข้อมูลเพิ่ม (และ key ซ้ำจนแถวเพี้ยนได้)
+  // เก็บ id ของทุกไม้ไว้ในกลุ่ม เพราะการกด "ซื้อเพิ่มแล้ว" ต้องปิดให้ครบทุกไม้ของตัวนั้น
+  const groupRedAlerts = (list: typeof redAlerts) => {
+    const groups = new Map<string, (typeof list)[number] & { ids: string[]; key: string }>();
+    list.forEach((a) => {
+      // กฎอยู่ในคีย์ด้วย — ตัวเดียวกันแต่ตั้งคนละกรอบเวลา/คนละจำนวนแท่ง คือคนละสัญญาณจริง ๆ
+      // (แดง 2 วัน กับ แดง 2 สัปดาห์ นับคนละชุดแท่ง ยุบรวมกันแล้วเลขจะไม่ตรงกับที่ตั้งไว้)
+      const key = `${a.type}:${a.symbol || a.name}:${a.interval}:${a.every}`;
+      const found = groups.get(key);
+      if (found) found.ids.push(a.id);
+      else groups.set(key, { ...a, ids: [a.id], key });
+    });
+    return Array.from(groups.values());
+  };
+
+  // เฉพาะตัวที่ครบรอบจริง "และยังไม่ได้ลง" — ใช้ในการ์ดสรุป "ถึงคิวลงไม้"
+  // การ์ดนี้คือรายการที่ต้องลงมือ ตัวที่กด "ซื้อเพิ่มแล้ว" ไปแล้วจึงต้องออกจากลิสต์
+  // ไม่งั้นเปิดหน้าทีไรก็เห็นชื่อเดิม แยกไม่ออกว่าอันไหนทำแล้ว/ยังไม่ทำ
+  const redAlertsMet = groupRedAlerts(redAlerts.filter((a) => a.met && !a.acked));
+  // ตัวที่ปิดแจ้งเตือนไว้ — ไม่ทิ้งหายไปเฉย ๆ ต้องกดกางดู/กดยกเลิกได้ ไม่งั้นกดผิดแล้วกู้ไม่ได้
+  const redAlertsAcked = groupRedAlerts(redAlerts.filter((a) => a.acked));
 
   // หน่วยที่ใช้พูดถึงแท่งเทียนตามกรอบเวลา — "แดง 2 วัน" กับ "แดง 2 เดือน" คนละเรื่องกันมาก
   const redUnit = (interval: RedInterval): string =>
@@ -959,18 +1045,9 @@ export default function PortfolioScreen() {
   // ราคาปิดบอกแค่ว่าแท่งแดง แต่ราคาที่ "ลงไปแตะจริง" คือ low — ใช้ตั้งไม้/ตั้ง limit ได้
   // โชว์ค่าเดียว = ต่ำสุดของทั้งสตรีค เพราะนั่นคือเลขที่เอาไปตั้ง limit จริง
   // (เคยลิสต์ low ของทุกแท่ง เก่า→ใหม่ แล้วอ่านแล้วงงว่าเลขไหนคือเลขไหน)
-  const redLowText = (a: {
-    lows: number[];
-    lowest: number | null;
-    lowCurrency: string | null;
-    currency: string;
-  }): string | null => {
-    const v = redLowValue(a);
-    return v ? `ราคาต่ำสุดที่ลงไปแตะ: ${v}` : null;
-  };
-
-  // เลข LOW ล้วน ๆ ไม่มีคำอธิบายนำ — ใช้ในการ์ดสรุป "ถึงคิวลงไม้" ที่บริบทชัดอยู่แล้ว
-  // ส่วนการ์ดรายตัวในลิสต์ยังใช้ redLowText ที่มีคำอธิบาย เพราะเลขลอย ๆ ใต้ราคาซื้อ/ราคาปัจจุบันจะงง
+  //
+  // เลข LOW ล้วน ๆ ไม่มีคำอธิบายนำ — ต่อท้ายป้ายแดง/การ์ดสรุปได้เลย เพราะบริบทชัดอยู่แล้ว
+  // (เคยมีบรรทัด "ราคาต่ำสุดที่ลงไปแตะ: …" แยกใต้ป้าย แต่คำอธิบายยาวกว่าตัวเลขและกินอีกบรรทัดเปล่า ๆ)
   const redLowValue = (a: {
     lows: number[];
     lowest: number | null;
@@ -1028,12 +1105,28 @@ export default function PortfolioScreen() {
                 )}
               </View>
             </View>
-            {/* ป้ายแดง = ครบรอบแล้ว ถึงคิวลงไม้จริง */}
-            {redAlert?.met && (
+            {/* ป้ายแดง = ครบรอบแล้ว ถึงคิวลงไม้จริง
+                LOW ต่อท้ายในป้ายเดียวกัน (เลขเปล่า ๆ หลัง ·) เหมือนการ์ดสรุปด้านบน —
+                ในป้ายที่บอกว่า "ร่วงมาแล้ว x%" ราคาที่ตามมาย่อมหมายถึงจุดต่ำสุดที่ลงไปแตะ */}
+            {redAlert?.met && !redAlert.acked && (
               <View style={styles.redBadge}>
                 <Ionicons name="trending-down" size={12} color={COLORS.error} />
                 <Text style={styles.redBadgeText}>
                   {' '}แดง {redAlert.count} {redUnit(redAlert.interval)} {redAlert.dropPercent.toFixed(1)}% · ถึงคิวลงไม้
+                  {redLowValue(redAlert) ? ` · ${redLowValue(redAlert)}` : ''}
+                </Text>
+              </View>
+            )}
+            {/* ลงไม้รอบนี้ไปแล้ว — ต้องเห็นที่ตัวไม้ ไม่ใช่แค่ในการ์ดสรุป
+                ไม่งั้นเปิดมาเจอตัวที่ราคาร่วงแต่ไม่มีป้ายอะไรเลย จะแยกไม่ออกว่า
+                "ยังไม่ครบรอบ" หรือ "ครบแล้วแต่เราลงไปแล้ว" */}
+            {redAlert?.acked && (
+              <View style={[styles.redBadge, styles.redBadgeAcked]}>
+                <Ionicons name="checkmark-circle-outline" size={12} color={COLORS.textSecondary} />
+                <Text style={[styles.redBadgeText, styles.redBadgeTextAcked]}>
+                  {' '}ซื้อเพิ่มแล้วตอนแดง {redAlert.count} {redUnit(redAlert.interval)}
+                  {redLowValue(redAlert) ? ` · ${redLowValue(redAlert)}` : ''} · เตือนอีกครั้งที่{' '}
+                  {redAlert.count + redAlert.every} {redUnit(redAlert.interval)}
                 </Text>
               </View>
             )}
@@ -1044,12 +1137,8 @@ export default function PortfolioScreen() {
               <Text style={styles.redRuleText}>
                 กฎ: ทุก {redAlert.every} {redUnit(redAlert.interval)}แดงติดกัน · ตอนนี้ {redAlert.count}/
                 {redAlert.every}
+                {redLowValue(redAlert) ? ` · ${redLowValue(redAlert)}` : ''}
               </Text>
-            )}
-            {/* LOW ของแท่งแดงที่นับได้ — โชว์ทั้งตอนครบรอบและตอนตั้งกฎเองแต่ยังไม่ครบ
-                (ตัวที่ใช้ค่าเริ่มต้นและยังไม่ครบรอบไม่โชว์ จะได้ไม่รกทั้งพอร์ต) */}
-            {redAlert && (redAlert.met || redAlert.custom) && redLowText(redAlert) && (
-              <Text style={styles.redRuleText}>{redLowText(redAlert)}</Text>
             )}
             <View style={styles.investmentDetails}>
               <Text style={styles.investmentQuantity}>
@@ -1754,33 +1843,84 @@ export default function PortfolioScreen() {
             เมื่อก่อนซ่อนทั้งการ์ดตอนไม่มีสัญญาณ ทำให้แยกไม่ออกว่า "เช็คแล้วไม่มี" หรือ "พัง/ไม่ได้เช็ค" */}
         {redCheckedCount > 0 && (
           <View style={[styles.losersCard, isDesktop && styles.cardGridItem]}>
-            <View style={styles.cardTitleRow}>
-              <Ionicons name="warning" size={16} color={COLORS.error} />
-              <Text style={styles.losersTitle}>ถึงคิวลงไม้ — แดงติดกันครบรอบ</Text>
-            </View>
+            {/* หัวการ์ดใช้ชุดเดียวกับการ์ดอื่นในหน้านี้ (ไอคอน outline 18 สีหลัก นำหน้าชื่อในบรรทัดเดียวกัน)
+                เดิมเป็นไอคอนเตือนสีแดงขนาด 16 อยู่การ์ดเดียว เลยดูเป็นคนละระบบกับที่เหลือทั้งหน้า */}
+            <Text style={styles.goalCardTitle}>
+              <Ionicons name="trending-down-outline" size={18} color={COLORS.primary} /> ถึงคิวลงไม้
+              — แดงติดกันครบรอบ
+            </Text>
             {redChecking ? (
               <Text style={styles.tpSubText}>กำลังเช็คแท่งเทียนของ {redCheckedCount} ตัว…</Text>
             ) : redAlertsMet.length === 0 ? (
               <Text style={styles.tpSubText}>
-                เช็ค {redCheckedCount} ตัวแล้ว — ยังไม่มีตัวไหนแดงติดกันครบรอบ (นับเฉพาะแท่งที่ปิดแล้ว){'\n'}
+                เช็ค {redCheckedCount} ตัวแล้ว — ยังไม่มีตัวไหนที่ต้องลงไม้ตอนนี้ (นับเฉพาะแท่งที่ปิดแล้ว){'\n'}
                 สถานะรายตัวดูได้ที่การ์ดของแต่ละรายการด้านล่าง · ตั้งกรอบเวลา (วัน/สัปดาห์/เดือน)
                 และจำนวนแท่งแยกรายตัวได้ที่หน้าแก้ไขการลงทุน
               </Text>
             ) : null}
             {redAlertsMet.map((a) => (
-              <View key={`${a.type}:${a.symbol}`} style={styles.loserRow}>
-                <Text style={styles.loserName} numberOfLines={1}>
-                  {a.symbol || a.name}{' '}
-                  <Text style={styles.tpSubText}>· แดง {a.count} {redUnit(a.interval)}ติดกัน</Text>
-                </Text>
-                {/* LOW ต่อท้าย % เลย ไม่ต้องมีบรรทัดคำอธิบายแยก — ในการ์ดที่ทุกแถวเป็น "ตัวที่ร่วง"
-                    ราคาที่ตามหลัง % ย่อมหมายถึงจุดต่ำสุดที่ลงไปแตะอยู่แล้ว (เอาไปตั้ง limit ได้เลย) */}
-                <Text style={styles.loserPct}>
-                  {a.dropPercent.toFixed(2)}%
-                  {redLowValue(a) ? <Text style={styles.loserLow}> · {redLowValue(a)}</Text> : null}
-                </Text>
+              <View key={a.key} style={styles.redAlertRow}>
+                <View style={styles.loserRow}>
+                  <Text style={styles.loserName} numberOfLines={1}>
+                    {a.symbol || a.name}{' '}
+                    <Text style={styles.tpSubText}>· แดง {a.count} {redUnit(a.interval)}ติดกัน</Text>
+                  </Text>
+                  {/* LOW ต่อท้าย % เลย ไม่ต้องมีบรรทัดคำอธิบายแยก — ในการ์ดที่ทุกแถวเป็น "ตัวที่ร่วง"
+                      ราคาที่ตามหลัง % ย่อมหมายถึงจุดต่ำสุดที่ลงไปแตะอยู่แล้ว (เอาไปตั้ง limit ได้เลย) */}
+                  <Text style={styles.loserPct}>
+                    {a.dropPercent.toFixed(2)}%
+                    {redLowValue(a) ? <Text style={styles.loserLow}> · {redLowValue(a)}</Text> : null}
+                  </Text>
+                </View>
+                {/* ปิดแจ้งเตือนรอบนี้ — ไม่ได้ไปแก้จำนวน/ต้นทุนให้ ต้องเข้าไปแก้ที่การ์ดของไม้เอง
+                    (ลงไปกี่หน่วย ราคาเท่าไหร่ มีแต่ผู้ใช้ที่รู้ เดาให้แล้วต้นทุนเฉลี่ยจะเพี้ยนเงียบ ๆ) */}
+                <TouchableOpacity style={styles.redAckButton} onPress={() => toggleRedAck(a, true)}>
+                  <Ionicons name="checkmark-circle-outline" size={14} color={COLORS.primary} />
+                  <Text style={styles.redAckButtonText}> ซื้อเพิ่มแล้ว · ปิดเตือนจนกว่าจะครบรอบใหม่</Text>
+                </TouchableOpacity>
               </View>
             ))}
+
+            {/* ตัวที่กดปิดไว้ — ยุบเป็นบรรทัดเดียว กางดูได้ ไม่ปล่อยให้หายไปเฉย ๆ
+                ต้องมีทางกดกลับ ไม่งั้นกดผิดทีเดียวก็เงียบยาวจนกว่าจะครบรอบถัดไป */}
+            {!redChecking && redAlertsAcked.length > 0 && (
+              <>
+                <TouchableOpacity
+                  style={styles.detailToggleInline}
+                  onPress={() => setShowRedAcked((v) => !v)}
+                >
+                  <Ionicons
+                    name={showRedAcked ? 'chevron-up' : 'chevron-down'}
+                    size={14}
+                    color={COLORS.primary}
+                  />
+                  <Text style={styles.detailToggleText}>
+                    {' '}ซื้อเพิ่มแล้วรอบนี้ ({redAlertsAcked.length}) — รอแดงครบรอบใหม่ถึงจะเตือนอีก
+                  </Text>
+                </TouchableOpacity>
+                {showRedAcked &&
+                  redAlertsAcked.map((a) => (
+                    <View key={`acked:${a.key}`} style={styles.redAlertRow}>
+                      <View style={styles.loserRow}>
+                        <Text style={[styles.loserName, styles.redAckedName]} numberOfLines={1}>
+                          {a.symbol || a.name}{' '}
+                          <Text style={styles.tpSubText}>
+                            · ปิดไว้ตอนแดง {a.count} {redUnit(a.interval)} · เตือนอีกครั้งที่{' '}
+                            {a.count + a.every} {redUnit(a.interval)}
+                          </Text>
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.redAckButton}
+                        onPress={() => toggleRedAck(a, false)}
+                      >
+                        <Ionicons name="notifications-outline" size={14} color={COLORS.primary} />
+                        <Text style={styles.redAckButtonText}> เปิดแจ้งเตือนอีกครั้ง</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+              </>
+            )}
           </View>
         )}
 
@@ -2788,16 +2928,29 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     padding: 16,
   },
-  losersTitle: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
+  // แถวหนึ่งตัวในการ์ด "ถึงคิวลงไม้" = บรรทัดข้อมูล + ปุ่มปิดแจ้งเตือน
+  // มีเส้นคั่นเพราะแต่ละตัวกินสองบรรทัด ถ้าไม่คั่นจะอ่านไม่ออกว่าปุ่มเป็นของตัวไหน
+  redAlertRow: {
+    paddingTop: 6,
+    marginTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
   },
-  cardTitleRow: {
+  // ปุ่มรอง — จงใจให้จืดกว่าตัวเลข % ที่เป็นพระเอกของแถว
+  redAckButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  redAckButtonText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.primary,
+  },
+  // ตัวที่ปิดแจ้งเตือนไว้แล้ว — จางลงเพื่อบอกว่า "ไม่ต้องทำอะไรกับอันนี้แล้ว"
+  redAckedName: {
+    color: COLORS.textSecondary,
   },
   loserRow: {
     flexDirection: 'row',
@@ -3272,6 +3425,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.error,
+  },
+  // ── ป้าย "ลงไม้รอบนี้ไปแล้ว" — กรอบ/ตัวอักษรจืดลง ──
+  // ต้องเห็นว่ามีสถานะอยู่ แต่ห้ามเด่นเท่าตัวที่ยังต้องลงมือ ไม่งั้นสายตากวาดแล้วแยกไม่ออกว่าอันไหนต้องทำ
+  redBadgeAcked: {
+    borderColor: COLORS.border,
+  },
+  redBadgeTextAcked: {
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
   },
   // สถานะกฎที่ยังไม่ครบรอบ — ตั้งใจให้จืดกว่าป้ายแดง จะได้ไม่แย่งความสนใจจากตัวที่ถึงคิวจริง
   redRuleText: {

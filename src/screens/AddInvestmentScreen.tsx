@@ -47,6 +47,10 @@ export default function AddInvestmentScreen() {
   // (กองทุน/ทอง/อื่น ๆ ไม่มีข้อมูลแท่งเทียน จึงไม่โชว์ส่วนนี้เลย)
   const [redInterval, setRedInterval] = useState<RedInterval>(DEFAULT_RED_INTERVAL);
   const [redEvery, setRedEvery] = useState(String(DEFAULT_RED_EVERY));
+  // "ซื้อเพิ่มแล้วรอบนี้" ที่กดปิดไว้จากหน้าพอร์ต — หน้านี้แค่บอกสถานะกับให้กดยกเลิกได้
+  // ต้องเห็นตรงนี้ด้วย เพราะเวลาจะซื้อเพิ่มจริงคนเข้ามาแก้จำนวน/ต้นทุนที่หน้านี้
+  // ไม่งั้นจะงงว่าทำไมตัวนี้ราคาร่วงแต่การ์ดสรุปไม่ขึ้นเตือน
+  const [keepRedAck, setKeepRedAck] = useState(true);
   const hasCandles = type === 'crypto' || type === 'stock_th' || type === 'stock_foreign';
   const [isFetchingPrice, setIsFetchingPrice] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -88,6 +92,7 @@ export default function AddInvestmentScreen() {
       setPlatform(investment.platform || '');
       setRedInterval(investment.redInterval || DEFAULT_RED_INTERVAL);
       setRedEvery(String(investment.redEvery || DEFAULT_RED_EVERY));
+      setKeepRedAck(true);
     }
   }, [investment]);
 
@@ -221,6 +226,10 @@ export default function AddInvestmentScreen() {
       notify('จำนวนแท่งแดงต้องเป็นตัวเลข 1–12', 'ข้อผิดพลาด');
       return;
     }
+    // แก้กฎแท่งแดง = เริ่มนับใหม่ ของที่ปิดเตือนไว้ตามกฎเดิมใช้ต่อไม่ได้
+    const redRuleChanged =
+      (investment?.redInterval || DEFAULT_RED_INTERVAL) !== redInterval ||
+      (investment?.redEvery || DEFAULT_RED_EVERY) !== parsedRedEvery;
 
     try {
       const investmentData: Investment = {
@@ -246,6 +255,12 @@ export default function AddInvestmentScreen() {
           hasCandles && parsedRedEvery && parsedRedEvery !== DEFAULT_RED_EVERY
             ? parsedRedEvery
             : undefined,
+        // ── "ซื้อเพิ่มแล้วรอบนี้" ที่ปิดเตือนไว้ ──
+        // ต้องส่งกลับไปด้วยเหมือน targetReturnPercent (updateInvestment เขียนทับทั้งแถว)
+        // ทิ้งเมื่อผู้ใช้กดยกเลิก หรือเมื่อกฎเปลี่ยน — "แดง 2 แท่ง" ของกฎรายวันกับรายสัปดาห์
+        // คนละความหมายกัน เก็บเลขเดิมไว้ข้ามกฎจะปิดเตือนผิดรอบแบบไม่มีอะไรฟ้อง
+        redAckCount: keepRedAck && !redRuleChanged ? investment?.redAckCount : undefined,
+        redAckStreakAt: keepRedAck && !redRuleChanged ? investment?.redAckStreakAt : undefined,
       };
 
       if (isEditing) await updateInvestment(investmentData);
@@ -640,6 +655,31 @@ export default function AddInvestmentScreen() {
               {' '}(ครบ {redEvery || DEFAULT_RED_EVERY} / {(parseInt(redEvery, 10) || DEFAULT_RED_EVERY) * 2} / {(parseInt(redEvery, 10) || DEFAULT_RED_EVERY) * 3}…)
               {' '}· นับเฉพาะแท่งที่ปิดแล้ว
             </Text>
+
+            {/* ตัวนี้กด "ซื้อเพิ่มแล้ว" ปิดเตือนไว้อยู่ — บอกตรงนี้เพราะหน้านี้คือที่ที่คนมาแก้จำนวน
+                ตอนซื้อเพิ่มจริง ถ้าไม่บอกจะกลายเป็นว่าราคาร่วงแล้วการ์ดสรุปเงียบโดยไม่รู้สาเหตุ */}
+            {!!investment?.redAckCount && (
+              <TouchableOpacity
+                style={styles.redAckRow}
+                onPress={() => setKeepRedAck((v) => !v)}
+              >
+                <Ionicons
+                  name={keepRedAck ? 'checkbox-outline' : 'square-outline'}
+                  size={18}
+                  color={keepRedAck ? COLORS.primary : COLORS.textSecondary}
+                />
+                <Text style={styles.redAckRowText}>
+                  {' '}ซื้อเพิ่มแล้วตอนแดง {investment.redAckCount}{' '}
+                  {RED_INTERVALS.find((r) => r.value === redInterval)?.unit} — ปิดแจ้งเตือนไว้
+                  {'\n'}
+                  <Text style={styles.redAckHint}>
+                    {keepRedAck
+                      ? 'เอาเครื่องหมายออกถ้าอยากให้เตือนอีกครั้งทันที'
+                      : 'บันทึกแล้วจะกลับมาเตือนตัวนี้อีกครั้ง'}
+                  </Text>
+                </Text>
+              </TouchableOpacity>
+            )}
           </>
         )}
 
@@ -683,6 +723,30 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 12,
     lineHeight: 18,
+  },
+  // แถวสถานะ "ซื้อเพิ่มแล้ว — ปิดแจ้งเตือนไว้" (กดเพื่อยกเลิก)
+  redAckRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 10,
+    marginBottom: 12,
+  },
+  redAckRowText: {
+    flex: 1,
+    // TextInput/Text ในแถว flex ต้องมี minWidth: 0 บนเว็บ ไม่งั้นความกว้างขั้นต่ำโดยธรรมชาติดันจนล้น
+    minWidth: 0,
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
+    lineHeight: 20,
+  },
+  // ข้อความช่วยในแถวเดียวกัน — ไม่มี margin เพราะซ้อนอยู่ใน Text (RN ไม่คิด margin ให้)
+  redAckHint: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
   },
   label: {
     fontSize: 10,
