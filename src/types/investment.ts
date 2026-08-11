@@ -37,6 +37,10 @@ export interface Investment {
   // ต้องมีทั้งคู่ ไม่งั้นสตรีคใหม่ที่ยาวเท่ากันพอดี (แดง 2 วันอีกรอบ) จะถูกกลืนหายไปเงียบ ๆ
   redAckCount?: number;      // จำนวนแท่งแดงติดกัน ณ ตอนที่กด "ซื้อเพิ่มแล้ว"
   redAckStreakAt?: string;   // ISO ของเวลาเปิดแท่งแรกในสตรีคที่กดปิดไว้
+  // ── รอบลงทุนที่ไม้นี้สังกัด (ดู types/cycle.ts) ──
+  // undefined = ไม่อยู่ในระบบรอบ = ถือยาว ไม่ถูกปิดตามรอบและไม่กินงบของรอบ
+  // ทางหนีนี้ต้องมี: ไม้ที่เหตุผลซื้อพังแล้วต้องถอนออกจากตะกร้าได้ ไม่ใช่ถูกลากไปปิดพร้อมกัน
+  cycleId?: string;
 }
 
 // กรอบเวลาแท่งเทียนของกฎ "แดงติดกัน"
@@ -86,6 +90,9 @@ export interface RealizedTrade {
   // (โน้ต/เป้าหมายกำไร ไม่ได้อยู่ในคอลัมน์อื่น ถ้าไม่เก็บไว้จะหายตอนกู้คืน)
   // เก็บใน column jsonb `source_investment` — ต้องรัน sql/realized_trades_undo.sql ก่อน
   sourceInvestment?: Investment;
+  // รอบลงทุนที่ไม้นี้สังกัดตอนขาย (column `cycle_id` — ต้องรัน sql/investment_cycles.sql ก่อน)
+  // เก็บไว้เพื่ออ่านย้อนว่า "รอบที่ 3 ปิดไปแล้วได้กำไรจากไม้ไหนบ้าง"
+  cycleId?: string;
 }
 
 export interface PortfolioSummary {

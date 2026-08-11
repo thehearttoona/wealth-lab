@@ -38,6 +38,7 @@ const mapInvestmentFromDb = (row: any): Investment => ({
   redEvery: row.red_every ?? undefined,
   redAckCount: row.red_ack_count ?? undefined,
   redAckStreakAt: row.red_ack_streak_at ?? undefined,
+  cycleId: row.cycle_id ?? undefined,
 });
 
 const mapInvestmentToDb = (inv: Investment, userId: string) => ({
@@ -59,6 +60,7 @@ const mapInvestmentToDb = (inv: Investment, userId: string) => ({
   red_every: inv.redEvery ?? null,
   red_ack_count: inv.redAckCount ?? null,
   red_ack_streak_at: inv.redAckStreakAt ?? null,
+  cycle_id: inv.cycleId ?? null,
   user_id: userId,
 });
 
@@ -70,6 +72,7 @@ const OPTIONAL_COLUMNS = [
   'red_every',
   'red_ack_count',
   'red_ack_streak_at',
+  'cycle_id',
 ] as const;
 
 // รับได้ทั้งแถวเดียวและหลายแถว (bulk insert ก็ต้องตัดคอลัมน์เหมือนกัน)
@@ -218,6 +221,37 @@ export const setRedAck = async (
     summary: count != null ? `ซื้อเพิ่มแล้ว — ปิดแจ้งเตือนแดง ${count} แท่ง` : 'เปิดแจ้งเตือนแท่งแดงอีกครั้ง',
     payload,
   });
+};
+
+// ── ผูก/ถอนไม้เข้ารอบลงทุน (ดู types/cycle.ts) ──
+// แตะแค่คอลัมน์ cycle_id เหมือน setRedAck — ผู้ใช้กดจากการ์ดสรุปที่ถือข้อมูลอาจเก่ากว่า DB
+// cycleId = null คือ "ถอนออกจากตะกร้า" (กลับไปเป็นไม้ถือยาว)
+// ยิงขนานเพราะ Supabase ไม่มี bulk update ที่ค่าต่างกันต่อแถว แต่ที่นี่ค่าเดียวกันทุกแถว → ใช้ .in()
+export const setInvestmentCycle = async (
+  ids: string[],
+  cycleId: string | null
+): Promise<void> => {
+  if (ids.length === 0) return;
+  const { error } = await supabase
+    .from('investments')
+    .update({ cycle_id: cycleId })
+    .in('id', ids);
+  if (error) {
+    // ยังไม่ได้รัน sql/investment_cycles.sql — บอกให้ชัด ไม่ปล่อยให้ปุ่มเหมือนกดไม่ติด
+    if (/cycle_id/i.test(error.message || '')) {
+      throw new Error('ยังไม่ได้เพิ่มคอลัมน์ cycle_id — รัน sql/investment_cycles.sql ที่ Supabase ก่อน');
+    }
+    throw error;
+  }
+  await logActivityBatch(
+    ids.map((id) => ({
+      entity: 'investment' as const,
+      action: 'update' as const,
+      entityId: id,
+      summary: cycleId ? `เข้ารอบลงทุน ${cycleId}` : 'ถอนออกจากรอบลงทุน',
+      payload: { cycle_id: cycleId },
+    }))
+  );
 };
 
 // เพิ่มหลายรายการพร้อมกัน (bulk insert) — ใช้ในหน้า "จัดการตามแพลตฟอร์ม"

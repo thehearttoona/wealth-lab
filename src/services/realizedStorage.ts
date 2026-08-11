@@ -22,6 +22,8 @@ const mapFromDb = (row: any): RealizedTrade => ({
   // แพลตฟอร์ม: อ่านจากคอลัมน์ก่อน ถ้ายังไม่ได้รัน SQL ก็ยังพอดึงจาก snapshot ได้
   platform: row.platform ?? row.source_investment?.platform ?? undefined,
   sourceInvestment: row.source_investment ?? undefined,
+  // รอบลงทุนที่ไม้นี้อยู่ตอนขาย — ใช้อ่านประวัติว่ารอบไหนทำได้เท่าไหร่
+  cycleId: row.cycle_id ?? undefined,
 });
 
 const mapToDb = (t: RealizedTrade, userId: string) => ({
@@ -43,13 +45,14 @@ const mapToDb = (t: RealizedTrade, userId: string) => ({
 // คอลัมน์ที่เพิ่มทีหลัง (sql/realized_trades_undo.sql) — ยังไม่ได้รัน SQL ก็ต้องขายได้
 // ห้ามให้การบันทึกการขายพังเพราะฟีเจอร์ย้อนคืน แต่ก็ห้ามทิ้งคอลัมน์ที่มีจริงไปด้วย
 // จึงตัดทิ้งทีละคอลัมน์ตามชื่อที่ error ฟ้องมา แล้วลองใหม่
-const OPTIONAL_COLUMNS = ['platform', 'source_investment'] as const;
+const OPTIONAL_COLUMNS = ['platform', 'source_investment', 'cycle_id'] as const;
 
 export const saveRealizedTrade = async (trade: RealizedTrade): Promise<void> => {
   const userId = await getUserId();
   let payload: Record<string, any> = { ...mapToDb(trade, userId) };
   if (trade.platform) payload.platform = trade.platform;
   if (trade.sourceInvestment) payload.source_investment = trade.sourceInvestment;
+  if (trade.cycleId) payload.cycle_id = trade.cycleId;
 
   const logSale = () =>
     logActivity({

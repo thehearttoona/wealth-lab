@@ -26,6 +26,7 @@ export type ActivityEntity =
   | 'purchase_goal'
   | 'portfolio_goal'
   | 'investment_plan'
+  | 'investment_cycle'
   | 'tax_profile'
   | 'currency'
   | 'platform'

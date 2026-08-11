@@ -15,6 +15,8 @@ import { Investment, InvestmentType, INVESTMENT_TYPES, INVESTMENT_PLATFORMS, DEF
 import { getCurrencies } from '../services/currencyStorage';
 import { getPlatforms } from '../services/platformStorage';
 import { saveInvestment, updateInvestment } from '../services/investmentStorage';
+import { getOpenCycles } from '../services/cycleStorage';
+import { basketAccepts } from '../types/cycle';
 import { updateInvestmentPrice, searchCryptoList, CryptoSearchResult, searchStockList, StockSearchResult } from '../services/priceApi';
 import { searchFundList, FundCatalogItem } from '../services/fundCatalog';
 import { COLORS } from '../utils/constants';
@@ -261,7 +263,23 @@ export default function AddInvestmentScreen() {
         // คนละความหมายกัน เก็บเลขเดิมไว้ข้ามกฎจะปิดเตือนผิดรอบแบบไม่มีอะไรฟ้อง
         redAckCount: keepRedAck && !redRuleChanged ? investment?.redAckCount : undefined,
         redAckStreakAt: keepRedAck && !redRuleChanged ? investment?.redAckStreakAt : undefined,
+        // ── รอบลงทุนที่ไม้นี้สังกัด ──
+        // แก้ไข: ส่งค่าเดิมกลับไปเหมือน targetReturnPercent (updateInvestment เขียนทับทั้งแถว)
+        // สร้างใหม่: ผูกเข้ารอบที่เปิดอยู่ของตะกร้านี้ (เติมค่าให้ด้านล่างก่อนบันทึก)
+        cycleId: investment?.cycleId,
       };
+
+      // ไม้ที่ซื้อใหม่เข้ารอบที่เปิดอยู่ของประเภทนี้ให้เอง — ไม่งั้นต้องมากดดึงเข้ารอบทุกครั้ง
+      // ยังไม่ได้รัน sql/investment_cycles.sql / ไม่มีรอบเปิด → ปล่อยเป็น undefined = ถือยาว
+      if (!isEditing) {
+        try {
+          const open = await getOpenCycles();
+          const match = open.find((c) => basketAccepts(c.basket, investmentData.type));
+          if (match) investmentData.cycleId = match.id;
+        } catch {
+          // หา​รอบไม่ได้ก็บันทึกไม้ต่อ ห้ามให้ระบบรอบขวางการบันทึกการลงทุน
+        }
+      }
 
       if (isEditing) await updateInvestment(investmentData);
       else await saveInvestment(investmentData);
