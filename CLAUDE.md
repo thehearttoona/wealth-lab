@@ -16,7 +16,9 @@ Guidance for Claude Code (claude.ai/code) in this repo. **Read §0 and §1 alway
 | **State** | No global store. Every screen re-reads its storage service in `useFocusEffect`. |
 | **Removed, don't reintroduce** | MT5 grid trading, in-app AI assistant (`aiService`/`AIAssistant`), `react-native-iconify`. |
 
-Scale to expect: `PortfolioScreen` **3564** lines, `HomeScreen` 1935, `TaxScreen` 1515. Read the screen's row in §7.2 before opening it.
+Scale to expect: `PortfolioScreen` **2876** lines, `HomeScreen` 1935, `TaxScreen` 973. Read the screen's row in §7.2 before opening it.
+
+**Both hubs were split (2026-08-12).** พอร์ต and ภาษี each used to stack every feature as a full card in one scroll. Now each heavy card is its own route, and the hub keeps a one-line summary + a way in: พอร์ต → `Realized` / `Cycles` / `DryPowder`, ภาษี → `TaxIncome` / `TaxDeduction`. Nothing was removed. **Add a new area as a route + a summary row, not as another card on the hub.**
 
 ---
 
@@ -33,7 +35,7 @@ Ranked by how often they've already caused a bug.
 7. **Locking a card to a pixel width also needs `flexBasis`.** `flex: 1` compiles to `flex: 1 1 0%` and `flex-basis: 0%` beats `width` — set `width` alone and the card collapses to zero.
 8. **Browser-blocked APIs go through `api/*.js`.** Yahoo/Frankfurter/metals.live send no `Access-Control-Allow-Origin`: fine from curl/Node, silent `"Failed to fetch"` in a browser. **Verify price/network changes in a headless browser (Playwright), never curl** — curl cannot reproduce CORS.
 9. **Never put an API key in client code.** `TWELVE_DATA_API_KEY` lives in Vercel env, read by `api/twelve-data.js`. Anything in `src/` ships in the bundle.
-10. **Dialogs go through `utils/dialog.ts`** (`notify`, `await confirmAsk`) — `react-native-web` no-ops `Alert.alert` with buttons. Icons: Ionicons from `@expo/vector-icons` only. Colors: `COLORS` in `utils/constants.ts` only.
+10. **Dialogs go through `utils/dialog.ts`** (`notify`, `await confirmAsk`) — `react-native-web` no-ops `Alert.alert` with buttons. They now render in `components/DialogHost.tsx`, mounted once in `App.tsx` **outside `NavigationContainer`** (several callers `notify()` then navigate immediately; inside the navigator the toast is popped with the screen). Remove the host and every dialog silently falls back to `window.alert`. Icons: Ionicons from `@expo/vector-icons` only. Colors: `COLORS` in `utils/constants.ts` only.
 11. **Don't make `refreshCurrencyCache()` fire-and-forget** (§5.2) — totals paint with fallback rates and stay wrong until remount.
 12. **Thai everywhere** — new user-facing strings and code comments in Thai. Dates with year > 2400 (BE) go through `toChristianYear()`.
 13. **Never declare a component inside a screen's render body.** A wrapper defined in the function body is a new component type every render, so React remounts its subtree and every `TextInput` inside loses focus after one keystroke. This shipped in `TaxScreen` and made the tax form unfillable. Hoist to module scope, pass state as props (`Section` there is the reference fix).
@@ -67,11 +69,11 @@ vercel --prod --scope thehearttoonas-projects --yes   # may exceed a 2-min tool 
 |---|---|
 | `App.tsx` | Font gate + provider tree (Gesture → SafeArea → Navigation) |
 | `src/navigation/index.tsx` (407) | All routes, both layouts, auth + FX gates → §7.1 |
-| `src/screens/*.tsx` (20) | All UI → §7.2 |
+| `src/screens/*.tsx` (25) | All UI → §7.2 |
 | `src/services/*.ts` (21) | Supabase I/O + external APIs → §4 |
 | `src/utils/*.ts` (19) | Pure domain logic, all business rules → §6 |
 | `src/types/*.ts` (7) | Shapes + the tax/deduction/gain constant tables |
-| `src/components/` | `charts/` (2, §7.3) + `CycleCard`/`CycleModals` (the cycle UI, §6.5) |
+| `src/components/` | `charts/` (2, §7.3) + `CycleCard`/`CycleModals` (the cycle UI, §6.5, used by `CyclesScreen`) + `DialogHost` (all toasts/confirm cards, §1.10) + `TaxFormKit` (`NumberInput`/`num`/`taxStyles` shared by the three tax screens) |
 | `src/hooks/useAuth.ts` | Supabase session/user/loading/signOut |
 | `api/*.js` (2) | Vercel CORS proxies: `yahoo-quote`, `twelve-data` → §5.1 |
 | `sql/*.sql` (13) | Hand-run schema, idempotent → §8 |
@@ -213,7 +215,7 @@ The user's actual strategy: DCA into dips (the red-candle rule) and **close the 
 | `statementParser.ts` (154) | Bank-agnostic paste parser (KBank / K PLUS / SAV passbook): every line carries a running balance, so amount *and* direction come from the delta. **Amounts must have exactly 2 decimals** — the one guard stopping reference numbers being read as money. **`IN_KW` before `OUT_KW`** (`'รับโอนเงิน'` contains `'โอน'`). Opening-balance lines are seeds. Direction: delta > `X1/X2` code > keyword > default `out`. Sets `needsReview` instead of guessing. |
 | `aiAnalysis.ts` (247) | **Not LLM-backed** — local heuristics over `getExpenses()` + `getPortfolioSummary()`, zero network, branded "AI วิเคราะห์". Thresholds: top category >30%, MoM ±20%/−10%, run-rate >1.5×, stock >70%, crypto >20%. MoM compares the **same 1..N day window** and needs `dayOfMonth >= 5` (the old code printed "ลดลง 100%" every 2nd); `stock_th`+`stock_foreign` collapse to one key first. |
 | `redAlert.ts` (40) | Suppressing a snoozed alert needs **both** `count <= redAckCount` **and** the streak's first bar matching `redAckStreakAt` — count alone swallows a broken-then-restarted streak of equal length. `streakStartAt == null` → trust the count. Changing the red rule clears the ack. |
-| `dialog.ts` (48) | Native `Alert.alert` paths pass `onDismiss` → resolve; without it an Android back-press leaves the promise **pending forever**. `notify` returns a promise, so you can await it before navigating over an open dialog. |
+| `dialog.ts` (190) | Store + routing only, no UI (that's `components/DialogHost`). Same two exports as before, so the ~133 call sites are untouched. **`notify` short text → toast (resolves immediately)**; text with `\n` or over 120 chars → card that waits for a press; `confirmAsk` is always a card. Kind is guessed from the Thai text and **`ERROR_RE` is tested first** — otherwise `บันทึกไม่สำเร็จ` matches `สำเร็จ` and paints green. Cards are a queue (one at a time) or a cancel press answers the wrong question. Falls back to `window.alert`/`Alert.alert` when no host is mounted; the native path still passes `onDismiss` → resolve, without it an Android back-press leaves the promise **pending forever**. |
 | `takeProfit.ts` (33) | Suggested take-profit % per asset class (crypto 40 / stocks 20 / fund 15 / gold 12). **Entirely unused**, like its pair `getYearsToTarget`. |
 | `deductionAdvice.ts` (193) | §6.1. Needs the `TaxYearFacts` of **the year being viewed**, not the current year, or 2568 shows 2569's advice. |
 
@@ -231,7 +233,7 @@ Boot order: `useAuth().loading` → spinner · `user && !currencyReady` → spin
 
 `TAB_ITEMS` is the single source for both: `HomeTab` (หน้าหลัก, inline SVG icon) · `PortfolioTab` (พอร์ต) · `ProfileTab` (โปรไฟล์). The root route is literally named **`'Pakmut Wealth'`** because child screens render the route name in their back button.
 
-Stack routes: `AddExpense`, `AddInvestment`, `ManageByPlatform`, `AddIncome`, `IncomeScreen`, `Installments`, `AddInstallment`, `Accounts`, `ManageCatalog`, `ImportStatement`, `Overview`, `Statistics`, `Tax`, `PersonalInfo`, `SellReview`, `PurchaseGoals`. Dead: **`IncomeScreen` is registered but unreachable**; `RootStackParamList` also declares `Home`/`Portfolio`, which have no `Stack.Screen`.
+Stack routes: `AddExpense`, `AddInvestment`, `ManageByPlatform`, `AddIncome`, `IncomeScreen`, `Installments`, `AddInstallment`, `Accounts`, `ManageCatalog`, `ImportStatement`, `Overview`, `Statistics`, `Tax`, `TaxIncome`, `TaxDeduction`, `PersonalInfo`, `SellReview`, `PurchaseGoals`, `Realized`, `Cycles`, `DryPowder`. `TaxIncome`/`TaxDeduction` take `{ year }` — the BE year picker lives only on `TaxScreen`, so there is never a second place that changes the year. Dead: **`IncomeScreen` is registered but unreachable**; `RootStackParamList` also declares `Home`/`Portfolio`, which have no `Stack.Screen`.
 
 **`ProfileScreen` is the route hub** — `MENU_GROUPS` there: *สรุป & วิเคราะห์* → Overview / Statistics / Tax; *ข้อมูล* → PersonalInfo / Accounts / ManageCatalog / Installments / ImportStatement.
 
@@ -239,9 +241,14 @@ Stack routes: `AddExpense`, `AddInvestment`, `ManageByPlatform`, `AddIncome`, `I
 
 | Screen | Lines | Reached from | Notes |
 |---|---|---|---|
-| `PortfolioScreen` | **4083** | PortfolioTab | Heaviest file, hub for 7 routes. Price refresh (`PRICE_REFRESH_MS` 5 min staleness), grid math (`GRID_COL_TARGET` 380, `GRID_MAX_COLS` 6, `CARD_GRID_BASIS` 520), tax KPI card, purchase-goal + portfolio-goal cards, realized-P/L card with undo, "ถึงคิวลงไม้" red-candle alerts, dry-powder/DCA card, the cycle cards + close-cycle flow (§6.5), 5 modals. Mount skips `refreshIfStale` — `useFocusEffect` already ran `loadData()`. |
+| `PortfolioScreen` | **2876** | PortfolioTab | Still the heaviest file and the hub for 10 routes, but now only three things render here: portfolio header + goal, the **"ถึงคิวลงไม้"** red-candle card (kept because it is the one thing to act on today), and the holdings list + filters. Everything else is a `MenuRow` (module scope — §1.13) into its own screen. Price refresh (`PRICE_REFRESH_MS` 5 min staleness), grid math (`GRID_COL_TARGET` 380, `GRID_MAX_COLS` 6, `CARD_GRID_BASIS` 520), sell modal + portfolio-goal modal. It still loads `realizedTrades`/`cycles`/`plan`/`purchaseGoals`/`taxProfile` — **only to fill the summary numbers on the menu rows**; the editing lives in the child screens. Mount skips `refreshIfStale` — `useFocusEffect` already ran `loadData()`. |
+| `RealizedScreen` | 548 | Portfolio menu | ผลงานที่ขายแล้ว: realized KPI card, gain-tax card, the full trade list with **undo** (`undoSell` lives here now), link to `SellReview`. |
+| `CyclesScreen` | 610 | Portfolio menu | รอบลงทุน (§6.5): `CycleCard`/`CycleStartCard`/`CycleHistoryCard` + settings/close modals + open/pull/close/delete. `powderPerRound` is read-only here (set on `DryPowderScreen`) at the 1-month frame; without it the card says so instead of printing "ยังไม่ได้ตั้งงบของรอบ" with nowhere to go. |
+| `DryPowderScreen` | 680 | Portfolio menu | เงินรอลงทุน: DCA rounds stepper, 1/3/6/12-month frame, per-item notes + the จดยอด modal. |
 | `HomeScreen` | 1935 | HomeTab | Thai calendar (`react-native-calendars` + `LocaleConfig`), week/month toggle, day lists with multi-select delete, recurring bills. Reads + clears `pendingNavigation` on focus. |
-| `TaxScreen` | 1515 | Profile; Portfolio tax card | BE year picker, accordions (one open at a time), 12-month salary/withholding grid, itemized deductions, year facts, gain rules. Origin of rule §1.13. |
+| `TaxScreen` | 973 | Profile; Portfolio menu | Now summary-only: BE year picker, hero card (จากที่กรอกจริง), คาดทั้งปี, ภาษีจากกำไรขาย, two nav rows into `TaxIncome`/`TaxDeduction`, then the reference accordions (กำไรแยกชนิด / วิธีคิดตัวเลข / กฎรายสินทรัพย์ — the only editable one left / ขั้นบันได). All sections start collapsed. Origin of rule §1.13. |
+| `TaxIncomeScreen` | 385 | TaxScreen | 12-month salary/bonus/withholding/SSO grid + "รับจริง" reverse-entry, เงินได้อื่น, the payroll auto-fill, calc box, save. Takes `{ year }`. |
+| `TaxDeductionScreen` | 374 | TaxScreen | The personal-info gate, `TaxYearFacts` yes/no rows, 18 itemized deductions with caps + eligibility badges, save. Takes `{ year }`. |
 | `ManageByPlatformScreen` | 986 | Portfolio | Group-by-platform bulk edit (move/refresh/delete) + multi-row bulk add. `UNASSIGNED = 'ไม่ระบุแพลตฟอร์ม'`. |
 | `AddInvestmentScreen` | 985 | Portfolio (add + edit) | A different search backend per type (crypto / Thai stock / foreign / fund), live price on select, red-rule config. On **create** it joins the open cycle of its asset type; on **edit** it must pass `cycleId` back through or the whole-row update nulls it. |
 | `PurchaseGoalsScreen` | 792 | Portfolio (×2) | Queue cards, funded by realized profit only. |

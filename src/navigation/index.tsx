@@ -37,9 +37,14 @@ import ProfileScreen from '../screens/ProfileScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import StatisticsScreen from '../screens/StatisticsScreen';
 import TaxScreen from '../screens/TaxScreen';
+import TaxIncomeScreen from '../screens/TaxIncomeScreen';
+import TaxDeductionScreen from '../screens/TaxDeductionScreen';
 import PersonalInfoScreen from '../screens/PersonalInfoScreen';
 import PurchaseGoalsScreen from '../screens/PurchaseGoalsScreen';
 import SellReviewScreen from '../screens/SellReviewScreen';
+import RealizedScreen from '../screens/RealizedScreen';
+import CyclesScreen from '../screens/CyclesScreen';
+import DryPowderScreen from '../screens/DryPowderScreen';
 import { refreshCurrencyCache } from '../services/currencyStorage';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
@@ -295,6 +300,31 @@ export default function Navigation() {
           component={TaxScreen}
           options={{ title: 'ภาษี' }}
         />
+        {/* ── หน้าที่แยกออกมาจากหน้าภาษี — ปีที่แก้อยู่ส่งมาทาง param ── */}
+        <Stack.Screen
+          name="TaxIncome"
+          component={TaxIncomeScreen}
+          options={({ route, navigation }) => ({
+            title: `เงินได้รายเดือน ปี ${route.params.year}`,
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
+          name="TaxDeduction"
+          component={TaxDeductionScreen}
+          options={({ route, navigation }) => ({
+            title: `ค่าลดหย่อน ปี ${route.params.year}`,
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
         <Stack.Screen
           name="PersonalInfo"
           component={PersonalInfoScreen}
@@ -305,6 +335,44 @@ export default function Navigation() {
           component={SellReviewScreen}
           options={({ navigation }) => ({
             title: 'ทบทวนการขาย',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        {/* ── หน้าที่แยกออกมาจากพอร์ต ──
+            ทั้งสามเคยเป็นการ์ดในหน้าพอร์ต ตอนนี้เข้าจากแถวเมนูของพอร์ตแทน */}
+        <Stack.Screen
+          name="Realized"
+          component={RealizedScreen}
+          options={({ navigation }) => ({
+            title: 'ผลงานที่ขายแล้ว',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
+          name="Cycles"
+          component={CyclesScreen}
+          options={({ navigation }) => ({
+            title: 'รอบลงทุน',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
+          name="DryPowder"
+          component={DryPowderScreen}
+          options={({ navigation }) => ({
+            title: 'เงินรอลงทุน',
             headerLeft: () => (
               <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
                 <Ionicons name="chevron-back" size={16} color="#ffffff" />

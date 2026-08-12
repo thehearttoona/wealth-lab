@@ -61,5 +61,12 @@ export type RootStackParamList = {
   PersonalInfo: undefined;
   PurchaseGoals: undefined;
   SellReview: undefined;
+  // หน้าที่แยกออกจากพอร์ต (เดิมเป็นการ์ดเรียงกันอยู่ในหน้าเดียว)
+  Realized: undefined;
+  Cycles: undefined;
+  DryPowder: undefined;
+  // หน้าที่แยกออกจากภาษี — ปีที่แก้อยู่ส่งมาทาง param (หน้าภาษีเป็นเจ้าของตัวเลือกปี)
+  TaxIncome: { year: number };
+  TaxDeduction: { year: number };
 };
 

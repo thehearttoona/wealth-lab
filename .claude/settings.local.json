@@ -139,7 +139,24 @@
       "PowerShell(npx expo export --platform web 2>&1 | Select-Object -Last 15)",
       "PowerShell(npx tsc --noEmit 2>&1 | Select-Object -First 30)",
       "Bash(tee /tmp/tsc.txt)",
-      "Bash(grep -n \"listHeaderElement\\\\|const cycleViews\\\\|CycleCard$\\\\|<CycleCard\\\\|<CycleStartCard\\\\|<CycleHistoryCard\\\\|const renderInvestmentItem\" src/screens/PortfolioScreen.tsx)"
+      "Bash(grep -n \"listHeaderElement\\\\|const cycleViews\\\\|CycleCard$\\\\|<CycleCard\\\\|<CycleStartCard\\\\|<CycleHistoryCard\\\\|const renderInvestmentItem\" src/screens/PortfolioScreen.tsx)",
+      "Bash(grep -v \"^\\\\s*//\")",
+      "Bash(echo \"== notify ที่ยาวเกิน 1 บรรทัด/มี \\\\\\\\n ==\")",
+      "Bash(grep -rn \"notify\\(.*\\\\\\\\\\\\\\\\n\" src/screens)",
+      "Bash(npx --yes serve -l 4173 .)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:4173/)",
+      "Bash(npx --yes serve -l 4173 -s .)",
+      "Bash(npm i *)",
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 4173 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } ; \"stopped\" } else { \"none\" })",
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 4180 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; \"stopped\" } else { \"none\" })",
+      "Bash(grep -n \"Dialogs go through\\\\|src/components/\\\\`\\\\|dialog.ts\\\\` \\(48\\)\\\\|Font gate\" CLAUDE.md)",
+      "Bash(awk -F/ '{print $1}')",
+      "Bash(xargs -0 ls -l)",
+      "Bash(sort -k5 -rn)",
+      "Bash(awk '{print $5, $9}')",
+      "Bash(grep -n \"^\\\\s*{/\\\\* \\\\|^\\\\s*// ---\\\\|<View style={styles.card\\\\|<View style={styles.section\" src/screens/PortfolioScreen.tsx)",
+      "Bash(grep -n \"^\\\\s*{/\\\\* \\\\|accordion\\\\|Accordion\\\\|openSection\" src/screens/TaxScreen.tsx)",
+      "Bash(grep -n \"3564\\\\|PortfolioScreen\\\\` \\\\*\\\\*3564\\\\|src/screens/\\\\*\\\\.tsx\\\\|src/components/\\\\` \\\\|^| \\\\`PortfolioScreen\\\\`\\\\|^| \\\\`TaxScreen\\\\`\\\\|^| \\\\`HomeScreen\\\\`\\\\|Dead: \\\\*\\\\*\\\\`IncomeScreen\\\\`\" CLAUDE.md)"
     ]
   }
 }

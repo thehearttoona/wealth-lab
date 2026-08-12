@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Navigation from './src/navigation';
+import DialogHost from './src/components/DialogHost';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,6 +32,9 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <Navigation />
+        {/* การแจ้งเตือนทั้งแอปวาดที่นี่ — ต้องอยู่นอก NavigationContainer (ดู utils/dialog.ts)
+            หลายจุดเรียก notify() แล้ว goBack() ทันที ถ้าอยู่ในตัว navigator toast จะหายไปด้วย */}
+        <DialogHost />
         <StatusBar style="light" />
       </SafeAreaProvider>
     </GestureHandlerRootView>

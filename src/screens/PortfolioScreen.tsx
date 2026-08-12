@@ -24,15 +24,13 @@ import {
   PortfolioSummary,
   INVESTMENT_TYPES,
   RealizedTrade,
-  DEFAULT_CURRENCIES,
   RedInterval,
   RED_INTERVALS,
   DEFAULT_RED_INTERVAL,
   DEFAULT_RED_EVERY,
 } from '../types/investment';
-import { getCurrencies } from '../services/currencyStorage';
-import { getRealizedTrades, saveRealizedTrade, deleteRealizedTrade } from '../services/realizedStorage';
-import { summarizeRealized, analyzeRealizedTrade } from '../utils/realizedAnalysis';
+import { getRealizedTrades, saveRealizedTrade } from '../services/realizedStorage';
+import { summarizeRealized } from '../utils/realizedAnalysis';
 import {
   getInvestments,
   deleteInvestment,
@@ -40,7 +38,6 @@ import {
   summarizeInvestments,
   updateInvestment,
   updateInvestmentPrices,
-  saveInvestment,
   setRedAck,
 } from '../services/investmentStorage';
 import { isRedAckActive, isRedAckStale } from '../utils/redAlert';
@@ -48,7 +45,6 @@ import {
   formatCurrency,
   formatCurrencyWithType,
   convertToTHB,
-  convertFromTHB,
   toChristianYear,
   COLORS,
 } from '../utils/constants';
@@ -73,28 +69,9 @@ import { planPurchaseGoals } from '../utils/purchaseGoals';
 import { calculateTax, estimateGainTax, taxYearOf } from '../utils/taxCalc';
 import { UserProfile, incomeExemptionFor } from '../types/userProfile';
 import { getUserProfile } from '../services/userProfileStorage';
-import { gainRuleFor } from '../utils/taxCalc';
-import { InvestmentCycle, BasketKey, BASKET_ORDER, basketLabel, basketAccepts } from '../types/cycle';
-import {
-  getOpenCycles,
-  getClosedCycles,
-  openCycle,
-  updateCycle,
-  closeCycle,
-  deleteCycle,
-} from '../services/cycleStorage';
-import { setInvestmentCycle } from '../services/investmentStorage';
-import {
-  legsOfCycle,
-  orphanLegsForBasket,
-  summarizeCycle,
-  summarizeCycleHistory,
-  canAddLeg,
-  legCostTHB,
-  legValueTHB,
-} from '../utils/cycles';
-import { CycleCard, CycleStartCard, CycleHistoryCard } from '../components/CycleCard';
-import { CycleSettingsModal, CloseCycleModal, CloseCycleRow } from '../components/CycleModals';
+import { InvestmentCycle, basketLabel } from '../types/cycle';
+import { getOpenCycles } from '../services/cycleStorage';
+import { legsOfCycle, summarizeCycle, canAddLeg } from '../utils/cycles';
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -228,6 +205,34 @@ const platformMark = (name: string): { short: string; color: string } => {
   return { short, color: PLATFORM_FALLBACK_COLORS[hash % PLATFORM_FALLBACK_COLORS.length] };
 };
 
+/**
+ * บรรทัดเมนูของพอร์ต: ชื่อเรื่อง + ตัวเลขล่าสุด + บรรทัดขยายความ แล้วกดเข้าไปหน้าเต็ม
+ *
+ * ⚠️ ต้องอยู่นอก PortfolioScreen — คอมโพเนนต์ที่ประกาศในตัว render จะเป็น "ชนิดใหม่"
+ * ทุกครั้งที่ state ขยับ React จึง unmount/mount ทั้งซับทรี (ดู CLAUDE.md §1.13)
+ */
+const MenuRow: React.FC<{
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  value: string;
+  sub: string;
+  valueNegative?: boolean;
+  /** แถวบนสุดของการ์ด — เส้นคั่นเป็น "ขอบบน" ของทุกแถวยกเว้นแถวแรก
+   *  (ใช้ขอบล่างไม่ได้ เพราะแถวสุดท้ายเป็นแถวที่ซ่อนได้ตามเงื่อนไข แล้วจะเหลือเส้นซ้อนขอบการ์ด) */
+  first?: boolean;
+  onPress: () => void;
+}> = ({ icon, title, value, sub, valueNegative, first, onPress }) => (
+  <TouchableOpacity style={[styles.menuRow, first && styles.menuRowFirst]} onPress={onPress}>
+    <Ionicons name={icon} size={18} color={COLORS.primary} style={styles.menuRowIcon} />
+    <View style={styles.menuRowMain}>
+      <Text style={styles.menuRowTitle}>{title}</Text>
+      <Text style={styles.menuRowSub} numberOfLines={2}>{sub}</Text>
+    </View>
+    <Text style={[styles.menuRowValue, valueNegative && styles.menuRowValueNeg]}>{value}</Text>
+    <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+  </TouchableOpacity>
+);
+
 export default function PortfolioScreen() {
   const navigation = useNavigation<PortfolioScreenNavigationProp>();
   const { isDesktop, width: windowWidth, sidebarWidth } = useResponsive();
@@ -279,17 +284,9 @@ export default function PortfolioScreen() {
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [goalTargetInput, setGoalTargetInput] = useState('');
   const [goalExpectedInput, setGoalExpectedInput] = useState('');
+  // แผนลงทุน: หน้านี้อ่านอย่างเดียว (ใช้หาร "ลงได้ครั้งละเท่าไหร่" ให้การ์ดถึงคิวลงไม้)
+  // + เขียนตอนติ๊ก "เพิ่มเข้าเงินรอลงทุน" ในฟอร์มขาย — การตั้งค่าอยู่ที่หน้า "เงินรอลงทุน"
   const [plan, setPlan] = useState<InvestmentPlan | null>(null);
-  const [powderMonths, setPowderMonths] = useState(1);          // จะกระจายเงินก้อนนี้กี่เดือน
-  // จดยอดเงินรอลงทุน — จดแยกได้หลายรายการ (แหล่งเงิน/โบรก) ยอดรวมคือผลบวกของทุกแถว
-  const [powderModalVisible, setPowderModalVisible] = useState(false);
-  const [powderRows, setPowderRows] = useState<
-    { id: string; label: string; amount: string; currency: string }[]
-  >([]);
-  // ตัวเลือกสกุลเงิน = ของที่ตั้งไว้ในหน้า "สกุลเงิน & แพลตฟอร์ม" (ไม่ hardcode)
-  const [currencyOptions, setCurrencyOptions] = useState<string[]>(
-    DEFAULT_CURRENCIES.map((c) => c.code)
-  );
   // แท่งแดงติดกันเป็นเลขคู่ (2/4/6…) = สัญญาณลงไม้ตามกฎ "ลงทุก  2 แท่งแดง"
   const [redAlerts, setRedAlerts] = useState<
     {
@@ -330,28 +327,14 @@ export default function PortfolioScreen() {
   const [sellFeesInput, setSellFeesInput] = useState('');
   const [sellNotesInput, setSellNotesInput] = useState('');   // ขายเพราะอะไร — ไว้ทบทวนฝีมือย้อนหลัง
   const [sellToPowder, setSellToPowder] = useState(true);     // เงินที่ขายได้ → เข้าเงินรอลงทุนเลย
-  const [showRealizedList, setShowRealizedList] = useState(false); // กาง/ยุบรายดีลที่ขายแล้ว
+  // กาง/ยุบรายละเอียดเป้าหมายในหัวพอร์ต — ค่าเริ่มต้นคือยุบ
+  // หัวพอร์ตต้องตอบแค่ "ตอนนี้เท่าไหร่ / ห่างเป้าแค่ไหน" ที่เหลือเป็นบริบทที่ค่อยกางดูได้
+  const [showGoalDetail, setShowGoalDetail] = useState(false);
   const [showRedAcked, setShowRedAcked] = useState(false);         // กาง/ยุบตัวที่กด "ซื้อเพิ่มแล้ว"
   // ── รอบลงทุน (ดู types/cycle.ts) ──
-  // DCA ตอนราคาร่วงตามสัญญาณแดง แล้วปิดทั้งตะกร้าเมื่อกำไรรวมถึงเป้า → เปิดรอบใหม่
+  // หน้านี้อ่านรอบที่เปิดอยู่อย่างเดียว เพื่อบอกบริบท "ลงเพิ่มได้อีกไหม" ตรงการ์ดถึงคิวลงไม้
+  // การเปิด/ปิด/ตั้งค่ารอบทั้งหมดย้ายไปหน้า "รอบลงทุน" แล้ว
   const [cycles, setCycles] = useState<InvestmentCycle[]>([]);           // รอบที่เปิดอยู่ (ตะกร้าละ 1)
-  const [closedCycles, setClosedCycles] = useState<InvestmentCycle[]>([]);
-  const [showCycleHistory, setShowCycleHistory] = useState(false);
-  const [cycleSettings, setCycleSettings] = useState<InvestmentCycle | null>(null);
-  const [cycleTargetInput, setCycleTargetInput] = useState('');
-  const [cycleBudgetInput, setCycleBudgetInput] = useState('');
-  const [cycleMaxLegsInput, setCycleMaxLegsInput] = useState('');
-  const [closeTarget, setCloseTarget] = useState<InvestmentCycle | null>(null);
-  const [closeSelectedIds, setCloseSelectedIds] = useState<string[]>([]);
-  const [closeFeesInput, setCloseFeesInput] = useState('');
-  const [closeToPowder, setCloseToPowder] = useState(true);
-  const [closeBusy, setCloseBusy] = useState(false);
-  // ปิดรอบทำทีละไม้และไม่ใช่ transaction เดียว — เก็บผลไว้โชว์ว่าไม้ไหนไม่ผ่าน
-  const [closeProgress, setCloseProgress] = useState<{
-    done: number;
-    total: number;
-    failed: { symbol: string; message: string }[];
-  } | null>(null);
   // ── ตัวกรองรายการลงทุน — ยุบไว้เป็นค่าเริ่มต้น กดกางเมื่อพอร์ตเริ่มเยอะ ──
   const [showFilter, setShowFilter] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -383,14 +366,7 @@ export default function PortfolioScreen() {
       setRealizedTrades([]);
     }
     try {
-      // สกุลเงินที่ตั้งไว้เอง — ใช้เป็นตัวเลือกตอนจดเงินรอลงทุน
-      const curList = await getCurrencies();
-      if (curList.length > 0) setCurrencyOptions(curList.map((c) => c.code));
-    } catch {
-      // ยังไม่ได้รัน SQL แคตตาล็อก → ใช้ค่าเริ่มต้น
-    }
-    try {
-      // ของที่อยากได้ — โชว์การ์ดสรุปคิว ไม่มีตาราง/ไม่มีของก็ไม่โชว์การ์ด
+      // ของที่อยากได้ — โชว์เป็นบรรทัดสรุปในเมนู ไม่มีตาราง/ไม่มีของก็ซ่อนบรรทัดนั้น
       setPurchaseGoals(await getPurchaseGoals());
     } catch {
       // ยังไม่ได้รัน sql/purchase_goals.sql
@@ -410,13 +386,10 @@ export default function PortfolioScreen() {
       setPerson(null);
     }
     try {
-      // รอบลงทุน — ยังไม่ได้รัน sql/investment_cycles.sql ก็คืน [] เอง การ์ดรอบจะไม่โผล่
-      const [open, closed] = await Promise.all([getOpenCycles(), getClosedCycles()]);
-      setCycles(open);
-      setClosedCycles(closed);
+      // รอบที่เปิดอยู่ — ยังไม่ได้รัน sql/investment_cycles.sql ก็คืน [] เอง แค่ไม่มีบริบทรอบให้อ่าน
+      setCycles(await getOpenCycles());
     } catch {
       setCycles([]);
-      setClosedCycles([]);
     }
     // (เลิกดึงรายรับ/รายจ่ายมาที่หน้านี้แล้ว — งบรายเดือนดูที่หน้าหลัก)
 
@@ -524,301 +497,6 @@ export default function PortfolioScreen() {
       setRedAlerts(before); // เขียนไม่ติด → จอต้องกลับไปตรงกับ DB ไม่ใช่โชว์ว่าปิดแล้วทั้งที่ไม่ได้ปิด
       await notify(e?.message || 'บันทึกไม่สำเร็จ', 'ข้อผิดพลาด');
     }
-  };
-
-  // ══ รอบลงทุน ══════════════════════════════════════════════════════════════
-  // ไม้เข้ารอบตอน "สร้าง" (AddInvestmentScreen ผูก cycle_id ให้) และตอนกดดึงเข้าเองที่การ์ด
-  // จงใจไม่ดึงไม้กำพร้าเข้ารอบอัตโนมัติตอนโหลด — ไม้ที่ผู้ใช้ถอนออกจากตะกร้าไว้
-  // (เหตุผลซื้อพังแล้วแต่ยังถือ) จะถูกลากกลับเข้ามาเองทุกครั้งที่เปิดหน้า ทางหนีก็จะใช้ไม่ได้จริง
-
-  // ต้นทุน/มูลค่าของไม้ในรอบ ใช้สูตรเดียวกับ utils/cycles (นับค่าธรรมเนียมเป็นบาท)
-  const buildCloseRows = (cycle: InvestmentCycle, list: Investment[]): CloseCycleRow[] =>
-    legsOfCycle(cycle, list).map((inv) => {
-      // ไม่มีราคาปัจจุบัน = ห้ามขายด้วยราคาที่เดาเอง (กองทุน/ทองที่กรอกมือ)
-      // ถ้าใช้ต้นทุนเป็นราคาขาย จะบันทึกเป็น "ขายเท่าทุน" ทั้งที่ไม่มีใครรู้ราคาจริง
-      const priceNative =
-        typeof inv.currentPrice === 'number' && inv.currentPrice > 0 ? inv.currentPrice : null;
-      const costTHB = legCostTHB(inv);
-      const proceedsTHB = priceNative != null ? legValueTHB(inv) : 0;
-      return {
-        id: inv.id,
-        symbol: inv.symbol,
-        name: inv.name,
-        currency: inv.currency ?? 'THB',
-        quantity: inv.quantity,
-        priceNative,
-        costTHB,
-        proceedsTHB,
-        pnlTHB: priceNative != null ? proceedsTHB - costTHB : 0,
-      };
-    });
-
-  const handleStartCycle = async (basket: BasketKey) => {
-    try {
-      // งบเริ่มต้น = กระสุนที่มีจริง (เงินรอลงทุน + ต้นทุนของไม้ที่จะดึงเข้ารอบ)
-      const orphans = investments.filter((i) => !i.cycleId && basketAccepts(basket, i.type));
-      const orphanCost = orphans.reduce((s, i) => s + legCostTHB(i), 0);
-      const budget = Math.round(orphanCost + (plan?.dryPowder ?? 0));
-      const created = await openCycle({
-        basket,
-        budgetTHB: budget > 0 ? budget : undefined,
-      });
-      // ดึงไม้ที่ถืออยู่เข้ารอบแรก — ไม่ดึงเข้าก็จะมีของค้างนอกระบบตลอดกาล
-      // และกำไรรวมของรอบจะไม่ใช่กำไรจริงของตะกร้า
-      if (
-        orphans.length > 0 &&
-        (await confirmAsk(
-          'ดึงไม้ที่ถืออยู่เข้ารอบ',
-          `${basketLabel(basket)} ถืออยู่ ${orphans.length} ไม้ (ต้นทุน ฿${formatCurrency(orphanCost)})\nดึงเข้ารอบที่ ${created.cycleNo} ไหม?`,
-          'ดึงเข้ารอบ'
-        ))
-      ) {
-        await setInvestmentCycle(orphans.map((i) => i.id), created.id);
-      }
-      notify(`เปิดรอบที่ ${created.cycleNo} · ${basketLabel(basket)} · เป้า +${created.targetProfitPercent}%`);
-      loadData();
-    } catch (e: any) {
-      notify(String(e?.message || e), 'เปิดรอบไม่สำเร็จ');
-    }
-  };
-
-  const handlePullOrphans = async (cycle: InvestmentCycle) => {
-    const orphans = orphanLegsForBasket(cycle, investments);
-    if (orphans.length === 0) return;
-    if (
-      !(await confirmAsk(
-        'ดึงไม้เข้ารอบ',
-        `ดึง ${orphans.length} ไม้เข้ารอบที่ ${cycle.cycleNo} · ${basketLabel(cycle.basket)}?\nไม้เหล่านี้จะถูกปิดพร้อมกันตอนปิดรอบ`,
-        'ดึงเข้ารอบ'
-      ))
-    )
-      return;
-    try {
-      await setInvestmentCycle(orphans.map((i) => i.id), cycle.id);
-      loadData();
-    } catch (e: any) {
-      notify(String(e?.message || e), 'ดึงเข้ารอบไม่สำเร็จ');
-    }
-  };
-
-  const openCycleSettings = (cycle: InvestmentCycle) => {
-    setCycleTargetInput(String(cycle.targetProfitPercent));
-    setCycleBudgetInput(cycle.budgetTHB ? String(Math.round(cycle.budgetTHB)) : '');
-    setCycleMaxLegsInput(cycle.maxLegsPerSymbol ? String(cycle.maxLegsPerSymbol) : '');
-    setCycleSettings(cycle);
-  };
-
-  const handleSaveCycleSettings = async () => {
-    if (!cycleSettings) return;
-    const target = parseFloat(cycleTargetInput.replace(/,/g, ''));
-    if (!Number.isFinite(target) || target <= 0) {
-      notify('เป้ากำไรรวมต้องมากกว่า 0');
-      return;
-    }
-    const budgetRaw = cycleBudgetInput.replace(/,/g, '').trim();
-    const budget = budgetRaw === '' ? undefined : parseFloat(budgetRaw);
-    if (budget !== undefined && (!Number.isFinite(budget) || budget <= 0)) {
-      notify('งบของรอบต้องเป็นตัวเลขมากกว่า 0 (เว้นว่าง = ไม่จำกัด)');
-      return;
-    }
-    const legsRaw = cycleMaxLegsInput.replace(/,/g, '').trim();
-    const maxLegs = legsRaw === '' ? undefined : parseInt(legsRaw, 10);
-    if (maxLegs !== undefined && (!Number.isFinite(maxLegs) || maxLegs < 1)) {
-      notify('เพดานจำนวนไม้ต้องเป็นจำนวนเต็มตั้งแต่ 1 (เว้นว่าง = ไม่จำกัด)');
-      return;
-    }
-    const next: InvestmentCycle = {
-      ...cycleSettings,
-      targetProfitPercent: target,
-      budgetTHB: budget,
-      maxLegsPerSymbol: maxLegs,
-    };
-    try {
-      await updateCycle(next);
-      setCycles((list) => list.map((c) => (c.id === next.id ? next : c)));
-      setCycleSettings(null);
-    } catch (e: any) {
-      notify(String(e?.message || e), 'บันทึกไม่สำเร็จ');
-    }
-  };
-
-  // ลบรอบ = ยกเลิกรอบที่เปิดผิด ไม่ใช่ปิดรอบ — ต้องถอนไม้ออกก่อน
-  // ไม่ถอน จะเหลือไม้ที่ชี้ไปยังรอบที่ไม่มีอยู่ แล้วมันจะไม่โผล่ในรอบไหนเลยและถูกลืม
-  const handleDeleteCycle = async () => {
-    if (!cycleSettings) return;
-    const legs = legsOfCycle(cycleSettings, investments);
-    if (
-      !(await confirmAsk(
-        'ลบรอบนี้',
-        `รอบที่ ${cycleSettings.cycleNo} · ${basketLabel(cycleSettings.basket)}\n` +
-          `${legs.length} ไม้จะถูกถอนออกจากตะกร้า (ไม่มีการขาย) แล้วรอบนี้จะถูกลบ`,
-        'ลบรอบ'
-      ))
-    )
-      return;
-    try {
-      if (legs.length > 0) await setInvestmentCycle(legs.map((i) => i.id), null);
-      await deleteCycle(cycleSettings.id);
-      setCycleSettings(null);
-      loadData();
-    } catch (e: any) {
-      notify(String(e?.message || e), 'ลบรอบไม่สำเร็จ');
-    }
-  };
-
-  const openCloseCycleModal = (cycle: InvestmentCycle) => {
-    const rows = buildCloseRows(cycle, investments);
-    // ติ๊กมาให้เฉพาะไม้ที่มีราคาปัจจุบัน — ที่เหลือขายเองที่การ์ดของมัน
-    setCloseSelectedIds(rows.filter((r) => r.priceNative != null).map((r) => r.id));
-    setCloseFeesInput('');
-    setCloseToPowder(true);
-    setCloseProgress(null);
-    setCloseTarget(cycle);
-  };
-
-  /**
-   * ปิดรอบ = ขายทุกไม้ที่เลือกในตะกร้า แล้วปิดแถวรอบ + เปิดรอบถัดไป
-   *
-   * กดซ้ำได้โดยธรรมชาติ: รอบยังเปิดอยู่จนกว่าไม้จะหมดตะกร้าจริง (อ่านสดจาก DB)
-   * ล้มที่ไม้ที่ 7 → 6 ไม้แรกถูกบันทึกขายเรียบร้อย กดปิดรอบอีกครั้งก็ขายที่เหลือต่อ
-   * ไม่มี state ค้างที่ต้องกู้ และไม่มีการ retry เงียบ ๆ ลับหลัง
-   */
-  const handleConfirmCloseCycle = async () => {
-    const cycle = closeTarget;
-    if (!cycle) return;
-    const rows = buildCloseRows(cycle, investments).filter(
-      (r) => closeSelectedIds.includes(r.id) && r.priceNative != null
-    );
-    if (rows.length === 0) {
-      notify('เลือกไม้ที่จะขายก่อน');
-      return;
-    }
-    const byId = new Map(investments.map((i) => [i.id, i]));
-    const totalProceeds = rows.reduce((s, r) => s + r.proceedsTHB, 0);
-    const feeTotal = parseFloat(closeFeesInput.replace(/,/g, '')) || 0;
-    const today = new Date().toISOString().slice(0, 10);
-
-    setCloseBusy(true);
-    const failed: { symbol: string; message: string }[] = [];
-    let done = 0;
-    let netProceedsTHB = 0;
-    for (const r of rows) {
-      const inv = byId.get(r.id);
-      if (!inv) continue;
-      // ค่าธรรมเนียมขายรวม ปันตามสัดส่วนเงินที่ได้รับของแต่ละไม้
-      const feeShare = totalProceeds > 0 ? feeTotal * (r.proceedsTHB / totalProceeds) : 0;
-      try {
-        await saveRealizedTrade({
-          id: `${Date.now()}${done}`,
-          symbol: inv.symbol,
-          name: inv.name,
-          assetType: inv.type,
-          currency: inv.currency ?? 'THB',
-          quantity: inv.quantity,
-          buyPrice: inv.buyPrice,
-          sellPrice: r.priceNative as number,
-          buyDate: toChristianYear(inv.buyDate || '').slice(0, 10),
-          sellDate: today,
-          fees: (inv.fees || 0) + feeShare,
-          notes: `ปิดรอบที่ ${cycle.cycleNo} · ${basketLabel(cycle.basket)}`,
-          platform: inv.platform,
-          sourceInvestment: inv,
-          cycleId: cycle.id,
-        });
-        // บันทึกประวัติก่อน แล้วค่อยเอาออกจากพอร์ต — ลำดับกลับกันแล้วพังกลางทาง = ของหายทั้งสองที่
-        await deleteInvestment(inv.id);
-        done++;
-        netProceedsTHB += r.proceedsTHB - feeShare;
-      } catch (e: any) {
-        failed.push({ symbol: inv.symbol || inv.name, message: String(e?.message || e) });
-      }
-    }
-    setCloseProgress({ done, total: rows.length, failed });
-
-    // ── เงินที่ได้เข้าเงินรอลงทุน: 1 แถวต่อการปิดรอบ ──
-    // ไม่ใช่แถวละไม้ ไม่งั้นปิดรอบ 12 ไม้ทีเดียวการ์ดเงินรอลงทุนจะรกจนอ่านไม่ได้
-    let warn = '';
-    if (closeToPowder && netProceedsTHB > 0) {
-      try {
-        const base: InvestmentPlan = plan ?? { setAsidePercent: 0, dcaRounds: 0 };
-        const existing = base.dryPowderItems ?? [];
-        const seeded =
-          existing.length === 0 && base.dryPowder && base.dryPowder > 0
-            ? [{ id: `p${Date.now()}-legacy`, label: 'ยอดที่จดไว้เดิม', amount: base.dryPowder, currency: 'THB', asOf: base.dryPowderAsOf }]
-            : existing;
-        const items: DryPowderItem[] = [
-          ...seeded,
-          {
-            id: `p${Date.now()}-cycle${cycle.cycleNo}`,
-            label: `ปิดรอบ ${cycle.cycleNo} · ${basketLabel(cycle.basket)}`,
-            amount: netProceedsTHB,
-            currency: 'THB',
-            asOf: today,
-          },
-        ];
-        const nextPlan: InvestmentPlan = {
-          ...base,
-          dryPowderItems: items,
-          dryPowder: sumDryPowderItems(items),
-          dryPowderAsOf: today,
-        };
-        await saveInvestmentPlan(nextPlan);
-        setPlan(nextPlan);
-      } catch {
-        warn += '\n(เพิ่มเข้าเงินรอลงทุนไม่สำเร็จ — ไปกด "จดยอด" เพิ่มเองได้)';
-      }
-    }
-
-    // ── ปิดแถวรอบเฉพาะเมื่อไม้หมดตะกร้าจริง ──
-    // อ่านพอร์ตสดจาก DB ห้ามเชื่อ state: ปิดรอบทั้งที่ของยังอยู่ = ประวัติรอบโกหก
-    let closedNow = false;
-    try {
-      const fresh = await getInvestments();
-      if (legsOfCycle(cycle, fresh).length === 0) {
-        // ผลของรอบคิดจากการขายทุกครั้งที่ผูก cycle_id ไว้ (รวมที่ขายบางส่วนไปก่อนหน้า)
-        // ไม่ใช่แค่ก้อนที่ปิดรอบนี้ ไม่งั้นรอบที่ทยอยขายจะดูเหมือนกำไรน้อยกว่าจริง
-        const allTrades = await getRealizedTrades();
-        const mine = allTrades.filter((t) => t.cycleId === cycle.id);
-        const sum = summarizeRealized(mine);
-        const days = Math.max(
-          0,
-          Math.floor(
-            (new Date(today).getTime() - new Date(toChristianYear(cycle.startedAt)).getTime()) /
-              (24 * 60 * 60 * 1000)
-          )
-        );
-        await closeCycle(cycle, {
-          investedTHB: sum.totalCostTHB,
-          profitTHB: sum.totalPnlTHB,
-          days,
-          closedAt: today,
-        });
-        closedNow = true;
-        // เปิดรอบถัดไปด้วยค่าเดิมทันที — วงจรต้องต่อได้เลย ไม่ต้องมากดเปิดเอง
-        // ล้มตรงนี้ไม่เป็นไร: การ์ด "ยังไม่ได้เปิดรอบ" จะโผล่มาให้กดเปิดเอง
-        await openCycle({
-          basket: cycle.basket,
-          targetProfitPercent: cycle.targetProfitPercent,
-          budgetTHB: cycle.budgetTHB,
-          maxLegsPerSymbol: cycle.maxLegsPerSymbol,
-        });
-      }
-    } catch (e: any) {
-      warn += `\n(ปิดแถวรอบไม่สำเร็จ: ${String(e?.message || e)})`;
-    }
-
-    setCloseBusy(false);
-    if (failed.length === 0) {
-      setCloseTarget(null);
-      notify(
-        (closedNow
-          ? `ปิดรอบที่ ${cycle.cycleNo} แล้ว · ขาย ${done} ไม้ · เปิดรอบถัดไปให้เรียบร้อย`
-          : `ขาย ${done} ไม้แล้ว · รอบยังเปิดอยู่ (ยังมีไม้เหลือในตะกร้า)`) + warn
-      );
-    } else {
-      notify(`ขายสำเร็จ ${done}/${rows.length} ไม้ — ที่เหลือกดปิดรอบอีกครั้งได้${warn}`);
-    }
-    loadData();
   };
 
   // ── บันทึกการขาย: ปลดล็อก "ผลตอบแทนจริง" แทนการเดาเลขคาดหวัง ──
@@ -938,102 +616,6 @@ export default function PortfolioScreen() {
     }
   };
 
-  // ── ย้อนคืนการขาย: กดขายผิด/กรอกเลขผิด ต้องกู้กลับได้ ──
-  // คืนของเข้าพอร์ตก่อน แล้วค่อยลบบันทึกการขาย — ถ้าลำดับกลับกันแล้วพังกลางทาง ของจะหายทั้งสองที่
-  const undoSell = async (trade: RealizedTrade) => {
-    try {
-      // อ่านพอร์ตสด ๆ จาก DB ก่อน ห้ามเชื่อ state ที่อาจค้าง —
-      // update ที่ไม่เจอแถว (เช่นรายการถูกลบไปแล้ว) จะ "ผ่าน" แบบไม่มี error
-      // แล้วเราจะเผลอลบบันทึกการขายทิ้ง = ของหายทั้งสองที่
-      const fresh = await getInvestments();
-      const snap = trade.sourceInvestment;
-      // แพลตฟอร์มของไม้ที่ขายไป — อ่านจากคอลัมน์ platform ก่อน ไม่มีก็เอาจาก snapshot
-      const platform = trade.platform ?? snap?.platform;
-      // ── ห้ามรวมข้ามไม้เด็ดขาด ──
-      // ตัวเดียวกันมีได้หลายไม้ (เช่น INTC ซื้อ 3 รอบ / อยู่คนละโบรก = หลายแถว ต้นทุนต่างกัน)
-      // ถ้าเอาจำนวนไปบวกกับแถวที่แค่ symbol ตรง ต้นทุน/กำไรของแถวนั้นเพี้ยนทั้งแถว
-      // เกณฑ์ "ไม้เดียวกัน": id จาก snapshot ตรง หรือ symbol+ประเภท+แพลตฟอร์ม+ราคาซื้อ ตรงกันหมด
-      // (ราคาซื้อต้องตรงเป๊ะ เพราะถ้าต่างกันแล้วรวม ต้นทุนเฉลี่ยจะเพี้ยนแบบเงียบ ๆ)
-      const samePrice = (p?: number) => p != null && Math.abs(p - trade.buyPrice) < 1e-6;
-      const samePlatform = (p?: string) => (p || '') === (platform || '');
-      const target =
-        fresh.find((i) => !!snap && i.id === snap.id && samePrice(i.buyPrice)) ??
-        fresh.find(
-          (i) =>
-            i.symbol === trade.symbol &&
-            i.type === trade.assetType &&
-            samePlatform(i.platform) &&
-            samePrice(i.buyPrice)
-        );
-      // ค่าธรรมเนียมซื้อที่ปันไปกับก้อนที่ขาย — ไม่มี snapshot ก็ใช้ค่าธรรมเนียมในบันทึกการขายเท่าที่มี
-      const feeShare = snap
-        ? snap.quantity > 0 ? (snap.fees || 0) * (trade.quantity / snap.quantity) : 0
-        : trade.fees || 0;
-
-      let restoredId: string;
-      if (target) {
-        // ขายบางส่วนของไม้นี้ → บวกจำนวนกลับเข้าไม้เดิม (บวกกลับ ไม่ทับค่าเดิม เผื่อขายหลายรอบ)
-        restoredId = target.id;
-        await updateInvestment({
-          ...target,
-          quantity: target.quantity + trade.quantity,
-          fees: (target.fees || 0) + feeShare,
-        });
-      } else {
-        // ไม้เดิมไม่อยู่แล้ว (ขายหมด) หรือพิสูจน์ไม่ได้ว่าเป็นไม้เดียวกัน → สร้างเป็น "แถวใหม่แยกไม้"
-        // ใช้ id เดิมจาก snapshot ได้ถ้ายังไม่มีใครใช้ (คงตัวตนเดิม) ไม่งั้นออก id ใหม่กันชนกัน
-        restoredId = snap && !fresh.some((i) => i.id === snap.id) ? snap.id : Date.now().toString();
-        await saveInvestment(
-          snap
-            // มี snapshot → ได้แพลตฟอร์ม/โน้ต/เป้าหมายกำไรกลับมาครบ
-            ? { ...snap, id: restoredId, quantity: trade.quantity, fees: feeShare, platform }
-            // ไม่มี snapshot (ขายไว้ก่อนมีฟีเจอร์นี้) → ประกอบใหม่เท่าที่ตารางเก็บไว้ + แพลตฟอร์มเดิม
-            : {
-                id: restoredId,
-                type: trade.assetType,
-                symbol: trade.symbol,
-                name: trade.name || trade.symbol,
-                quantity: trade.quantity,
-                buyPrice: trade.buyPrice,
-                currency: trade.currency,
-                buyDate: trade.buyDate,
-                fees: feeShare,
-                platform,
-              }
-        );
-      }
-
-      // ยืนยันจาก DB ว่าของกลับเข้าพอร์ตจริง แล้วค่อยลบบันทึกการขาย
-      const after = await getInvestments();
-      const restored = after.find((i) => i.id === restoredId);
-      if (!restored) {
-        throw new Error('บันทึกกลับเข้าพอร์ตไม่สำเร็จ — ยังเก็บบันทึกการขายไว้ให้ ลองกดย้อนคืนอีกครั้ง');
-      }
-
-      await deleteRealizedTrade(trade.id);
-      // ล้างตัวกรองทิ้ง เผื่อรายการที่กู้กลับมาโดนตัวกรอง/คำค้นซ่อนอยู่จนดูเหมือนไม่กลับมา
-      clearFilters();
-      // บอกให้ชัดว่าไปโผล่ที่ไหน — รวมกลับเข้าไม้เดิม หรือกลายเป็นแถวแยก (กันสับสนว่า "ไม่เห็นกลับมา")
-      const where = restored.platform ? ` ที่ ${restored.platform}` : '';
-      notify(
-        target
-          ? `ย้อนคืนแล้ว — ${restored.symbol || restored.name}${where} ไม้เดิมกลับเป็น ${restored.quantity} หน่วย`
-          : `ย้อนคืนแล้ว — ${restored.symbol || restored.name} ${restored.quantity} หน่วย @ ${formatCurrencyWithType(restored.buyPrice, restored.currency)}${where} เพิ่มกลับเป็นรายการแยกไม้`
-      );
-      await loadData();
-    } catch (e: any) {
-      notify(`ย้อนคืนไม่สำเร็จ: ${String(e?.message || e)}`);
-      loadData();
-    }
-  };
-
-  const handleUndoSell = async (trade: RealizedTrade) => {
-    const at = trade.platform ? ` (${trade.platform})` : '';
-    const label = `${trade.symbol || trade.name}${at} ${trade.quantity} หน่วย`;
-    const msg = `ย้อนคืนการขาย ${label}?\nรายการจะกลับเข้าพอร์ต${at ? ` ที่ ${trade.platform}` : ''} และบันทึกการขายนี้จะถูกลบ`;
-    if (await confirmAsk('ย้อนคืนการขาย', msg, 'ย้อนคืน')) undoSell(trade);
-  };
-
   const openGoalModal = () => {
     setGoalTargetInput(goal?.targetAmount?.toString() || '');
     setGoalExpectedInput(goal?.expectedAnnualReturnPercent?.toString() || '');
@@ -1064,112 +646,6 @@ export default function PortfolioScreen() {
       setGoalModalVisible(false);
     } catch {
       notify('ลบเป้าหมายไม่สำเร็จ');
-    }
-  };
-
-  // ── แบ่งลงกี่ครั้งต่อเดือน: ปรับตรงในการ์ด ไม่มี modal แผนแล้ว ──
-  // เลิกใช้ "กันเงินเดือนกี่ % / เงินเดือนคาดหวัง" — ไม่มีอะไรอ่านค่า 2 ตัวนั้นบนหน้าจอแล้ว
-  // เหลือแค่จำนวนครั้ง ซึ่งใช้หารเงินรอลงทุนอย่างเดียว จึงปรับด้วยปุ่ม −/+ พอ
-  // กดถี่ ๆ ไม่ยิง DB ทุกครั้ง — อัปเดตจอทันที แล้วค่อยเซฟหลังหยุดกด
-  const roundsSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const changeDcaRounds = (delta: number) => {
-    const base: InvestmentPlan = plan ?? { setAsidePercent: 0, dcaRounds: 0 };
-    const next = Math.max(0, Math.min(60, base.dcaRounds + delta));
-    const nextPlan: InvestmentPlan = { ...base, dcaRounds: next };
-    setPlan(nextPlan);
-    if (roundsSaveTimer.current) clearTimeout(roundsSaveTimer.current);
-    roundsSaveTimer.current = setTimeout(() => {
-      saveInvestmentPlan(nextPlan).catch(() => notify('บันทึกจำนวนครั้งไม่สำเร็จ'));
-    }, 700);
-  };
-
-  // ── จดยอดเงินรอลงทุน ──
-  // สกุลเริ่มต้นของแถวใหม่ = ตัวแรกในแคตตาล็อก (ปกติคือ THB)
-  const newPowderRow = (seed = 0) => ({
-    id: `p${Date.now()}-${seed}`,
-    label: '',
-    amount: '',
-    currency: currencyOptions[0] || 'THB',
-  });
-
-  const openPowderModal = () => {
-    const items = plan?.dryPowderItems;
-    if (items && items.length > 0) {
-      setPowderRows(
-        items.map((i) => ({
-          id: i.id,
-          label: i.label || '',
-          amount: i.amount ? i.amount.toString() : '',
-          currency: i.currency || 'THB',
-        }))
-      );
-    } else if (plan?.dryPowder && plan.dryPowder > 0) {
-      // เคยจดเป็นยอดรวมก้อนเดียว (เก็บเป็น THB) → ยกมาเป็นรายการแรก ของเดิมไม่หาย
-      setPowderRows([
-        { id: `p${Date.now()}-0`, label: '', amount: plan.dryPowder.toString(), currency: 'THB' },
-      ]);
-    } else {
-      setPowderRows([newPowderRow()]);
-    }
-    setPowderModalVisible(true);
-  };
-
-  const updatePowderRow = (
-    id: string,
-    patch: Partial<{ label: string; amount: string; currency: string }>
-  ) => setPowderRows((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-
-  const removePowderRow = (id: string) =>
-    setPowderRows((rows) => (rows.length <= 1 ? [newPowderRow()] : rows.filter((r) => r.id !== id)));
-
-  const parseAmount = (s: string) => parseFloat(s.replace(/,/g, '').trim());
-
-  const handleSavePowder = async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const prevById = new Map((plan?.dryPowderItems || []).map((i) => [i.id, i]));
-    const items: DryPowderItem[] = [];
-    for (const r of powderRows) {
-      const raw = r.amount.replace(/,/g, '').trim();
-      // แถวที่ไม่ได้กรอกอะไรเลย = ข้ามไป (ลบรายการได้ด้วยการล้างค่าให้ว่าง)
-      if (raw === '' && !r.label.trim()) continue;
-      const amount = parseAmount(r.amount);
-      if (!Number.isFinite(amount) || amount < 0) {
-        notify(`ยอดของ "${r.label.trim() || 'รายการที่ยังไม่มีชื่อ'}" ต้องเป็นตัวเลขไม่ติดลบ`);
-        return;
-      }
-      const prev = prevById.get(r.id);
-      const currency = r.currency || 'THB';
-      items.push({
-        id: r.id,
-        label: r.label.trim(),
-        amount,
-        currency,
-        // ยอด/สกุลเดิมไม่เปลี่ยน = คงวันที่จดเดิม เปลี่ยนแล้วถึงประทับวันใหม่
-        asOf:
-          prev && prev.amount === amount && (prev.currency ?? 'THB') === currency
-            ? prev.asOf ?? today
-            : today,
-      });
-    }
-    const total = sumDryPowderItems(items);
-    try {
-      // ยังไม่มีแถวในตาราง = สร้างขึ้นมาใหม่โดยไม่ต้องให้กรอกแผนก่อน (setAsidePercent เลิกใช้แล้ว)
-      const base: InvestmentPlan = plan ?? { setAsidePercent: 0, dcaRounds: 0 };
-      const next: InvestmentPlan = {
-        ...base,
-        dryPowderItems: items.length > 0 ? items : undefined,
-        // dryPowder = ยอดรวมเสมอ ส่วนที่คำนวณต่อ (ลงได้ครั้งละ/คำเตือน) จึงใช้ตัวเดิมได้ไม่ต้องแก้
-        dryPowder: total > 0 ? total : undefined,
-        // แตะยอดรวมเมื่อไหร่ = ประทับวันที่ใหม่ ไว้เตือนว่าซื้อไปกี่รายการหลังจด
-        dryPowderAsOf:
-          total <= 0 ? undefined : total !== base.dryPowder ? today : base.dryPowderAsOf,
-      };
-      await saveInvestmentPlan(next);
-      setPlan(next);
-      setPowderModalVisible(false);
-    } catch {
-      notify('จดยอดไม่สำเร็จ — ถ้ายังไม่ได้รัน sql/investment_plan_dry_powder.sql ให้รันก่อน');
     }
   };
 
@@ -1615,8 +1091,6 @@ export default function PortfolioScreen() {
   // คิวของที่อยากได้ — ใช้กำไร realized ก้อนเดียวกับการ์ด "ผลงานจริง" ด้านบน
   // ไม่ห่อ useMemo เพราะ realized เองก็คิดใหม่ทุก render อยู่แล้ว ห่อไปก็ไม่ได้ประหยัดอะไร
   const purchasePlan = planPurchaseGoals(purchaseGoals, realized.totalPnlTHB);
-  // รายดีลแยกก้อน — ใช้โชว์ในลิสต์ "ที่ขายแล้ว" พร้อมปุ่มย้อนคืน (เรียงขายล่าสุดก่อนจาก query แล้ว)
-  const realizedResults = realizedTrades.map(analyzeRealizedTrade);
 
   // ── กำไรสะสม = กำไรลอยตัว (ที่ยังถืออยู่) + กำไรที่ขายแล้ว ──
   // ขายแล้วกำไรไม่ได้หายไปไหน มันแค่ย้ายจากฝั่งลอยตัวไปฝั่งรับรู้แล้ว 1:1 ผลบวกจึงนิ่ง
@@ -1635,11 +1109,6 @@ export default function PortfolioScreen() {
         realized.annualReturnPercent
       )
     : null;
-
-  // เดือน = รอบบัญชี (ฐานคำนวณ) แต่หน่วยที่ผู้ใช้ลงมือจริงคือ "ครั้ง" — ทุกตัวเลขบนจอจึงหารเป็นต่อครั้ง
-  // เหลือใช้ตัวเดียวจากแผน: จำนวนครั้งต่อเดือน (ใช้หารเงินรอลงทุน)
-  // งบรายเดือน/วินัยการกันเงิน เอาออกจากหน้านี้แล้ว — ดูที่หน้าหลัก
-  const dcaRoundsCount = plan?.dcaRounds && plan.dcaRounds > 0 ? plan.dcaRounds : null;
 
   // ── ช่องว่างถึงเป้า วัดด้วย "มูลค่าจริง" (ไม่ใช่ต้นทุนแบบแถบความคืบหน้า) ──
   // ทำไมต้องมีเลขชุดนี้: แถบวัดด้วย "เงินต้นที่ลงไปแล้ว" (79%) ซึ่งไม่ใช่ระยะห่างจากเป้าจริง ๆ
@@ -1669,113 +1138,23 @@ export default function PortfolioScreen() {
     };
   })();
 
-  // ยอดรวมสด ๆ ของแถวที่กำลังกรอกใน modal (เป็น THB) — โชว์ให้เห็นก่อนกดจด
-  const powderRowsTotal = powderRows.reduce((s, r) => {
-    const n = parseFloat(r.amount.replace(/,/g, ''));
-    return s + (Number.isFinite(n) && n > 0 ? convertToTHB(n, r.currency || 'THB') : 0);
-  }, 0);
+  // (เอาการ์ด "วางแผนถึงเป้า" ออกทั้งก้อน — ตัวจำลอง / กรอบเวลา 1/3/5/10 ปี / สัดส่วนแบ่งไม้
+  //  ทั้งหมดเป็นเลขคาดการณ์ที่ไม่ได้ใช้ตัดสินใจตอนกดซื้อ จึงลบทั้งการคำนวณและ UI ทิ้ง)
 
-  // ── เงินรอลงทุน (จดเอง) → ลงได้ครั้งละเท่าไหร่ ──
-  // ตั้งใจไม่หักอัตโนมัติ: ผู้ใช้กรอกยอดจริงทับเมื่อไหร่ก็ได้ ระบบแค่เตือนถ้ามีการซื้อหลังวันที่จด
+  // ── เงินต่อไม้: อ่านอย่างเดียวจากแผน (ตั้งค่าที่หน้า "เงินรอลงทุน") ──
+  // ที่ยังต้องคิดในหน้านี้ เพราะการ์ด "ถึงคิวลงไม้" ต้องตอบตรงจุดว่ารอบนี้ลงเพิ่มได้อีกกี่ไม้
+  // ใช้กรอบ 1 เดือนเป็นฐาน — ตัวเดียวกับที่หน้าเงินรอลงทุน/รอบลงทุนใช้
   const dryPowder = plan?.dryPowder && plan.dryPowder > 0 ? plan.dryPowder : 0;
-  const powderItemCount = plan?.dryPowderItems?.length ?? 0;
-  const powderTotalRounds = dcaRoundsCount ? dcaRoundsCount * powderMonths : null;
-  const powderPerRound = powderTotalRounds && dryPowder > 0 ? dryPowder / powderTotalRounds : null;
-  const powderEveryDays = dcaRoundsCount ? 30 / dcaRoundsCount : null;
-  // ยอดที่จดไว้เป็นคนละสกุล (บาท/ดอลลาร์) รวมกันเป็นบาทไว้แล้ว — โชว์คู่กับดอลลาร์ด้วย
-  // เพราะไม้ที่ลงบน Binance คิดเป็น USD จะได้ไม่ต้องหารในหัวเองทุกครั้ง
-  const dryPowderUSD = dryPowder > 0 ? convertFromTHB(dryPowder, 'USD') : 0;
-  const powderPerRoundUSD = powderPerRound != null ? convertFromTHB(powderPerRound, 'USD') : null;
-  // ซื้อไปแล้วกี่รายการหลังวันที่จดยอด — สัญญาณว่ายอดที่จดไว้เก่าแล้ว
-  const boughtSincePowder = (() => {
-    const asOf = plan?.dryPowderAsOf;
-    if (!asOf || dryPowder <= 0) return null;
-    let count = 0;
-    let cost = 0;
-    const add = (dateStr: string, amount: number) => {
-      if (toChristianYear(dateStr || '').slice(0, 10) <= asOf) return;
-      count++;
-      cost += amount;
-    };
-    investments.forEach((inv) =>
-      add(inv.buyDate, convertToTHB(inv.buyPrice, inv.currency) * inv.quantity + (inv.fees || 0))
-    );
-    realizedTrades.forEach((t) => add(t.buyDate, convertToTHB(t.buyPrice, t.currency) * t.quantity));
-    return count > 0 ? { count, cost, asOf } : null;
-  })();
-  const fmtDateTH = (iso: string): string =>
-    new Date(iso).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
+  const dcaRoundsCount = plan?.dcaRounds && plan.dcaRounds > 0 ? plan.dcaRounds : null;
+  const powderPerRound = dcaRoundsCount && dryPowder > 0 ? dryPowder / dcaRoundsCount : null;
 
-  // ── รอบลงทุน: สถานะของแต่ละรอบที่เปิดอยู่ ──
-  // perRoundTHB = เงินต่อไม้ (จากการ์ดเงินรอลงทุน) → แปลงงบที่เหลือเป็น "ลงได้อีกกี่ไม้"
-  // ซึ่งเป็นตัวเลขที่ตัดสินกลยุทธ์นี้จริง ๆ มากกว่า % กำไร
+  // สถานะของรอบที่เปิดอยู่ — ใช้เฉพาะเป็นบริบทของการ์ด "ถึงคิวลงไม้" และบรรทัดสรุปในเมนู
   const cycleViews = cycles.map((cycle) => ({
     cycle,
     status: summarizeCycle(cycle, legsOfCycle(cycle, investments), {
       perRoundTHB: powderPerRound,
     }),
-    orphanCount: orphanLegsForBasket(cycle, investments).length,
   }));
-  // ตะกร้าที่ยังไม่มีรอบเปิด และมีของถืออยู่จริง — ใช้ในการ์ด "ยังไม่ได้เปิดรอบ"
-  const basketsWithoutCycle = BASKET_ORDER.map((basket) => {
-    const legs = investments.filter((i) => basketAccepts(basket, i.type));
-    return {
-      basket,
-      legCount: legs.length,
-      costTHB: legs.reduce((s, i) => s + legCostTHB(i), 0),
-    };
-  }).filter((b) => b.legCount > 0 && !cycles.some((c) => c.basket === b.basket || c.basket === 'all'));
-  const cycleHistory = summarizeCycleHistory(closedCycles);
-
-  // ── แถวในกล่องปิดรอบ + ภาษีของกำไรที่จะรับรู้ ──
-  const closeRows = closeTarget ? buildCloseRows(closeTarget, investments) : [];
-  const closeTax = (() => {
-    if (!closeTarget || !taxProfile) return { taxTHB: null as number | null, note: undefined as string | undefined };
-    const picked = closeRows.filter(
-      (r) => closeSelectedIds.includes(r.id) && r.priceNative != null
-    );
-    if (picked.length === 0) return { taxTHB: null, note: undefined };
-    const feeTotal = parseFloat((closeFeesInput || '').replace(/,/g, '')) || 0;
-    const totalProceeds = picked.reduce((s, r) => s + r.proceedsTHB, 0);
-    const byId = new Map(investments.map((i) => [i.id, i]));
-    // กำไรที่ต้องเสียภาษี รวมทีเดียวแล้วยัดเข้าฐานครั้งเดียว — ไม่คิดแยกก้อนแล้วบวกกัน
-    // เพราะกำไรก้อนใหญ่พาดข้ามขั้นบันได คิดแยกจะได้ตัวเลขต่ำกว่าจริง
-    let taxableGain = 0;
-    let exemptGain = 0;
-    picked.forEach((r) => {
-      const inv = byId.get(r.id);
-      if (!inv) return;
-      const feeShare = totalProceeds > 0 ? feeTotal * (r.proceedsTHB / totalProceeds) : 0;
-      const gain = r.pnlTHB - feeShare;
-      if (gain <= 0) return; // ขาดทุนต่อไม้ไม่ลดภาษี (taxCalc เคลมป์ที่ 0 ต่อประเภทสินทรัพย์)
-      const rule = gainRuleFor(inv.type, taxProfile);
-      if (rule === 'exempt') exemptGain += gain;
-      else if (rule === 'taxable_on_remit')
-        taxableGain += gain * Math.min(1, Math.max(0, taxProfile.remittedRatio ?? 1));
-      else taxableGain += gain;
-    });
-    if (taxableGain <= 0) {
-      return {
-        taxTHB: 0,
-        note: exemptGain > 0 ? `กำไร ${GAIN_RULE_LABELS.exempt}` : undefined,
-      };
-    }
-    const before = calculateTax(taxProfile, tradesThisTaxYear, taxOpts);
-    const after = calculateTax(
-      { ...taxProfile, otherIncome: taxProfile.otherIncome + taxableGain },
-      tradesThisTaxYear,
-      taxOpts
-    );
-    return {
-      taxTHB: Math.max(0, after.tax - before.tax),
-      note: exemptGain > 0 ? `บางส่วน ${GAIN_RULE_LABELS.exempt}` : undefined,
-    };
-  })();
-  // เดือน พ.ย.–ธ.ค. = ปิดทั้งก้อนตอนนี้ทำให้กำไรกระจุกในปีภาษีเดียว
-  const nearTaxYearEnd = new Date().getMonth() >= 10;
-
-  // (เอาการ์ด "วางแผนถึงเป้า" ออกทั้งก้อน — ตัวจำลอง / กรอบเวลา 1/3/5/10 ปี / สัดส่วนแบ่งไม้
-  //  ทั้งหมดเป็นเลขคาดการณ์ที่ไม่ได้ใช้ตัดสินใจตอนกดซื้อ จึงลบทั้งการคำนวณและ UI ทิ้ง)
 
   // ── ตัวเลือกของตัวกรอง: สร้างจากของที่ถืออยู่จริง ไม่โชว์ตัวเลือกที่กดแล้วว่างเปล่า ──
   const typeOptions = INVESTMENT_TYPES.filter((t) => investments.some((i) => i.type === t.value));
@@ -1909,7 +1288,7 @@ export default function PortfolioScreen() {
                     ลงเงินไปแล้ว {formatCurrency(goalAnalysis.currentValue)}
                   </Text>
                   <Text style={styles.headerGoalSub}>
-                    {goalAnalysis.reached ? 'ลงครบเป้าแล้ว 🎉' : `${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}% ของเป้า`}
+                    {goalAnalysis.reached ? 'ลงครบเป้าแล้ว' : `${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}% ของเป้า`}
                   </Text>
                 </View>
                 <View style={styles.headerGoalTrack}>
@@ -1924,40 +1303,14 @@ export default function PortfolioScreen() {
                     ]}
                   />
                 </View>
-                {/* "ยังไม่ได้ลงอีก" ไม่ใช่ "ขาดอีก" — เงินก้อนนี้คือเงินต้นที่ยังไม่ได้ลง
-                    คนละเรื่องกับระยะห่างจากเป้าในบรรทัดถัดไป (ซึ่งกำไรลอยตัวช่วยไปแล้ว) */}
-                <Text style={styles.headerGoalSub}>
-                  เป้า {formatCurrency(goalAnalysis.targetAmount)}
-                  {!goalAnalysis.reached && ` • ยังไม่ได้ลงอีก ${formatCurrency(goalAnalysis.remaining)}`}
-                </Text>
-
                 {/* บรรทัดวิเคราะห์ — เขียนเป็นภาษาคน ไม่อธิบายวิธีคิดของ UI ตัวเอง
-                    ให้ทางเลือกสองทางที่ลงมือได้จริง: รอให้พอร์ตโตอีกกี่ % หรือเติมเงินอีกเท่าไหร่ */}
+                    ให้ทางเลือกสองทางที่ลงมือได้จริง: รอให้พอร์ตโตอีกกี่ % หรือเติมเงินอีกเท่าไหร่
+                    บรรทัดนี้คือบรรทัดสุดท้ายที่โชว์ตลอด — ที่เหลือย้ายไปใต้ปุ่ม "ดูรายละเอียด" */}
                 {goalGap && (
                   <Text style={styles.headerGoalHint}>
                     {goalGap.reached
-                      ? 'มูลค่าพอร์ตตอนนี้เลยเป้าไปแล้ว 🎉 (แถบด้านบนนับแต่เงินต้นที่ลง จึงยังไม่เต็ม)'
+                      ? 'มูลค่าพอร์ตตอนนี้เลยเป้าไปแล้ว (แถบด้านบนนับแต่เงินต้นที่ลง จึงยังไม่เต็ม)'
                       : `เหลืออีก ${formatCurrency(goalGap.gap)} ถึงเป้า — พอร์ตต้องโตอีก ${goalGap.needPercent.toFixed(1)}% หรือเติมเงินใหม่เท่านี้`}
-                  </Text>
-                )}
-
-                {/* เทียบระยะที่เหลือกับฝีมือที่ทำมาได้จริง + เวลาที่ใช้ไป (ข้อเท็จจริง ไม่ใช่พยากรณ์)
-                    บรรทัดนี้ตอบคำถามเดียว: "เป้านี้ไกลไหม เทียบกับที่ฉันทำมาได้แล้ว" */}
-                {goalGap && !goalGap.reached && summary.totalProfitPercent > 0 && (
-                  <Text style={styles.headerGoalNote}>
-                    ที่ผ่านมาทำกำไรได้ +{summary.totalProfitPercent.toFixed(2)}%
-                    {goalGap.roundMonths != null ? ` ใน ~${formatMonthsSpan(goalGap.roundMonths)}` : ''}
-                    {' · '}ที่ต้องโตอีก {goalGap.needPercent.toFixed(1)}%{' '}
-                    {compareToTrackRecord(goalGap.needPercent, summary.totalProfitPercent)}
-                  </Text>
-                )}
-
-                {/* แถบความคืบหน้าคิดจาก "ต้นทุนที่ยังอยู่ในพอร์ต" — ขายแล้วต้นทุนก้อนนั้นออกไป แถบเลยถอย
-                    ทั้งที่เงินยังอยู่กับเรา จงใจไม่เอาไปบวกในแถบ (จะนับซ้ำตอนเอาเงินไปลงไม้ใหม่)
-                    แต่ต้องบอกให้เห็นว่ากำไรที่เก็บไปแล้วมีอยู่จริง ไม่งั้นการขายจะดูเหมือนถอยหลังเปล่า ๆ */}
-                {realized.totalPnlTHB > 0 && (
-                  <Text style={styles.headerGoalNote}>
-                    + เก็บกำไรจริงไปแล้ว {formatCurrency(realized.totalPnlTHB)} จาก {realized.tradeCount} ดีล — เงินก้อนนี้อยู่นอกพอร์ต แถบด้านบนจึงยังไม่นับให้
                   </Text>
                 )}
 
@@ -1966,16 +1319,62 @@ export default function PortfolioScreen() {
               </>
             )}
 
-            {/* กำไรสะสม = กำไรลอยตัว + กำไรที่ขายแล้ว — เลขที่ไม่ถอยหลังตอนขาย
-                โชว์เฉพาะเมื่อเคยขายแล้วจริง: ก่อนมีการขาย เลขนี้เท่ากับกำไรลอยตัวที่อยู่บนสุด
-                เป๊ะ ๆ (บรรทัดเดิมเลยกลายเป็นเลขซ้ำ + ประโยคยาวที่ยังไม่เกี่ยวกับผู้ใช้)
-                พอขายไม้แรก บรรทัดนี้จะโผล่มาเองพร้อมรายละเอียดว่ามาจากลอยตัวเท่าไหร่/ขายแล้วเท่าไหร่ */}
-            {realized.tradeCount > 0 && (
-              <Text style={styles.headerGoalNote}>
-                กำไรสะสม {lifetimeProfit >= 0 ? '+' : ''}{formatCurrency(lifetimeProfit)}
-                {'  ·  '}ลอยตัว {summary.totalProfit >= 0 ? '+' : ''}{formatCurrency(summary.totalProfit)}
-                {' + ขายแล้ว '}{realized.totalPnlTHB >= 0 ? '+' : ''}{formatCurrency(realized.totalPnlTHB)}
-              </Text>
+            {/* ── รายละเอียดที่พับไว้ ──
+                หัวพอร์ตเคยยาว 7 บรรทัดรวด กลายเป็นย่อหน้าภาษาไทยบนพื้นน้ำเงินที่ไม่มีใครอ่าน
+                บนจอเหลือแค่ "ลงไปแล้วกี่ % / ห่างเป้าเท่าไหร่" ส่วนบริบทที่เหลือกางเอาเมื่ออยากรู้ */}
+            {(goalAnalysis || realized.tradeCount > 0) && (
+              <TouchableOpacity
+                style={styles.headerGoalToggle}
+                onPress={() => setShowGoalDetail((v) => !v)}
+              >
+                <Ionicons
+                  name={showGoalDetail ? 'chevron-up' : 'chevron-down'}
+                  size={13}
+                  color="#ffffff"
+                />
+                <Text style={styles.headerGoalToggleText}>
+                  {showGoalDetail ? ' ซ่อนรายละเอียด' : ' ดูรายละเอียด'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {showGoalDetail && (
+              <>
+                {/* "ยังไม่ได้ลงอีก" ไม่ใช่ "ขาดอีก" — เงินก้อนนี้คือเงินต้นที่ยังไม่ได้ลง
+                    คนละเรื่องกับระยะห่างจากเป้าในบรรทัดด้านบน (ซึ่งกำไรลอยตัวช่วยไปแล้ว) */}
+                {goalAnalysis && (
+                  <Text style={styles.headerGoalSub}>
+                    เป้า {formatCurrency(goalAnalysis.targetAmount)}
+                    {!goalAnalysis.reached && ` • ยังไม่ได้ลงอีก ${formatCurrency(goalAnalysis.remaining)}`}
+                  </Text>
+                )}
+
+                {/* เทียบระยะที่เหลือกับฝีมือที่ทำมาได้จริง + เวลาที่ใช้ไป (ข้อเท็จจริง ไม่ใช่พยากรณ์)
+                    บรรทัดนี้ตอบคำถามเดียว: "เป้านี้ไกลไหม เทียบกับที่ฉันทำมาได้แล้ว" */}
+                {goalAnalysis && goalGap && !goalGap.reached && summary.totalProfitPercent > 0 && (
+                  <Text style={styles.headerGoalNote}>
+                    ที่ผ่านมาทำกำไรได้ +{summary.totalProfitPercent.toFixed(2)}%
+                    {goalGap.roundMonths != null ? ` ใน ~${formatMonthsSpan(goalGap.roundMonths)}` : ''}
+                    {' · '}ที่ต้องโตอีก {goalGap.needPercent.toFixed(1)}%{' '}
+                    {compareToTrackRecord(goalGap.needPercent, summary.totalProfitPercent)}
+                  </Text>
+                )}
+
+                {/* กำไรสะสม = กำไรลอยตัว + กำไรที่ขายแล้ว — เลขที่ไม่ถอยหลังตอนขาย
+                    โชว์เฉพาะเมื่อเคยขายแล้วจริง (ก่อนหน้านั้นเท่ากับกำไรลอยตัวด้านบนเป๊ะ ๆ)
+                    บรรทัดนี้เป็น "กำไรที่ขายแล้ว" ที่เดียวในหัวพอร์ต — รายละเอียดรายดีลอยู่ที่
+                    การ์ด "ผลงานจริง" ไม่ต้องเขียนซ้ำสามที่เหมือนเดิม
+                    (แถบด้านบนคิดจากต้นทุนที่ยังอยู่ในพอร์ต ขายแล้วต้นทุนออกไปแถบเลยถอย
+                     จงใจไม่บวกกลับ ไม่งั้นนับซ้ำตอนเอาเงินก้อนเดิมไปลงไม้ใหม่) */}
+                {realized.tradeCount > 0 && (
+                  <Text style={styles.headerGoalNote}>
+                    กำไรสะสม {lifetimeProfit >= 0 ? '+' : ''}{formatCurrency(lifetimeProfit)}
+                    {'  ·  '}ลอยตัว {summary.totalProfit >= 0 ? '+' : ''}{formatCurrency(summary.totalProfit)}
+                    {' + ขายแล้ว '}{realized.totalPnlTHB >= 0 ? '+' : ''}{formatCurrency(realized.totalPnlTHB)}
+                    {' — เงินที่ขายแล้วอยู่นอกพอร์ต แถบด้านบนจึงยังไม่นับให้'}
+                  </Text>
+                )}
+              </>
             )}
           </View>
         </View>
@@ -2034,272 +1433,95 @@ export default function PortfolioScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ── การ์ดสรุปด้านหัว ──
-            บนเดสก์ท็อปจัดเป็นกริด wrap: หน้านี้เต็มจอแล้ว ถ้าเรียงลงมาเป็นคอลัมน์เดียว
-            การ์ดจะกว้าง 2300px บนจอ 2560 — บรรทัดยาวจนอ่านไม่ไหว และต้องเลื่อนผ่าน
-            การ์ดสรุปทั้งหมดก่อนจะเจอรายการลงทุน */}
+        {/* ── เมนูของพอร์ต ──
+            เดิมทุกเรื่อง (ผลงานที่ขายแล้ว / รอบลงทุน / เงินรอลงทุน / ภาษี / ของที่อยากได้)
+            เป็นการ์ดเต็มใบเรียงต่อกันอยู่หน้านี้ ต้องเลื่อนผ่านทั้งหมดกว่าจะถึงรายการลงทุน
+            ตอนนี้แต่ละเรื่องเป็นหน้าของตัวเอง เหลือไว้ที่นี่บรรทัดเดียว = "ตัวเลขล่าสุด + ทางเข้า"
+            ไม่มีฟีเจอร์ไหนถูกตัด ทุกอันกดเข้าไปได้ครบเหมือนเดิม */}
+        <View style={[styles.menuCard, isDesktop && styles.menuCardDesktop]}>
+          <MenuRow
+            icon="ribbon-outline"
+            title="ผลงานที่ขายแล้ว"
+            value={
+              realized.tradeCount > 0
+                ? `${realized.totalPnlTHB >= 0 ? '+' : ''}${formatCurrency(realized.totalPnlTHB)}`
+                : '—'
+            }
+            valueNegative={realized.totalPnlTHB < 0}
+            sub={
+              realized.tradeCount > 0
+                ? `ชนะ ${realized.winCount}/${realized.tradeCount} ดีล · ย้อนคืนการขายได้ที่นี่`
+                : 'ยังไม่มีการขายที่บันทึกไว้'
+            }
+            onPress={() => navigation.navigate('Realized')}
+            first
+          />
+          <MenuRow
+            icon="repeat-outline"
+            title="รอบลงทุน"
+            value={cycleViews.length > 0 ? `${cycleViews.length} รอบ` : '—'}
+            sub={
+              cycleViews.length > 0
+                ? cycleViews
+                    .map(({ cycle, status }) => {
+                      // ยังไม่มีต้นทุนในรอบ = คิด % ไม่ได้ ต้องเป็นขีด ไม่ใช่ 0.0%
+                      const pct =
+                        status.profitPercent != null
+                          ? `${status.profitPercent >= 0 ? '+' : ''}${status.profitPercent.toFixed(1)}%`
+                          : 'ยังไม่มีไม้';
+                      return (
+                        `รอบ ${cycle.cycleNo} ${pct}` +
+                        (status.roundsLeft != null ? ` · เหลือ ${status.roundsLeft} ไม้` : '')
+                      );
+                    })
+                    .join('  ·  ')
+                : 'ยังไม่ได้เปิดรอบ — กดเข้าไปเปิดได้'
+            }
+            onPress={() => navigation.navigate('Cycles')}
+          />
+          <MenuRow
+            icon="cash-outline"
+            title="เงินรอลงทุน"
+            value={dryPowder > 0 ? `฿${formatCurrency(dryPowder)}` : '—'}
+            sub={
+              powderPerRound != null
+                ? `ลงได้ครั้งละ ฿${formatCurrency(powderPerRound)} · ${dcaRoundsCount} ครั้ง/เดือน`
+                : 'ยังไม่ได้จดยอด/ตั้งจำนวนครั้ง'
+            }
+            onPress={() => navigation.navigate('DryPowder')}
+          />
+          {/* ภาษี/ของที่อยากได้ โผล่เมื่อมีของจริงเท่านั้น — ไม่งั้นเป็นบรรทัดว่างกวนสายตา */}
+          {taxThisYear && (
+            <MenuRow
+              icon="receipt-outline"
+              title={`ภาษีจากกำไรที่ขาย ปี ${currentTaxYear}`}
+              value={formatCurrency(taxThisYear.tax)}
+              sub={
+                !taxProfile
+                  ? 'ยังไม่ได้กรอกเงินเดือนที่หน้าภาษี — ยังไม่ใช่ขั้นจริง'
+                  : `เข้าฐานภาษี ${formatCurrency(taxThisYear.assessable)} · ตกขั้น ${(taxThisYear.marginalRate * 100).toFixed(0)}%`
+              }
+              onPress={() => navigation.navigate('Tax')}
+            />
+          )}
+          {purchasePlan.pending.length > 0 && (
+            <MenuRow
+              icon="gift-outline"
+              title="ของที่อยากได้"
+              value={`${purchasePlan.unlockedCount}/${purchasePlan.pending.length}`}
+              sub={
+                purchasePlan.nextUp
+                  ? `คิวถัดไป ${purchasePlan.nextUp.goal.name} · ขาดอีก ${formatCurrency(purchasePlan.nextUp.remainingTHB)}`
+                  : 'ปลดล็อกครบทุกชิ้นในคิวแล้ว'
+              }
+              onPress={() => navigation.navigate('PurchaseGoals')}
+            />
+          )}
+        </View>
+
+        {/* การ์ดที่ยังอยู่หน้านี้เหลือใบเดียว: "ถึงคิวลงไม้" — เป็นรายการที่ต้องลงมือวันนี้
+            ย้ายไปหน้าอื่นแล้วจะกลายเป็นแจ้งเตือนที่ไม่มีใครเห็น */}
         <View style={isDesktop ? styles.cardGrid : undefined}>
-        {/* ── การ์ดภาษีจากกำไรที่ขายปีนี้ ──
-            โชว์เฉพาะเมื่อมีไม้ที่ขายในปีภาษีนี้ ไม่งั้นเป็นการ์ดว่างกวนสายตา */}
-        {taxThisYear && (
-          <TouchableOpacity
-            style={[styles.goalCard, isDesktop && styles.cardGridItem]}
-            onPress={() => navigation.navigate('Tax')}
-          >
-            <View style={styles.goalCardHeader}>
-              <Text style={styles.goalCardTitle}>
-                <Ionicons name="receipt-outline" size={18} color={COLORS.primary} /> ภาษีจากกำไรที่ขาย ปี {currentTaxYear}
-              </Text>
-              <Text style={styles.goalCardEdit}>{taxProfile ? 'ดูรายละเอียด' : 'ตั้งค่า'}</Text>
-            </View>
-            <View style={styles.kpiRow}>
-              <View style={styles.kpiCell}>
-                <Text style={styles.kpiLabel}>กำไรที่ขายปีนี้</Text>
-                <Text style={styles.kpiValue}>{formatCurrency(taxThisYear.grossGain)}</Text>
-              </View>
-              <View style={styles.kpiCell}>
-                <Text style={styles.kpiLabel}>เข้าฐานภาษี</Text>
-                <Text style={styles.kpiValue}>{formatCurrency(taxThisYear.assessable)}</Text>
-              </View>
-              <View style={styles.kpiCell}>
-                <Text style={styles.kpiLabel}>ภาษีประมาณ</Text>
-                <Text style={styles.kpiValue}>{formatCurrency(taxThisYear.tax)}</Text>
-              </View>
-            </View>
-            <Text style={styles.goalCardSub}>
-              {!taxProfile
-                ? 'ยังไม่ได้กรอกเงินเดือนที่หน้า "ภาษี" — ภาษีจึงคิดจากกำไรอย่างเดียว ยังไม่ใช่ขั้นจริง'
-                : taxThisYear.assessable === 0
-                  ? 'กำไรปีนี้อยู่ในกลุ่มที่ได้รับยกเว้นทั้งหมด (หุ้นไทย/กองทุนไทย)'
-                  : `คิดบนฐานเงินได้ปีนี้ — กำไรส่วนนี้ตกขั้น ${(taxThisYear.marginalRate * 100).toFixed(0)}%`}
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {/* ── การ์ดของที่อยากได้ (คิว 10 เท่า) ──
-            โชว์เฉพาะเมื่อมีของในคิวจริง — ยังไม่ตั้งก็ไม่ต้องมีการ์ดเปล่ามากินที่
-            (เข้าไปเพิ่มได้จากปุ่มของขวัญบนแถวปุ่มด้านบน) */}
-        {purchasePlan.pending.length > 0 && (
-          <TouchableOpacity
-            style={[styles.goalCard, isDesktop && styles.cardGridItem]}
-            onPress={() => navigation.navigate('PurchaseGoals')}
-          >
-            <View style={styles.goalCardHeader}>
-              <Text style={styles.goalCardTitle}>
-                <Ionicons name="gift-outline" size={18} color={COLORS.primary} /> ของที่อยากได้
-              </Text>
-              <Text style={styles.goalCardEdit}>
-                ปลดล็อก {purchasePlan.unlockedCount}/{purchasePlan.pending.length}
-              </Text>
-            </View>
-
-            {purchasePlan.nextUp ? (
-              <>
-                <View style={styles.goalCardTopRow}>
-                  <Text style={styles.goalCardSub} numberOfLines={1}>
-                    คิวถัดไป: {purchasePlan.nextUp.goal.name}
-                  </Text>
-                  <Text style={styles.goalCardSub}>
-                    {(purchasePlan.nextUp.progressRatio * 100).toFixed(0)}%
-                  </Text>
-                </View>
-                <View style={styles.goalTrack}>
-                  <View
-                    style={[
-                      styles.goalFill,
-                      {
-                        width: `${Math.max(0, Math.min(100, purchasePlan.nextUp.progressRatio * 100))}%`,
-                        backgroundColor: COLORS.primary,
-                      },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.goalCardSub}>
-                  ต้องกำไร {purchasePlan.nextUp.goal.multiplier}× ของราคา{' '}
-                  {formatCurrency(purchasePlan.nextUp.requiredTHB)} · ขาดอีก{' '}
-                  {formatCurrency(purchasePlan.nextUp.remainingTHB)}
-                </Text>
-              </>
-            ) : (
-              <Text style={[styles.tpSubText, { color: COLORS.success }]}>
-                ปลดล็อกครบทุกชิ้นในคิวแล้ว 🎉 กดเข้าไปกด "ซื้อแล้ว" ได้เลย
-              </Text>
-            )}
-
-            <Text style={styles.tpSubText}>
-              นับจากกำไรที่ขายจริง {formatCurrency(purchasePlan.realizedProfitTHB)}
-              {purchasePlan.spentTHB > 0
-                ? ` — กันไว้ให้ของที่ซื้อแล้ว ${formatCurrency(purchasePlan.spentTHB)} เหลือให้คิว ${formatCurrency(purchasePlan.availableTHB)}`
-                : ' — กำไรลอยตัวไม่นับ'}
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {/* ── ผลงานจริง (realized): กำไรที่ขายแล้วเท่านั้น ไม่นับกำไรลอยตัว ──
-            โชว์เฉพาะเมื่อมีการขายบันทึกไว้จริง — ยังไม่มีก็ไม่ต้องมีการ์ดเปล่ามากินที่
-            (ปุ่ม "ย้อนคืน" อยู่ในการ์ดนี้ พอเริ่มบันทึกขาย การ์ดจะโผล่มาเอง) */}
-        {realized.tradeCount > 0 && (
-          <View style={[styles.goalCard, isDesktop && styles.cardGridItem]}>
-            <Text style={styles.goalCardTitle}>
-              <Ionicons name="ribbon-outline" size={18} color={COLORS.primary} /> ผลงานจริง (ที่ขายแล้ว)
-            </Text>
-              <View style={styles.kpiRow}>
-                <View style={styles.kpiCell}>
-                  <Text style={styles.kpiLabel}>กำไรจริง</Text>
-                  <Text style={[styles.kpiValue, realized.totalPnlTHB < 0 && styles.kpiValueNeg]}>
-                    {realized.totalPnlTHB >= 0 ? '+' : ''}{formatCurrency(realized.totalPnlTHB)}
-                  </Text>
-                </View>
-                <View style={styles.kpiCell}>
-                  <Text style={styles.kpiLabel}>คิดเป็น</Text>
-                  <Text style={[styles.kpiValue, realized.totalPnlPercent < 0 && styles.kpiValueNeg]}>
-                    {realized.totalPnlPercent >= 0 ? '+' : ''}{realized.totalPnlPercent.toFixed(1)}%
-                  </Text>
-                </View>
-                <View style={styles.kpiCell}>
-                  <Text style={styles.kpiLabel}>ชนะ {realized.winCount}/{realized.tradeCount} ดีล</Text>
-                  <Text style={styles.kpiValue}>{realized.winRatePercent.toFixed(0)}%</Text>
-                </View>
-              </View>
-              <View style={styles.planLine}>
-                <Text style={styles.planLineLabel}>ผลตอบแทนจริงต่อปี (ถือเฉลี่ย {realized.avgHoldYears.toFixed(1)} ปี)</Text>
-                <Text style={styles.planLineValue}>
-                  {realized.annualReturnPercent != null
-                    ? `${realized.annualReturnPercent >= 0 ? '+' : ''}${realized.annualReturnPercent.toFixed(1)}%`
-                    : realized.tooShort
-                      ? 'ถือสั้นเกินไป'
-                      : '—'}
-                </Text>
-              </View>
-              {/* จุดที่สำคัญที่สุด: ของจริง vs ที่ตั้งไว้ */}
-              {goal?.expectedAnnualReturnPercent != null && realized.annualReturnPercent != null && (
-                <Text
-                  style={[
-                    styles.tpSubText,
-                    {
-                      color:
-                        realized.annualReturnPercent >= goal.expectedAnnualReturnPercent
-                          ? COLORS.success
-                          : COLORS.error,
-                    },
-                  ]}
-                >
-                  {realized.annualReturnPercent >= goal.expectedAnnualReturnPercent
-                    ? `✓ ทำได้จริง ${realized.annualReturnPercent.toFixed(1)}% เทียบกับที่ตั้งไว้ ${goal.expectedAnnualReturnPercent}% — แผนใช้ตัวเลขจริงคำนวณให้แล้ว`
-                    : `⚠ ทำได้จริง ${realized.annualReturnPercent.toFixed(1)}% แต่ตั้งไว้ ${goal.expectedAnnualReturnPercent}% — แผนด้านล่างเปลี่ยนไปใช้ตัวเลขจริงแล้ว`}
-                </Text>
-              )}
-              {realized.bestTrade && realized.worstTrade && realized.tradeCount > 1 && (
-                <Text style={styles.tpSubText}>
-                  ดีที่สุด {realized.bestTrade.trade.symbol} {realized.bestTrade.pnlPercent >= 0 ? '+' : ''}
-                  {realized.bestTrade.pnlPercent.toFixed(1)}% • แย่ที่สุด {realized.worstTrade.trade.symbol}{' '}
-                  {realized.worstTrade.pnlPercent >= 0 ? '+' : ''}{realized.worstTrade.pnlPercent.toFixed(1)}%
-                </Text>
-              )}
-
-              {/* ทบทวนจังหวะขาย — เทียบราคาที่ขายไปกับราคาวันนี้ ตอบว่าควรใช้กฎขายแบบไหน
-                  อยู่ในการ์ดนี้เพราะเป็นเรื่องเดียวกับ "ผลงานจริง" แค่มองอีกมุม */}
-              <TouchableOpacity
-                style={styles.detailToggleInline}
-                onPress={() => navigation.navigate('SellReview')}
-              >
-                <Ionicons name="analytics-outline" size={14} color={COLORS.primary} />
-                <Text style={styles.detailToggleText}> ทบทวนจังหวะขาย — ขายแล้วมันขึ้นต่อไหม</Text>
-              </TouchableOpacity>
-
-              {/* ── รายดีล + ปุ่มย้อนคืน: กดขายผิด/กรอกเลขผิด ต้องกู้กลับได้ ── */}
-              <TouchableOpacity
-                style={styles.detailToggleInline}
-                onPress={() => setShowRealizedList((v) => !v)}
-              >
-                <Ionicons
-                  name={showRealizedList ? 'chevron-up' : 'chevron-down'}
-                  size={14}
-                  color={COLORS.primary}
-                />
-                <Text style={styles.detailToggleText}>
-                  {showRealizedList ? ' ซ่อนรายการที่ขายแล้ว' : ` ดูรายการที่ขายแล้ว (${realized.tradeCount})`}
-                </Text>
-              </TouchableOpacity>
-
-              {showRealizedList &&
-                realizedResults.map((r) => (
-                  <View key={r.trade.id} style={styles.realizedRow}>
-                    <View style={styles.realizedRowLeft}>
-                      <Text style={styles.realizedRowTitle} numberOfLines={1}>
-                        {r.trade.symbol || r.trade.name}
-                      </Text>
-                      <Text style={styles.realizedRowSub}>
-                        {r.trade.quantity} หน่วย • ขาย {fmtDateTH(r.trade.sellDate)} @{' '}
-                        {formatCurrencyWithType(r.trade.sellPrice, r.trade.currency)}
-                        {r.trade.platform ? ` • ${r.trade.platform}` : ''}
-                      </Text>
-                      {/* เหตุผลที่ขาย — ตัวที่ทำให้ประวัติกลายเป็นสมุดทบทวนฝีมือ ไม่ใช่แค่ตารางเลข */}
-                      {r.trade.notes ? (
-                        <Text style={styles.realizedRowNote} numberOfLines={2}>
-                          “{r.trade.notes}”
-                        </Text>
-                      ) : null}
-                    </View>
-                    <Text
-                      style={[
-                        styles.realizedRowPnl,
-                        { color: r.pnlTHB >= 0 ? COLORS.success : COLORS.error },
-                      ]}
-                    >
-                      {r.pnlTHB >= 0 ? '+' : ''}{formatCurrency(r.pnlTHB)}
-                      {'\n'}
-                      <Text style={styles.realizedRowPnlPct}>
-                        {r.pnlPercent >= 0 ? '+' : ''}{r.pnlPercent.toFixed(1)}%
-                      </Text>
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.undoButton}
-                      onPress={() => handleUndoSell(r.trade)}
-                    >
-                      <Ionicons name="arrow-undo-outline" size={14} color={COLORS.primary} />
-                      <Text style={styles.undoButtonText}> ย้อนคืน</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              {showRealizedList && realizedResults.some((r) => !r.trade.sourceInvestment) && (
-                <Text style={styles.tpSubText}>
-                  * บางรายการยังไม่มีข้อมูลสำรอง (ขายไว้ก่อนมีฟีเจอร์นี้) — ย้อนคืนได้ตามจำนวน/ต้นทุน/แพลตฟอร์ม
-                  แต่โน้ตกับเป้าหมายกำไรจะไม่กลับมา
-                </Text>
-              )}
-          </View>
-        )}
-
-        {/* ── รอบลงทุน ──
-            วางก่อนการ์ด "ถึงคิวลงไม้" โดยตั้งใจ: ต้องรู้ก่อนว่าเหลือกระสุนกี่ไม้/เป้าอยู่ไกลแค่ไหน
-            แล้วค่อยดูว่าจะลงตัวไหน (การ์ดถึงคิวลงไม้คือรายการที่ต้องลงมือ) */}
-        {cycleViews.map(({ cycle, status, orphanCount }) => (
-          <CycleCard
-            key={cycle.id}
-            cycle={cycle}
-            status={status}
-            orphanCount={orphanCount}
-            onPullOrphans={() => handlePullOrphans(cycle)}
-            onPressClose={() => openCloseCycleModal(cycle)}
-            onPressSettings={() => openCycleSettings(cycle)}
-            style={isDesktop && styles.cardGridItem}
-          />
-        ))}
-        {basketsWithoutCycle.length > 0 && (
-          <CycleStartCard
-            baskets={basketsWithoutCycle}
-            onStart={handleStartCycle}
-            style={isDesktop && styles.cardGridItem}
-          />
-        )}
-        <CycleHistoryCard
-          history={cycleHistory}
-          expanded={showCycleHistory}
-          onToggle={() => setShowCycleHistory((v) => !v)}
-          style={isDesktop && styles.cardGridItem}
-        />
-
         {/* การ์ดนี้โชว์ตลอดถ้ามีของที่เช็คแท่งเทียนได้ (คริปโต/หุ้น) —
             เมื่อก่อนซ่อนทั้งการ์ดตอนไม่มีสัญญาณ ทำให้แยกไม่ออกว่า "เช็คแล้วไม่มี" หรือ "พัง/ไม่ได้เช็ค" */}
         {redCheckedCount > 0 && (
@@ -2405,114 +1627,6 @@ export default function PortfolioScreen() {
             )}
           </View>
         )}
-
-        {/* ── การ์ด "เงินรอลงทุน" — อยู่ก่อนรายการลงทุน ──
-            ต้องเห็นก่อนเลื่อนดูหุ้น: มีเงินพร้อมลงเท่าไหร่ / ลงได้ครั้งละเท่าไหร่ แล้วค่อยไปเลือกตัว
-            (เดิมอยู่ท้ายสุดหลังรายการหุ้น ต้องเลื่อนผ่านทั้งพอร์ตก่อนจะเจอ) */}
-        <View style={[styles.goalCard, isDesktop && styles.cardGridItem]}>
-          <View style={styles.goalCardHeader}>
-            <Text style={styles.goalCardTitle}>
-              <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> เงินรอลงทุน · แบ่งลงกี่ครั้ง
-            </Text>
-            <TouchableOpacity onPress={openPowderModal}>
-              <Text style={styles.goalCardEdit}>{dryPowder > 0 ? 'แก้ยอด' : 'จดยอด'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* แบ่งลงกี่ครั้ง/เดือน — ปรับตรงนี้ ไม่มี modal แผนแยกแล้ว (เหลือค่านี้ค่าเดียวที่ยังใช้) */}
-          <View style={styles.roundsRow}>
-            <Text style={styles.planLineLabel}>แบ่งลงกี่ครั้ง / เดือน</Text>
-            <View style={styles.roundsStepper}>
-              <TouchableOpacity style={styles.roundsBtn} onPress={() => changeDcaRounds(-1)}>
-                <Ionicons name="remove" size={16} color={COLORS.primary} />
-              </TouchableOpacity>
-              <Text style={styles.roundsValue}>{dcaRoundsCount ?? '—'}</Text>
-              <TouchableOpacity style={styles.roundsBtn} onPress={() => changeDcaRounds(1)}>
-                <Ionicons name="add" size={16} color={COLORS.primary} />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.roundsHint}>
-              {powderEveryDays ? `~${Math.max(1, Math.round(powderEveryDays))} วัน/ครั้ง` : 'ยังไม่ตั้ง'}
-            </Text>
-          </View>
-
-          {dryPowder <= 0 ? (
-            <Text style={styles.goalCardEmpty}>
-              กด "จดยอด" ใส่เงินที่พร้อมลงตอนนี้ → ระบบจะบอกว่าลงได้ครั้งละเท่าไหร่ ทุกกี่วัน
-            </Text>
-          ) : !dcaRoundsCount ? (
-            <Text style={styles.goalCardEmpty}>
-              มีเงินรอลงทุน {formatCurrency(dryPowder)} — กด + ตั้ง "แบ่งลงกี่ครั้ง/เดือน" ก่อน ถึงจะหารให้ได้
-            </Text>
-          ) : (
-            <>
-              <View style={styles.chipRow}>
-                {[1, 3, 6, 12].map((m) => (
-                  <TouchableOpacity
-                    key={m}
-                    style={[styles.chip, m === powderMonths && styles.chipActive]}
-                    onPress={() => setPowderMonths(m)}
-                  >
-                    <Text style={[styles.chipText, m === powderMonths && styles.chipTextActive]}>
-                      {m} เดือน
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              {/* รายการย่อยที่จดไว้ — แยกตามแหล่งเงิน/โบรก (ถ้าจดแบบยอดรวมก้อนเดียวจะไม่มีบรรทัดนี้) */}
-              {(plan?.dryPowderItems || []).map((it) => (
-                <View key={it.id} style={styles.planLine}>
-                  <Text style={styles.planLineLabel}>
-                    {it.label || 'ไม่ระบุชื่อ'}
-                    {it.asOf ? ` · ${fmtDateTH(it.asOf)}` : ''}
-                  </Text>
-                  <Text style={styles.planLineValue}>
-                    {formatCurrencyWithType(it.amount, it.currency ?? 'THB')}
-                    {(it.currency ?? 'THB') !== 'THB'
-                      ? ` (${formatCurrency(convertToTHB(it.amount, it.currency))})`
-                      : ''}
-                  </Text>
-                </View>
-              ))}
-              <View style={styles.planLine}>
-                <Text style={styles.planLineLabel}>
-                  เงินรอลงทุนที่จดไว้
-                  {powderItemCount > 0 ? ` (รวม ${powderItemCount} รายการ)` : ''}
-                </Text>
-                <View style={styles.dualCurrencyValue}>
-                  <Text style={styles.planLineValue}>฿{formatCurrency(dryPowder)}</Text>
-                  <Text style={styles.dualCurrencySub}>≈ {formatCurrencyWithType(dryPowderUSD, 'USD')}</Text>
-                </View>
-              </View>
-              <View style={[styles.planLine, styles.reserveTotalRow]}>
-                <Text style={[styles.reserveTotalLabel, { flex: 1 }]}>
-                  ลงได้ครั้งละ ({dcaRoundsCount} ครั้ง/ด. × {powderMonths} ด. = {powderTotalRounds} ครั้ง)
-                </Text>
-                <View style={styles.dualCurrencyValue}>
-                  <Text style={styles.reserveTotalValue}>
-                    {powderPerRound == null ? '—' : `฿${formatCurrency(powderPerRound)}`}
-                  </Text>
-                  {powderPerRoundUSD != null && (
-                    <Text style={styles.dualCurrencySub}>
-                      ≈ {formatCurrencyWithType(powderPerRoundUSD, 'USD')}
-                    </Text>
-                  )}
-                </View>
-              </View>
-              {/* "ซื้อทุก ๆ กี่วัน" ไม่ต้องมีบรรทัดแยก — โชว์อยู่ข้างปุ่ม −/+ ด้านบนแล้ว */}
-              {boughtSincePowder ? (
-                <Text style={[styles.tpSubText, { color: COLORS.warning }]}>
-                  ⚠ ซื้อไป {boughtSincePowder.count} รายการ (~{formatCurrency(boughtSincePowder.cost)}) หลังจดยอดเมื่อ{' '}
-                  {fmtDateTH(boughtSincePowder.asOf)} — กด "แก้ยอด" อัปเดตเงินรอลงทุนให้ตรงจริง
-                </Text>
-              ) : plan?.dryPowderAsOf ? (
-                <Text style={styles.tpSubText}>
-                  จดยอดไว้เมื่อ {fmtDateTH(plan.dryPowderAsOf)} · ยังไม่มีการซื้อหลังจากนั้น
-                </Text>
-              ) : null}
-            </>
-          )}
-        </View>
         </View>
         {/* ── จบกริดการ์ดสรุป ── */}
 
@@ -2881,43 +1995,6 @@ export default function PortfolioScreen() {
         </View>
       </Modal>
 
-      {/* ── Modal ของระบบรอบ: ตั้งค่ารอบ / ปิดรอบทั้งตะกร้า ── */}
-      <CycleSettingsModal
-        visible={cycleSettings !== null}
-        cycle={cycleSettings}
-        targetInput={cycleTargetInput}
-        budgetInput={cycleBudgetInput}
-        maxLegsInput={cycleMaxLegsInput}
-        onChangeTarget={setCycleTargetInput}
-        onChangeBudget={setCycleBudgetInput}
-        onChangeMaxLegs={setCycleMaxLegsInput}
-        onSave={handleSaveCycleSettings}
-        onCancel={() => setCycleSettings(null)}
-        onDelete={handleDeleteCycle}
-      />
-      <CloseCycleModal
-        visible={closeTarget !== null}
-        cycle={closeTarget}
-        rows={closeRows}
-        selectedIds={closeSelectedIds}
-        onToggleRow={(id) =>
-          setCloseSelectedIds((ids) =>
-            ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]
-          )
-        }
-        feesInput={closeFeesInput}
-        onChangeFees={setCloseFeesInput}
-        toPowder={closeToPowder}
-        onToggleToPowder={() => setCloseToPowder((v) => !v)}
-        taxTHB={closeTax.taxTHB}
-        taxNote={closeTax.note}
-        showTaxYearHint={nearTaxYearEnd}
-        busy={closeBusy}
-        progress={closeProgress}
-        onConfirm={handleConfirmCloseCycle}
-        onCancel={() => setCloseTarget(null)}
-      />
-
       {/* ── Modal ตั้ง/แก้เป้าหมายพอร์ตรวม ── */}
       <Modal
         visible={goalModalVisible}
@@ -2968,95 +2045,6 @@ export default function PortfolioScreen() {
           </ScrollView>
         </View>
       </Modal>
-
-      {/* modal "แผนเติมเงิน" เอาออกแล้ว — เหลือค่าเดียวที่ยังใช้ (แบ่งลงกี่ครั้ง/เดือน)
-          ปรับด้วยปุ่ม −/+ ในการ์ด "เงินรอลงทุน" ได้เลย ไม่ต้องเปิดฟอร์ม */}
-
-      {/* ── Modal จดยอดเงินรอลงทุน — จดแยกได้หลายรายการ ยอดรวมคือผลบวกของทุกแถว ── */}
-      <Modal
-        visible={powderModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPowderModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          {/* แถวจดยอดเพิ่มได้ไม่จำกัด → ความสูงไม่มีเพดาน ต้องให้การ์ดเลื่อนเองแน่ ๆ */}
-          <ScrollView
-            style={styles.modalCard}
-            contentContainerStyle={styles.modalCardContent}
-            showsVerticalScrollIndicator={false}
-          >
-            <Text style={styles.modalTitle}>
-              <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> จดยอดเงินรอลงทุน
-            </Text>
-            <Text style={styles.modalLabel}>เงินที่พร้อมลงทุนตอนนี้ — จดแยกรายการได้</Text>
-            {powderRows.map((r, idx) => (
-              <View key={r.id} style={styles.powderItemBox}>
-                <View style={styles.powderRow}>
-                <TextInput
-                  style={[styles.modalInput, styles.powderRowLabel]}
-                  value={r.label}
-                  onChangeText={(v) => updatePowderRow(r.id, { label: v })}
-                  placeholder={idx === 0 ? 'ชื่อ/แหล่งเงิน เช่น Dime' : 'ชื่อ/แหล่งเงิน'}
-                  placeholderTextColor={COLORS.textSecondary}
-                />
-                <TextInput
-                  style={[styles.modalInput, styles.powderRowAmount]}
-                  value={r.amount}
-                  onChangeText={(v) => updatePowderRow(r.id, { amount: v })}
-                  keyboardType="numeric"
-                  placeholder="ยอด"
-                  placeholderTextColor={COLORS.textSecondary}
-                />
-                <TouchableOpacity style={styles.powderRowDelete} onPress={() => removePowderRow(r.id)}>
-                  <Ionicons name="close-circle" size={20} color={COLORS.textSecondary} />
-                </TouchableOpacity>
-                </View>
-                {/* สกุลเงินของแถวนี้ — ตัวเลือกมาจากหน้า "สกุลเงิน & แพลตฟอร์ม" ที่ตั้งไว้ */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.powderCurrencyRow}
-                >
-                  {currencyOptions.map((c) => (
-                    <TouchableOpacity
-                      key={c}
-                      style={[styles.powderCurBtn, r.currency === c && styles.chipActive]}
-                      onPress={() => updatePowderRow(r.id, { currency: c })}
-                    >
-                      <Text style={[styles.chipText, r.currency === c && styles.chipTextActive]}>{c}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            ))}
-            <TouchableOpacity
-              style={styles.powderAddBtn}
-              onPress={() => setPowderRows((rows) => [...rows, newPowderRow(rows.length)])}
-            >
-              <Ionicons name="add" size={16} color={COLORS.primary} />
-              <Text style={styles.powderAddBtnText}> เพิ่มรายการ</Text>
-            </TouchableOpacity>
-            <View style={[styles.planLine, styles.reserveTotalRow]}>
-              <Text style={styles.reserveTotalLabel}>ยอดรวมที่จะจด (แปลงเป็น THB)</Text>
-              <Text style={styles.reserveTotalValue}>{formatCurrency(powderRowsTotal)}</Text>
-            </View>
-            <Text style={styles.modalHint}>
-              ยอดนี้ไม่หักอัตโนมัติ — ซื้อเสร็จแล้วกลับมาแก้ยอดของรายการนั้นได้เลย
-              (ล้างทั้งชื่อและยอดของแถว = ลบรายการนั้นทิ้ง)
-              {plan?.dryPowderAsOf ? ` · จดล่าสุด ${fmtDateTH(plan.dryPowderAsOf)}` : ''}
-            </Text>
-            <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePowder}>
-              <Text style={styles.modalSaveBtnText}>จดยอด ({formatCurrency(powderRowsTotal)})</Text>
-            </TouchableOpacity>
-            <View style={styles.modalBottomRow}>
-              <TouchableOpacity onPress={() => setPowderModalVisible(false)}>
-                <Text style={styles.modalCancelText}>ยกเลิก</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -3078,6 +2066,63 @@ const styles = StyleSheet.create({
     gap: 16,
     marginHorizontal: 16,
     marginBottom: 16,
+  },
+  // ── เมนูของพอร์ต (แทนการ์ดเต็มใบที่ย้ายไปเป็นหน้าของตัวเอง) ──
+  menuCard: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  // เดสก์ท็อป: เมนูเป็นคอลัมน์เดียวจะยาวเป็นแถบขวางจอ — คุมด้วย flexBasis เท่าการ์ดสรุปเดิม
+  // (ไม่ใช่ maxWidth ของหน้า ซึ่งห้ามใช้ — ดู CLAUDE.md §1.3)
+  menuCardDesktop: {
+    flexBasis: CARD_GRID_BASIS,
+    flexGrow: 0,
+    alignSelf: 'flex-start',
+    minWidth: 0,
+  },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  menuRowFirst: {
+    borderTopWidth: 0,
+  },
+  menuRowIcon: {
+    width: 20,
+  },
+  // minWidth: 0 เพื่อให้บรรทัดขยายความยาว ๆ ตัดคำแทนที่จะดันตัวเลขทางขวาหลุดขอบ
+  menuRowMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  menuRowTitle: {
+    fontSize: 14,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  menuRowSub: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  menuRowValue: {
+    fontSize: 14,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+    textAlign: 'right',
+  },
+  menuRowValueNeg: {
+    color: COLORS.error,
   },
   cardGridItem: {
     // flexBasis เป็นตัวคุมว่าแถวหนึ่งจะวางได้กี่ใบ, flexGrow ให้ใบที่เหลือกินที่ว่างจนหมดแถว
@@ -3193,6 +2238,20 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     opacity: 0.9,
   },
+  // ปุ่มกาง/ยุบรายละเอียดเป้าหมาย — อยู่บนพื้นน้ำเงิน สีต้องเป็นขาว (COLORS.primary จะจมพื้น)
+  headerGoalToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingVertical: 2,
+  },
+  headerGoalToggleText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: '#ffffff',
+    opacity: 0.85,
+  },
   headerGoalNote: {
     fontSize: 11,
     fontFamily: 'NotoSansThai_300Light',
@@ -3230,67 +2289,10 @@ const styles = StyleSheet.create({
   profitNegative: {
     color: COLORS.error,
   },
-  goalCard: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 0,
-    padding: 16,
-    marginBottom: 16,
-    marginHorizontal:16
-  },
-  goalCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
   goalCardTitle: {
     fontSize: 14,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
-  },
-  goalCardEdit: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.primary,
-  },
-  // ── ตัวปรับ "แบ่งลงกี่ครั้ง/เดือน" ในการ์ดเงินรอลงทุน (แทน modal แผนที่เอาออก) ──
-  roundsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 6,
-  },
-  roundsStepper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  roundsBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  roundsValue: {
-    minWidth: 34,
-    textAlign: 'center',
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  roundsHint: {
-    width: 92,
-    textAlign: 'right',
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-  },
-  goalCardEmpty: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    lineHeight: 18,
   },
   goalCardTopRow: {
     flexDirection: 'row',
@@ -3302,105 +2304,15 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
   },
-  goalTrack: {
-    height: 8,
-    backgroundColor: COLORS.border,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
   goalFill: {
     height: 8,
     borderRadius: 4,
-  },
-  // แถวตัวเลขสำคัญในการ์ดสรุป — ยุบสาระของหลายการ์ดเหลือแถวเดียว
-  kpiRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  kpiCell: {
-    flex: 1,
-    backgroundColor: `${COLORS.primary}0D`,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-  },
-  kpiLabel: {
-    fontSize: 10,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.textSecondary,
-    marginBottom: 2,
-  },
-  kpiValue: {
-    fontSize: 15,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.primary,
-  },
-  kpiValueNeg: {
-    color: COLORS.error,
   },
   // ปุ่มกาง/ยุบ (เหลือใช้ที่ลิสต์ "ที่ขายแล้ว")
   detailToggleText: {
     fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
-  },
-  // ── การ์ดตัวเลขแบบบรรทัด: ป้าย-ซ้าย ค่า-ขวา ไม่มีตารางหลายคอลัมน์ ──
-  planLine: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 5,
-    gap: 12,
-  },
-  planLineLabel: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-  },
-  planLineValue: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-    textAlign: 'right',
-  },
-  // ยอดสองสกุลในบรรทัดเดียว — บาทเป็นตัวหลัก ดอลลาร์ห้อยข้างล่างตัวเล็กกว่า
-  // (ห้ามวางเรียงกันแนวนอน บนจอแคบสองยอดจะดันกันจนเลข wrap กลางตัว)
-  dualCurrencyValue: {
-    alignItems: 'flex-end',
-  },
-  dualCurrencySub: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    marginTop: 1,
-  },
-  // ชิปเลือก "แบ่งลงกี่เดือน" ของเงินรอลงทุน
-  chipRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 12,
-    marginBottom: 6,
-  },
-  chip: {
-    flex: 1,
-    paddingVertical: 7,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  chipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  chipText: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.textSecondary,
-  },
-  chipTextActive: {
-    color: '#ffffff',
-    fontFamily: 'NotoSansThai_600SemiBold',
   },
   // ตัวเลขเด่นในกล่องสรุป (ใช้ในกล่องยืนยันการขาย)
   answerBox: {
@@ -3494,23 +2406,6 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
   },
-  // ปุ่มสลับโหมดของการ์ดวางแผนถึงเป้า (ยุบ 3 ตารางเหลือ 1)
-  reserveTotalRow: {
-    marginTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 8,
-  },
-  reserveTotalLabel: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  reserveTotalValue: {
-    fontSize: 15,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.primary,
-  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -3555,55 +2450,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.text,
-  },
-  modalHint: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    marginTop: 6,
-    lineHeight: 16,
-  },
-  // ── แถวจดเงินรอลงทุน: ชื่อ/แหล่งเงิน + ยอด + ปุ่มลบ + สกุลเงิน ──
-  powderItemBox: {
-    marginBottom: 10,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  powderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
-  },
-  powderCurrencyRow: { flexGrow: 0 },
-  powderCurBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-  },
-  // minWidth: 0 คือหัวใจ — บนเว็บ TextInput กลายเป็น <input> ที่มีความกว้างในตัว ~20 ตัวอักษร (~175px)
-  // และ flex item ได้ min-width:auto มาโดยปริยาย → flexShrink ย่อไม่ลงต่ำกว่านั้น
-  // สองช่องรวมกันเลยกินเกิน 350px ล้นการ์ดกว้าง ~279px บนมือถือ ทั้งที่ flex 3/2 ดูเหมือนถูกแล้ว
-  powderRowLabel: { flex: 3, minWidth: 0, padding: 10, fontSize: 14, fontFamily: 'NotoSansThai_400Regular' },
-  powderRowAmount: { flex: 2, minWidth: 0, padding: 10, fontSize: 14, textAlign: 'right', fontFamily: 'NotoSansThai_400Regular' },
-  powderRowDelete: { paddingHorizontal: 2, paddingVertical: 6 },
-  powderAddBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.background,
-  },
-  powderAddBtnText: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.primary,
   },
   modalSaveBtn: {
     backgroundColor: COLORS.primary,
@@ -3794,57 +2640,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.background,
-  },
-  realizedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  realizedRowLeft: {
-    flex: 1,
-  },
-  realizedRowTitle: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  realizedRowSub: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  realizedRowNote: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.primary,
-    marginTop: 2,
-  },
-  realizedRowPnl: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    textAlign: 'right',
-  },
-  realizedRowPnlPct: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_400Regular',
-  },
-  undoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    backgroundColor: COLORS.surface,
-  },
-  undoButtonText: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.primary,
   },
   list: {
     flex: 1,

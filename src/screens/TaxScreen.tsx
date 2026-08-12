@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TextInput,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,9 +14,7 @@ import { RootStackParamList } from '../types';
 import { InvestmentType, RealizedTrade, INVESTMENT_TYPES } from '../types/investment';
 import {
   TaxProfile,
-  TaxMonth,
   emptyTaxProfile,
-  emptyTaxMonths,
   sumTaxMonths,
   MONTH_LABELS_TH,
   TAX_BRACKETS,
@@ -27,71 +24,22 @@ import {
   SALARY_EXPENSE_CAP,
   PERSONAL_ALLOWANCE,
   socialSecurityLimits,
-  DEDUCTION_ITEMS,
-  DEDUCTION_GROUP_LABELS,
-  DEDUCTION_CAP_GROUPS,
-  DeductionItem,
-  DeductionGroup,
-  TaxYearFactKey,
-  TAX_YEAR_FACT_FIELDS,
 } from '../types/tax';
-import {
-  calculateTax,
-  gainRuleFor,
-  projectFullYear,
-  socialSecurityForSalary,
-  estimateWithholding,
-} from '../utils/taxCalc';
-import { useResponsive } from '../utils/responsive';
+import { calculateTax, gainRuleFor, projectFullYear, estimateWithholding } from '../utils/taxCalc';
 import { getRealizedTrades } from '../services/realizedStorage';
 import { UserProfile, incomeExemptionFor, isUserProfileAnswered } from '../types/userProfile';
 import { getUserProfile } from '../services/userProfileStorage';
-import { adviseDeductions, autoFillableDeductions } from '../utils/deductionAdvice';
 import { getTaxProfile, saveTaxProfile, getTaxYears, isTaxTableMissing } from '../services/taxStorage';
 import { COLORS, FONTS, TEXT, formatCurrency } from '../utils/constants';
-import { notify, confirmAsk } from '../utils/dialog';
+import { notify } from '../utils/dialog';
+// ช่องกรอกตัวเลข + สไตล์ชุดเดียวกับหน้าลูก (TaxIncome / TaxDeduction) — ดู components/TaxFormKit
+import { NumberInput, num } from '../components/TaxFormKit';
 
 const currentBuddhistYear = () => new Date().getFullYear() + 543;
 
-// แปลง input เป็นตัวเลข — ผู้ใช้พิมพ์ comma มาได้ และช่องว่างต้องเป็น 0 ไม่ใช่ NaN
-const num = (s: string): number => {
-  const n = parseFloat((s || '').replace(/,/g, ''));
-  return Number.isFinite(n) ? n : 0;
-};
-
-// เหลือช่องเดียวที่เป็น "ยอดทั้งปี" แบบก้อนเดียว
-// เงินเดือน/โบนัส/หัก ณ ที่จ่าย/ประกันสังคม อยู่ในตารางรายเดือน ส่วนลดหย่อนแยกเป็นรายการแล้ว
-type FormKey = 'otherIncome';
-
-const FIELDS: { key: FormKey; label: string; hint?: string }[] = [
-  {
-    key: 'otherIncome',
-    label: 'เงินได้อื่นที่ต้องนำมารวม (ทั้งปี)',
-    hint: 'เช่น ดอกเบี้ย ค่าเช่า — ส่วนนี้ไม่ได้หักค่าใช้จ่าย 50%',
-  },
-];
-
-/** เพดานของรายการนั้นเป็นข้อความสั้น ๆ ไว้โชว์ท้ายช่องกรอก */
-const capTextOf = (item: DeductionItem, assessableIncome: number): string | null => {
-  const parts: string[] = [];
-  if (item.capPercentOfIncome != null) {
-    const byPercent = (assessableIncome * item.capPercentOfIncome) / 100;
-    parts.push(`${item.capPercentOfIncome}% ของเงินได้ = ${formatCurrency(byPercent)}`);
-  }
-  if (item.cap != null) parts.push(`เพดาน ${formatCurrency(item.cap)}`);
-  if (parts.length === 0) return null;
-  return `ใช้ได้ ${parts.join(' · ')}${parts.length > 1 ? ' (เอาตัวที่น้อยกว่า)' : ''}`;
-};
-
-// คอลัมน์ในตารางรายเดือน — ตรงกับสลิปเงินเดือน 1 ใบ
-const MONTH_COLUMNS: { key: keyof Omit<TaxMonth, 'month'>; label: string }[] = [
-  { key: 'salary', label: 'เงินเดือน' },
-  { key: 'bonus', label: 'โบนัส' },
-  { key: 'withheld', label: 'หัก ณ ที่จ่าย' },
-  { key: 'socialSecurity', label: 'ประกันสังคม' },
-];
-
-type SectionId = 'form' | 'deduct' | 'gains' | 'method' | 'rules' | 'brackets';
+// หัวข้อยุบได้ที่เหลืออยู่ในหน้านี้ — ทั้งหมดเป็น "อ่านอย่างเดียว/อ้างอิง" ยกเว้น rules
+// (form/deduct ที่เคยอยู่ตรงนี้ กลายเป็นหน้า TaxIncome / TaxDeduction แล้ว)
+type SectionId = 'gains' | 'method' | 'rules' | 'brackets';
 
 /** บรรทัดในสูตร — ซ้ายคำอธิบาย ขวาตัวเลข (เว้น value ไว้ = บรรทัดข้อความล้วน) */
 const FormulaLine: React.FC<{ label: string; value?: string; strong?: boolean }> = ({
@@ -136,41 +84,7 @@ const Section: React.FC<{
   );
 };
 
-/**
- * ช่องกรอกตัวเลขที่เก็บ "ข้อความดิบ" ไว้ระหว่างพิมพ์ แล้วส่งค่าที่แปลงแล้วออกไปให้ฟอร์ม
- * ถ้าผูก value กับตัวเลขตรง ๆ (String(number)) ทุกคีย์จะถูก normalize ทับ:
- * พิมพ์ "1234." จุดจะหายทันที ทศนิยมจึงพิมพ์ไม่ได้ และลบจนว่างก็เด้งเป็น 0
- * พอ blur ค่อย sync กลับเป็นเลขมาตรฐาน (null = ไม่ได้กำลังพิมพ์ ให้ยึดค่าจาก props)
- */
-const NumberInput: React.FC<{
-  /** ค่าที่จะโชว์ตอนไม่ได้พิมพ์ — ให้ผู้เรียกจัดรูปเอง (แต่ละช่องมีกฎ "ว่าง" ของตัวเอง) */
-  display: string;
-  onChangeNumber: (raw: string) => void;
-  style?: any;
-  placeholder?: string;
-}> = ({ display, onChangeNumber, style, placeholder }) => {
-  const [typing, setTyping] = useState<string | null>(null);
-  return (
-    <TextInput
-      style={style}
-      value={typing ?? display}
-      onChangeText={(v) => {
-        setTyping(v);
-        onChangeNumber(v);
-      }}
-      onBlur={() => setTyping(null)}
-      keyboardType="numeric"
-      // ทุกช่องมีเลขเดิมอยู่แล้ว (ระบบเติมให้/ก๊อปลงมา) การแก้จึงเป็นการ "พิมพ์ทับ" เกือบทุกครั้ง
-      // ถ้าไม่ select ให้ ผู้ใช้ต้องลากคลุมเองทุกช่อง หรือพิมพ์ต่อท้ายเลขเดิมโดยไม่ตั้งใจ
-      selectTextOnFocus
-      placeholder={placeholder ?? '0'}
-      placeholderTextColor={COLORS.textSecondary}
-    />
-  );
-};
-
 export default function TaxScreen() {
-  const { isDesktop } = useResponsive();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [year, setYear] = useState(currentBuddhistYear());
   const [availableYears, setAvailableYears] = useState<number[]>([]);
@@ -180,10 +94,8 @@ export default function TaxScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tableMissing, setTableMissing] = useState(false);
-  // ยุบรายละเอียดไว้ก่อน โชว์แค่คำตอบ — กางเองเมื่ออยากเห็นที่มา
-  const [openSection, setOpenSection] = useState<SectionId | null>('form');
-  // เงื่อนไขของค่าลดหย่อน — เปิดทีละรายการ (คีย์ของ DEDUCTION_ITEMS)
-  const [openCondition, setOpenCondition] = useState<string | null>(null);
+  // ยุบทุกหัวข้อไว้ก่อน โชว์แค่คำตอบ — ที่เหลือเป็นที่มา/อ้างอิง กางเองเมื่ออยากเห็น
+  const [openSection, setOpenSection] = useState<SectionId | null>(null);
 
   const load = useCallback(async (targetYear: number) => {
     setLoading(true);
@@ -239,130 +151,18 @@ export default function TaxScreen() {
   // จึงล็อกไว้แล้วชี้ไปกรอกก่อน ดีกว่าโชว์ช่องกรอก 18 ช่องที่ไม่มีป้ายบอกอะไรเลย
   // ล็อกแค่หัวข้อนี้ — เงินเดือน/ภาษีกำไรขาย/สรุปภาษี ยังใช้ได้ปกติเพราะไม่ต้องพึ่งข้อมูลส่วนตัว
   const profileAnswered = isUserProfileAnswered(person);
-  // คำแนะนำสิทธิ์ลดหย่อน — มาจาก 2 แหล่ง: ตัวตน (ข้ามปี) + ข้อเท็จจริงของปีที่เลือกอยู่
-  const adviceByKey = useMemo(() => {
-    const list = adviseDeductions(person, profile.yearFacts);
-    return new Map(list.map((a) => [a.item.key, a]));
-  }, [person, profile.yearFacts]);
-  const autoFillable = useMemo(
-    () => autoFillableDeductions([...adviceByKey.values()]),
-    [adviceByKey]
-  );
-
-  /** เติมยอดที่คำนวณจากจำนวนคนได้ (คู่สมรส/บุตร/พ่อแม่/คนพิการ) — ไม่แตะช่องที่ต้องดูใบเสร็จ */
-  const fillFromPersonalInfo = async () => {
-    const keys = Object.keys(autoFillable);
-    if (keys.length === 0) {
-      notify('ยังไม่มีรายการที่คำนวณให้ได้ — ไปกรอกข้อมูลส่วนตัวที่ โปรไฟล์ → ข้อมูลส่วนตัว ก่อน');
-      return;
-    }
-    const overwriting = keys.filter((k) => (profile.deductions?.[k] ?? 0) > 0);
-    if (overwriting.length > 0) {
-      const ok = await confirmAsk(
-        'เขียนทับของเดิม?',
-        `จะเขียนทับ ${overwriting.length} ช่องที่กรอกไว้แล้ว ด้วยยอดที่คำนวณจากจำนวนคน`,
-        'เติมให้'
-      );
-      if (!ok) return;
-    }
-    setProfile((p) => ({ ...p, deductions: { ...(p.deductions || {}), ...autoFillable } }));
-    notify(
-      `เติมให้แล้ว ${keys.length} รายการ\n` +
-        keys.map((k) => `${DEDUCTION_ITEMS.find((i) => i.key === k)?.label}: ${formatCurrency(autoFillable[k])}`).join('\n')
-    );
-  };
+  // (คำแนะนำสิทธิ์/ปุ่มเติมจากข้อมูลส่วนตัว ย้ายไปหน้า "ค่าลดหย่อน" พร้อมกับช่องกรอกทั้งชุด)
   // ยอดที่กรอกจริง vs คาดทั้งปี — ต้องแยกกัน ไม่งั้นกรอก 8 เดือนแล้วเห็นภาษีต่ำกว่าจริง ~5 เท่า
   const projection = useMemo(
     () => projectFullYear(profile, trades, taxOpts),
     [profile, trades, taxOpts]
   );
 
-  const setField = (key: FormKey, value: string) =>
-    setProfile((p) => ({ ...p, [key]: num(value) }));
-
-  // ลดหย่อนรายรายการ — เก็บเฉพาะคีย์ที่มีค่า > 0 จะได้ไม่บวม jsonb ด้วยเลข 0 สิบกว่าคีย์
-  const setDeduction = (key: string, value: string) =>
-    setProfile((p) => {
-      const next = { ...(p.deductions || {}) };
-      const n = num(value);
-      if (n > 0) next[key] = n;
-      else delete next[key];
-      return { ...p, deductions: next };
-    });
-
-  // ข้อเท็จจริงรายปี — กดคำตอบเดิมซ้ำ = ล้างกลับเป็น "ยังไม่ตอบ" (ต่างจาก "ตอบว่าไม่")
-  const setYearFact = (key: TaxYearFactKey, value: boolean) =>
-    setProfile((p) => {
-      const next = { ...(p.yearFacts || {}) };
-      if (next[key] === value) delete next[key];
-      else next[key] = value;
-      return { ...p, yearFacts: Object.keys(next).length > 0 ? next : undefined };
-    });
-
-  const setMonthField = (month: number, key: keyof Omit<TaxMonth, 'month'>, value: string) =>
-    setProfile((p) => ({
-      ...p,
-      months: (p.months || emptyTaxMonths()).map((m) =>
-        m.month === month ? { ...m, [key]: num(value) } : m
-      ),
-    }));
-
-  // เงินเดือนส่วนใหญ่เท่ากันทุกเดือน — ถ้าไม่มีปุ่มนี้ต้องพิมพ์ซ้ำ 12 รอบ × 4 ช่อง
-  const copyMonthDown = (month: number) => {
-    setProfile((p) => {
-      const src = (p.months || []).find((m) => m.month === month);
-      if (!src) return p;
-      return {
-        ...p,
-        months: (p.months || []).map((m) =>
-          m.month > month
-            ? // โบนัสไม่ก๊อปลงไป — ไม่ได้รับทุกเดือน ก๊อปไปจะทำให้เงินได้สูงเกินจริง
-              { ...m, salary: src.salary, withheld: src.withheld, socialSecurity: src.socialSecurity }
-            : m
-        ),
-      };
-    });
-  };
+  // (ช่องกรอกเงินได้/ลดหย่อน/ข้อเท็จจริงรายปี ย้ายไปหน้า TaxIncome กับ TaxDeduction แล้ว
+  //  หน้านี้เหลือแก้ค่าเดียวคือกฎภาษีรายสินทรัพย์ด้านล่าง)
 
   const setRule = (type: InvestmentType, rule: GainTaxRule) =>
     setProfile((p) => ({ ...p, gainRules: { ...(p.gainRules || {}), [type]: rule } }));
-
-  /**
-   * เติมประกันสังคม + หัก ณ ที่จ่าย จากเงินเดือนที่กรอกไว้ (ครั้งเดียว แก้ทับได้)
-   * ทั้งสองค่าเป็น "ค่าประมาณ" — ของจริงต้องดูสลิป จึงต้องถามก่อนทับของที่กรอกมือไว้แล้ว
-   * ลำดับสำคัญ: ใส่ประกันสังคมก่อน เพราะมันเป็นตัวลดหย่อนที่ทำให้ภาษี (และหัก ณ ที่จ่าย) ลดลง
-   */
-  const fillPayrollDeductions = async () => {
-    const months = profile.months || emptyTaxMonths();
-    if (!months.some((m) => (m.salary || 0) > 0)) {
-      notify('ยังไม่มีเงินเดือนในตาราง — กรอกเงินเดือนอย่างน้อย 1 เดือนก่อน');
-      return;
-    }
-    const hasManual = months.some((m) => (m.withheld || 0) > 0 || (m.socialSecurity || 0) > 0);
-    if (hasManual) {
-      const ok = await confirmAsk(
-        'เขียนทับของเดิม?',
-        'มีหัก ณ ที่จ่าย/ประกันสังคมที่กรอกไว้แล้ว การคำนวณให้จะเขียนทับทุกเดือนที่มีเงินเดือน',
-        'คำนวณให้'
-      );
-      if (!ok) return;
-    }
-
-    const withSSO = months.map((m) => ({
-      ...m,
-      socialSecurity: socialSecurityForSalary(m.salary, year),
-    }));
-    const est = estimateWithholding({ ...profile, months: withSSO });
-    setProfile((p) => ({ ...p, months: est.months }));
-
-    const t = sumTaxMonths(est.months);
-    notify(
-      `คำนวณให้แล้ว — ประกันสังคมรวม ${formatCurrency(t.socialSecurity)} · หัก ณ ที่จ่ายรวม ${formatCurrency(t.withheld)}\n` +
-        'หัก ณ ที่จ่ายคิดแบบเดียวกับที่ฝ่ายบุคคลหักจริง (เงินเดือนเดือนนั้น × 12 ' +
-        'ไม่เอาประกันสังคมมาลดหย่อน) ยอดจึงตรงกับสลิป — ส่วนที่หักเกินจะไปโผล่เป็น "ได้คืน" ตอนยื่นภาษี\n' +
-        'ถ้าเดือนไหนยังไม่ตรง พิมพ์ยอดจากสลิปทับได้เลย'
-    );
-  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -491,386 +291,42 @@ export default function TaxScreen() {
         </Text>
       </View>
 
-      {/* ── ฟอร์มรายได้ ── */}
-      <Section
-        id="form"
-        openId={openSection}
-        onToggle={toggleSection}
-        title="รายได้ & ลดหย่อน"
-        subtitle={`เงินได้จากงาน ${formatCurrency(breakdown.salaryIncome)}`}
+      {/* ── ทางเข้าสองหน้าที่ต้องกรอกจริง ──
+          เดิมทั้งสองเป็นหัวข้อยุบได้ในหน้านี้ — ตาราง 12 เดือน × 5 ช่อง กับค่าลดหย่อน 18 รายการ
+          กางแล้วหน้ายาวจนคำตอบด้านบนหลุดจอ แยกเป็นหน้าของตัวเองแล้วหน้านี้เหลือหน้าที่เดียว: สรุป
+          กดกลับมาปุ๊บตัวเลขข้างบนอัปเดตให้เอง (โหลดใหม่ทุกครั้งที่หน้านี้ถูกโฟกัส) */}
+      <TouchableOpacity
+        style={styles.navRow}
+        onPress={() => navigation.navigate('TaxIncome', { year })}
       >
-        {/* ── ตารางรายเดือน: กรอกจากสลิปเงินเดือนเดือนต่อเดือน ── */}
-        <Text style={styles.tableTitle}>กรอกจากสลิปเงินเดือน (รายเดือน)</Text>
-        <Text style={styles.tableHint}>
-          ภาษีทั้งปีคิดจากยอดรวม ดังนั้นกรอกรายเดือนไม่ได้ทำให้ภาษีเปลี่ยน — แต่ได้หัก ณ ที่จ่ายที่ตรงจริง
-          (แต่ละเดือนไม่เท่ากัน) และแยก "ที่เกิดจริงแล้ว" กับ "คาดทั้งปี" ออกจากกันได้
-        </Text>
-
-        <TouchableOpacity style={styles.fillBtn} onPress={fillPayrollDeductions}>
-          <Ionicons name="calculator-outline" size={15} color={COLORS.primary} />
-          <Text style={styles.fillBtnText}>คำนวณประกันสังคม + หัก ณ ที่จ่าย จากเงินเดือน</Text>
-        </TouchableOpacity>
-        <Text style={styles.tableHint}>
-          ประกันสังคม ปี {year} = 5% ของเงินเดือน (ฐานไม่เกิน {formatCurrency(ssoLimits.baseCap)} → สูงสุด{' '}
-          {ssoLimits.monthlyCap}/เดือน){'\n'}
-          หัก ณ ที่จ่าย = จำลองวิธีที่ฝ่ายบุคคลหักจริง — ตั้งยอดจาก "เงินเดือนเดือนแรก × 12" ครั้งเดียว
-          แล้วหักเท่ากันทุกเดือน (ขึ้นเงินเดือนกลางปี payroll ไม่ได้คำนวณใหม่){'\n'}
-          ไม่เอาประกันสังคมมาลดหย่อนในขั้นนี้ เพราะลดหย่อนตัวนั้นต้องยื่น ล.ย.01 ก่อน payroll ส่วนใหญ่จึงหักเผื่อไว้
-          — ส่วนที่หักเกินจะไปโผล่เป็น "ได้คืน" ตอนยื่นภาษี ซึ่งเป็นเลขที่หน้านี้มีไว้บอก
-        </Text>
-        <Text style={styles.tableHint}>
-          ช่อง "รับจริง" กรอกกลับได้ — ใส่ยอดที่เข้าบัญชีจริงตามสลิป ระบบจะถอดกลับเป็นหัก ณ ที่จ่ายให้เอง
-          (รับจริง = เงินเดือน + โบนัส − หัก ณ ที่จ่าย − ประกันสังคม){'\n'}
-          ข้อควรรู้: ถ้าสลิปมีรายการหักอื่นด้วย เช่น กองทุนสำรองเลี้ยงชีพหรือประกันกลุ่ม ยอดที่ถอดกลับได้
-          จะรวมของพวกนั้นเข้าไปในหัก ณ ที่จ่ายด้วย ทำให้ดูเหมือนจ่ายภาษีไว้เกิน — กรณีนั้นให้พิมพ์ตัวเลข
-          ภาษีจากสลิปลงช่อง "หัก ณ ที่จ่าย" ตรง ๆ แทน
-        </Text>
-
-        {/* หัวตารางเฉพาะเดสก์ท็อป — มือถือใช้ label ในแต่ละช่องแทน เพราะ 4 ช่องในแถวเดียวแคบเกิน */}
-        {isDesktop && (
-          <View style={styles.mRowHead}>
-            <Text style={[styles.mHeadCell, styles.mCopyCell]}> </Text>
-            <Text style={[styles.mHeadCell, styles.mMonthCell]}>เดือน</Text>
-            {MONTH_COLUMNS.map((c) => (
-              <Text key={c.key} style={[styles.mHeadCell, styles.mInputCell]}>{c.label}</Text>
-            ))}
-            <Text style={[styles.mHeadCell, styles.mNetCol]}>รับจริง (จากสลิป)</Text>
-          </View>
-        )}
-
-        {(profile.months || emptyTaxMonths()).map((m) => {
-          // เงินที่เข้าบัญชีจริงของเดือนนั้น — สลิปหักภาษีกับประกันสังคมออกก่อนโอน
-          // ไม่ใช่ตัวเลขที่ใช้คิดภาษี (ภาษีคิดจากเงินได้ก่อนหัก) แต่เป็นเลขที่เอาไปวางแผนใช้จ่ายได้
-          const gross = (m.salary || 0) + (m.bonus || 0);
-          const net = gross - (m.withheld || 0) - (m.socialSecurity || 0);
-          // ช่อง "รับจริง" กรอกกลับได้ — ยอดเข้าบัญชีคือเลขที่ผู้ใช้รู้แน่ที่สุด (เห็นในแอปธนาคาร)
-          // ส่วนหัก ณ ที่จ่ายเป็นค่าที่ระบบเดา ไม่มีทางตรงสลิปเป๊ะ จึงให้ถอดกลับจากยอดที่รู้แทน
-          const netCell = gross > 0 ? (
-            <NumberInput
-              style={styles.mInput}
-              // โชว์เป็นเลขดิบเหมือนอีก 4 ช่อง (34000 ไม่ใช่ 34,000.00) — ช่องกรอกที่มีคอมม่า/ทศนิยม
-              // ทำให้พิมพ์ทับยากและอ่านสลับกับช่องข้าง ๆ ไม่ออกว่าอันไหนกรอกได้
-              display={net ? String(Math.round(net * 100) / 100) : ''}
-              onChangeNumber={(v) =>
-                setMonthField(m.month, 'withheld', String(Math.max(0, gross - (m.socialSecurity || 0) - num(v))))
-              }
-            />
-          ) : (
-            <Text style={[styles.mInput, styles.mNetPlaceholder]}>—</Text>
-          );
-          return (
-            <View key={m.month} style={[styles.mRow, !isDesktop && styles.mRowMobile]}>
-              {/* ลูกศรอยู่หน้าสุดและ "จองที่" ไว้ทุกแถว แม้ ธ.ค. จะไม่มีปุ่ม
-                  เดิมปุ่มอยู่ท้ายแถวและหายไปในเดือน ธ.ค. ทำให้ช่องกรอกแถวสุดท้ายกว้างไม่เท่าแถวอื่น */}
-              {isDesktop && (
-                <View style={styles.mCopyCell}>
-                  {m.month < 12 && (
-                    <TouchableOpacity style={styles.mCopyBtn} onPress={() => copyMonthDown(m.month)}>
-                      <Ionicons name="arrow-down-outline" size={13} color={COLORS.primary} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
-              {isDesktop ? (
-                <Text style={[styles.mMonthLabel, styles.mMonthCell]}>
-                  {MONTH_LABELS_TH[m.month - 1]}
-                </Text>
-              ) : (
-                <Text style={styles.mMonthLabel}>{MONTH_LABELS_TH[m.month - 1]}</Text>
-              )}
-              <View style={[styles.mFields, !isDesktop && styles.mFieldsMobile]}>
-                {MONTH_COLUMNS.map((c) => (
-                  <View key={c.key} style={[styles.mInputCell, !isDesktop && styles.mInputCellMobile]}>
-                    {!isDesktop && <Text style={styles.mMiniLabel}>{c.label}</Text>}
-                    <NumberInput
-                      style={styles.mInput}
-                      display={m[c.key] ? String(m[c.key]) : ''}
-                      onChangeNumber={(v) => setMonthField(m.month, c.key, v)}
-                    />
-                  </View>
-                ))}
-                {/* มือถือ: "รับจริง" ลงไปอยู่ในกริดช่องกรอกด้วยกัน เพราะแถวเป็นแนวตั้งอยู่แล้ว */}
-                {!isDesktop && (
-                  <View style={[styles.mInputCell, styles.mInputCellMobile]}>
-                    <Text style={styles.mMiniLabel}>รับจริง</Text>
-                    {netCell}
-                  </View>
-                )}
-              </View>
-              {isDesktop && <View style={styles.mNetCol}>{netCell}</View>}
-              {!isDesktop && m.month < 12 && (
-                <TouchableOpacity style={styles.mCopyBtn} onPress={() => copyMonthDown(m.month)}>
-                  <Ionicons name="arrow-down-outline" size={13} color={COLORS.primary} />
-                  <Text style={styles.mCopyText}> เติมลงเดือนที่เหลือ</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          );
-        })}
-
-        {/* แถวรวม — ตัวเลขชุดนี้คือฐานที่เอาไปคิดภาษีจริง */}
-        <View style={styles.mTotalRow}>
-          <Text style={styles.mTotalLabel}>
-            รวม {monthTotals.filledMonths}/12 เดือน
-          </Text>
-          <Text style={styles.mTotalValue}>
-            เงินเดือน+โบนัส {formatCurrency(monthTotals.salary + monthTotals.bonus)} · หัก ณ ที่จ่าย{' '}
-            {formatCurrency(monthTotals.withheld)} · ปกส. {formatCurrency(monthTotals.socialSecurity)}
-            {monthTotals.socialSecurity > ssoLimits.annualCap
-              ? ` (ลดหย่อนได้แค่ ${formatCurrency(ssoLimits.annualCap)})`
-              : ''}
-            {'\n'}
-            รับจริงรวม {formatCurrency(netReceived)} · เฉลี่ยเดือนละ{' '}
-            {monthTotals.filledMonths > 0
-              ? formatCurrency(netReceived / monthTotals.filledMonths)
-              : formatCurrency(0)}{' '}
-            (เฉลี่ยจาก {monthTotals.filledMonths} เดือนที่กรอก)
+        <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
+        <View style={styles.navRowMain}>
+          <Text style={styles.navRowTitle}>เงินได้รายเดือน</Text>
+          <Text style={styles.navRowSub}>
+            กรอกแล้ว {breakdown.filledMonths}/12 เดือน · เงินได้จากงาน{' '}
+            {formatCurrency(breakdown.salaryIncome)}
           </Text>
         </View>
+        <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+      </TouchableOpacity>
 
-        {FIELDS.map((f) => (
-          <View key={f.key} style={styles.field}>
-            <Text style={styles.fieldLabel}>{f.label}</Text>
-            <NumberInput
-              style={styles.input}
-              display={profile[f.key] ? String(profile[f.key]) : ''}
-              onChangeNumber={(v) => setField(f.key, v)}
-            />
-            {f.hint ? <Text style={styles.fieldHint}>{f.hint}</Text> : null}
-          </View>
-        ))}
-
-        <View style={styles.calcBox}>
-          {breakdown.incomeExemption > 0 && (
-            <CalcLine
-              label={`ยกเว้นเงินได้ 190,000 (${exemption.reason})`}
-              value={-breakdown.incomeExemption}
-            />
-          )}
-          <CalcLine label="เงินได้จากงาน" value={breakdown.salaryIncome} />
-          <CalcLine
-            label={`หักค่าใช้จ่าย 50% (ไม่เกิน ${formatCurrency(SALARY_EXPENSE_CAP)})`}
-            value={-breakdown.salaryExpense}
-          />
-          {breakdown.otherIncome > 0 && <CalcLine label="เงินได้อื่น" value={breakdown.otherIncome} />}
-          {breakdown.gainIncome > 0 && (
-            <CalcLine label="กำไรขายที่ต้องเสียภาษี" value={breakdown.gainIncome} />
-          )}
-          <CalcLine label="ลดหย่อนส่วนตัว" value={-PERSONAL_ALLOWANCE} />
-          {breakdown.socialSecurity > 0 && (
-            <CalcLine label="ประกันสังคม" value={-breakdown.socialSecurity} />
-          )}
-          {breakdown.extraDeductions > 0 && (
-            <CalcLine label="ลดหย่อนอื่น" value={-breakdown.extraDeductions} />
-          )}
-          <View style={styles.calcTotal}>
-            <Text style={styles.calcTotalLabel}>เงินได้สุทธิ</Text>
-            <Text style={styles.calcTotalValue}>{formatCurrency(breakdown.netIncome)}</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
-          {saving ? (
-            <ActivityIndicator size="small" color="#ffffff" />
-          ) : (
-            <Text style={styles.saveBtnText}>บันทึกข้อมูลปี {year}</Text>
-          )}
-        </TouchableOpacity>
-      </Section>
-
-      {/* ── ค่าลดหย่อนแยกรายการ ──
-          เดิมเป็นช่อง "ลดหย่อนอื่น ๆ" ก้อนเดียว ซึ่งกรอกเกินสิทธิ์ได้โดยไม่มีอะไรเตือน
-          (RMF เพดาน 30% ของเงินได้, กลุ่มเกษียณรวม 500,000, ประกันชีวิต+สุขภาพ 100,000 ฯลฯ)
-          แยกเป็นรายการแล้วหน้าจอทำหน้าที่ 2 อย่างพร้อมกัน: บอกว่าปีนี้ลดหย่อนอะไรได้บ้าง และตัดเพดานให้ */}
-      <Section
-        id="deduct"
-        openId={openSection}
-        onToggle={toggleSection}
-        title="ค่าลดหย่อน — ปีนี้ใช้อะไรได้บ้าง"
-        subtitle={
-          !profileAnswered
-            ? 'ต้องกรอกข้อมูลส่วนตัวก่อน'
-            : breakdown.extraDeductions > 0
-              ? `ใช้ไปแล้ว ${formatCurrency(breakdown.extraDeductions)}`
-              : 'ยังไม่ได้กรอก — กดดูรายการทั้งหมด'
-        }
+      <TouchableOpacity
+        style={styles.navRow}
+        onPress={() => navigation.navigate('TaxDeduction', { year })}
       >
-        {/* ── ประตู: ไม่มีข้อมูลส่วนตัว = ตัดสินสิทธิ์ไม่ได้ ── */}
-        {!profileAnswered ? (
-          <View>
-            <View style={styles.lockBox}>
-              <Ionicons name="person-circle-outline" size={22} color={COLORS.primary} />
-              <Text style={styles.lockTitle}>ยังกรอกไม่ได้</Text>
-              <Text style={styles.lockText}>
-                หัวข้อนี้ต้องรู้ข้อมูลส่วนตัวก่อน (วันเกิด สถานภาพสมรส จำนวนคนในอุปการะ)
-                ระบบจะได้บอกว่าปีนี้ใช้สิทธิ์อะไรได้ อะไรไม่ได้ และคิดยอดที่มาจากจำนวนคนให้อัตโนมัติ
-              </Text>
-              <TouchableOpacity
-                style={styles.lockBtn}
-                onPress={() => navigation.navigate('PersonalInfo')}
-              >
-                <Text style={styles.lockBtnText}>ไปกรอกข้อมูลส่วนตัว</Text>
-                <Ionicons name="arrow-forward" size={14} color="#ffffff" />
-              </TouchableOpacity>
-            </View>
-            {/* ยอดเก่าที่กรอกไว้ก่อนหน้ายังถูกคิดภาษีอยู่ — ต้องบอก ไม่งั้นดูเหมือนหายไปทั้งก้อน */}
-            {breakdown.extraDeductions > 0 && (
-              <Text style={styles.lockKeepNote}>
-                ยอดลดหย่อน {formatCurrency(breakdown.extraDeductions)} ที่กรอกไว้ก่อนหน้านี้
-                ยังถูกนำไปคำนวณอยู่ ไม่ได้ถูกลบ — กรอกข้อมูลส่วนตัวแล้วจะกลับมาแก้ไขได้
-              </Text>
-            )}
-          </View>
-        ) : (
-          <>
-        <Text style={styles.tableHint}>
-          ลดหย่อนส่วนตัว {formatCurrency(PERSONAL_ALLOWANCE)} และประกันสังคม{' '}
-          {formatCurrency(breakdown.socialSecurity)} ระบบใส่ให้อัตโนมัติแล้ว ไม่ต้องกรอกซ้ำในนี้{'\n'}
-          กรอก "ยอดที่จ่ายจริง" ลงไปได้เลย ระบบจะตัดให้เหลือเท่าที่สิทธิ์อนุญาตเอง
-        </Text>
-
-        {/* ── ข้อเท็จจริงของปีนี้ ──
-            อยู่ในหน้าภาษีไม่ใช่หน้าข้อมูลส่วนตัว เพราะทุกข้อเปลี่ยนได้ทุกปี (ผ่อนบ้านหมด ย้ายงาน ฯลฯ)
-            เก็บใน tax_profiles.year_facts ของปีที่เลือกอยู่ ปีเก่าจึงไม่เปลี่ยนตามปีใหม่ */}
-        <Text style={styles.factTitle}>ปี {year} — ตอบ 5 ข้อนี้เพื่อให้ระบบตัดสิทธิ์ให้ถูก</Text>
-        <View style={styles.factCard}>
-          {TAX_YEAR_FACT_FIELDS.map((f, i) => (
-            <View key={f.key} style={[styles.factRow, i > 0 && styles.factRowBorder]}>
-              <View style={styles.factInfo}>
-                <Text style={styles.factLabel}>{f.label}</Text>
-                <Text style={styles.factHint}>{f.hint}</Text>
-              </View>
-              <View style={styles.yesNo}>
-                {[true, false].map((v) => {
-                  const active = profile.yearFacts?.[f.key] === v;
-                  return (
-                    <TouchableOpacity
-                      key={String(v)}
-                      style={[styles.factChip, active && styles.factChipActive]}
-                      onPress={() => setYearFact(f.key, v)}
-                    >
-                      <Text style={[styles.factChipText, active && styles.factChipTextActive]}>
-                        {v ? 'ใช่' : 'ไม่'}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          ))}
-          <Text style={styles.factFoot}>
-            กดคำตอบเดิมซ้ำ = ล้างกลับเป็นยังไม่ตอบ · ข้อที่ยังไม่ตอบจะไม่ถูกตัดสินว่าใช้ไม่ได้
+        <Ionicons name="pricetags-outline" size={18} color={COLORS.primary} />
+        <View style={styles.navRowMain}>
+          <Text style={styles.navRowTitle}>ค่าลดหย่อน — ปีนี้ใช้อะไรได้บ้าง</Text>
+          <Text style={styles.navRowSub}>
+            {!profileAnswered
+              ? 'ต้องกรอกข้อมูลส่วนตัวก่อน'
+              : breakdown.extraDeductions > 0
+                ? `ใช้ไปแล้ว ${formatCurrency(breakdown.extraDeductions)}`
+                : 'ยังไม่ได้กรอก — กดเข้าไปดูรายการทั้งหมด'}
           </Text>
         </View>
-
-        {/* เติมยอดที่คิดจากจำนวนคนได้เลย — ส่วนที่เหลือยังต้องดูใบเสร็จ/หนังสือรับรอง */}
-        <TouchableOpacity style={styles.fillBtn} onPress={fillFromPersonalInfo}>
-          <Ionicons name="person-circle-outline" size={15} color={COLORS.primary} />
-          <Text style={styles.fillBtnText}>
-            เติมจากข้อมูลส่วนตัว ({Object.keys(autoFillable).length} รายการ)
-          </Text>
-        </TouchableOpacity>
-
-        {breakdown.deductionsCapped.length > 0 && (
-          <View style={styles.capWarnBox}>
-            <Text style={styles.capWarnTitle}>กรอกเกินสิทธิ์ — ส่วนเกินไม่ถูกนำมาหัก</Text>
-            {breakdown.deductionsCapped.map((c) => (
-              <Text key={c.key} style={styles.capWarnText}>
-                {c.label}: กรอก {formatCurrency(c.entered)} · หักได้ {formatCurrency(c.allowed)} —{' '}
-                {c.reason}
-              </Text>
-            ))}
-          </View>
-        )}
-
-        {(Object.keys(DEDUCTION_GROUP_LABELS) as DeductionGroup[]).map((g) => {
-          const items = DEDUCTION_ITEMS.filter((i) => i.group === g);
-          if (items.length === 0) return null;
-          const capGroup = items.find((i) => i.capGroup)?.capGroup;
-          return (
-            <View key={g}>
-              <Text style={styles.deductGroupTitle}>{DEDUCTION_GROUP_LABELS[g]}</Text>
-              {capGroup && (
-                <Text style={styles.deductGroupCap}>
-                  เพดานรวมทั้งกลุ่ม {formatCurrency(DEDUCTION_CAP_GROUPS[capGroup].cap)}
-                </Text>
-              )}
-              {items.map((item) => {
-                const capText = capTextOf(item, breakdown.salaryIncome + breakdown.otherIncome);
-                const openCond = openCondition === item.key;
-                const adv = adviceByKey.get(item.key);
-                return (
-                  <View key={item.key} style={styles.deductRow}>
-                    <View style={styles.deductInfo}>
-                      <Text style={styles.deductLabel}>{item.label}</Text>
-                      {/* ป้ายสิทธิ์จากข้อมูลส่วนตัว — "ยังไม่รู้" ต้องต่างจาก "ใช้ไม่ได้"
-                          ไม่งั้นคนที่ยังไม่กรอกโปรไฟล์จะนึกว่าตัวเองไม่มีสิทธิ์แล้วเสียสิทธิ์จริง */}
-                      {adv && adv.status !== 'unknown' && (
-                        <Text
-                          style={[
-                            styles.eligBadge,
-                            adv.status === 'eligible' ? styles.eligOk : styles.eligNo,
-                          ]}
-                        >
-                          {adv.status === 'eligible' ? 'ใช้สิทธิ์ได้' : 'ใช้ไม่ได้'} — {adv.reason}
-                        </Text>
-                      )}
-                      <Text style={styles.deductNote}>{item.note}</Text>
-                      {capText && <Text style={styles.deductCap}>{capText}</Text>}
-                      {/* เงื่อนไขซ่อนไว้ กดดูทีละรายการ — กางทั้ง 18 รายการพร้อมกันจะยาวจนหาช่องกรอกไม่เจอ */}
-                      {item.conditions && item.conditions.length > 0 && (
-                        <TouchableOpacity
-                          style={styles.condToggle}
-                          onPress={() => setOpenCondition(openCond ? null : item.key)}
-                        >
-                          <Ionicons
-                            name={openCond ? 'chevron-up' : 'chevron-down'}
-                            size={12}
-                            color={COLORS.primary}
-                          />
-                          <Text style={styles.condToggleText}>
-                            {openCond ? ' ปิดเงื่อนไข' : ` เงื่อนไขการใช้สิทธิ์ (${item.conditions.length})`}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                      {openCond &&
-                        item.conditions?.map((c, i) => (
-                          <Text key={i} style={styles.condText}>
-                            •  {c}
-                          </Text>
-                        ))}
-                    </View>
-                    <NumberInput
-                      style={[styles.input, styles.deductInput]}
-                      display={profile.deductions?.[item.key] ? String(profile.deductions[item.key]) : ''}
-                      onChangeNumber={(v) => setDeduction(item.key, v)}
-                    />
-                  </View>
-                );
-              })}
-            </View>
-          );
-        })}
-
-        <View style={styles.mTotalRow}>
-          <Text style={styles.mTotalLabel}>รวมลดหย่อนที่หักได้จริง</Text>
-          <Text style={styles.mTotalValue}>
-            {formatCurrency(breakdown.extraDeductions)} (ยังไม่รวมส่วนตัว{' '}
-            {formatCurrency(PERSONAL_ALLOWANCE)} + ประกันสังคม{' '}
-            {formatCurrency(breakdown.socialSecurity)})
-          </Text>
-        </View>
-
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
-          {saving ? (
-            <ActivityIndicator size="small" color="#ffffff" />
-          ) : (
-            <Text style={styles.saveBtnText}>บันทึกค่าลดหย่อนปี {year}</Text>
-          )}
-        </TouchableOpacity>
-          </>
-        )}
-      </Section>
+        <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+      </TouchableOpacity>
 
       {/* ── กำไรขายแยกชนิด ── */}
       <Section
@@ -1107,19 +563,6 @@ export default function TaxScreen() {
   );
 }
 
-function CalcLine({ label, value }: { label: string; value: number }) {
-  const negative = value < 0;
-  return (
-    <View style={styles.calcLine}>
-      <Text style={styles.calcLineLabel}>{label}</Text>
-      <Text style={[styles.calcLineValue, negative && { color: COLORS.textSecondary }]}>
-        {negative ? '−' : ''}
-        {formatCurrency(Math.abs(value))}
-      </Text>
-    </View>
-  );
-}
-
 const card = {
   backgroundColor: COLORS.surface,
   borderWidth: 1,
@@ -1202,6 +645,21 @@ const styles = StyleSheet.create({
   gainCardLabel: { ...TEXT.caption, color: COLORS.textSecondary },
   gainCardValue: { ...TEXT.amount, color: COLORS.text, marginTop: 2 },
   gainCardHint: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 4 },
+
+  // ── ทางเข้าหน้าลูก (เงินได้รายเดือน / ค่าลดหย่อน) ──
+  // หน้าตาเป็นแถวเดียวจงใจให้ต่างจาก section ยุบได้ด้านล่าง — กดแล้ว "ไปที่อื่น" ไม่ใช่ "กางลงมา"
+  navRow: {
+    ...card,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 16,
+    marginTop: 12,
+  },
+  // flex + minWidth:0 คู่กันบังคับ — ไม่งั้นบรรทัดสรุปยาว ๆ ดันลูกศรล้นการ์ดบนเว็บ
+  navRowMain: { flex: 1, minWidth: 0 },
+  navRowTitle: { ...TEXT.title, color: COLORS.text },
+  navRowSub: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 2, lineHeight: 16 },
 
   // section แบบยุบได้
   section: { ...card, marginTop: 12, overflow: 'hidden' },
