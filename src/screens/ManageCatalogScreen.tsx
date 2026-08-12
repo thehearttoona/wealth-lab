@@ -47,6 +47,14 @@ interface Usage {
 
 const EMPTY_USAGE: Usage = { currency: {}, platform: {} };
 
+/** บรรทัดสรุปค่าธรรมเนียมใต้ชื่อแพลตฟอร์มในลิสต์ — "ยังไม่ตั้ง" ต้องต่างจาก "ฟรี" */
+const platformFeeLabel = (p: UserPlatform): string => {
+  const parts: string[] = [];
+  if (p.feePercent != null) parts.push(`${p.feePercent}% ต่อคำสั่ง`);
+  if (p.feeMinTHB != null) parts.push(`ขั้นต่ำ ${p.feeMinTHB} บาท`);
+  return parts.length > 0 ? parts.join(' · ') : 'ยังไม่ได้ตั้งค่าธรรมเนียม';
+};
+
 export default function ManageCatalogScreen() {
   const [tab, setTab] = useState<Tab>('currency');
   const [currencies, setCurrencies] = useState<UserCurrency[]>([]);
@@ -63,6 +71,9 @@ export default function ManageCatalogScreen() {
   const [symbolInput, setSymbolInput] = useState('');
   const [rateInput, setRateInput] = useState('');
   const [nameInput, setNameInput] = useState('');
+  // ค่าธรรมเนียมของแพลตฟอร์ม — เก็บเป็น string ระหว่างพิมพ์ ว่าง = "ยังไม่ตั้ง" (ต่างจาก 0)
+  const [feePercentInput, setFeePercentInput] = useState('');
+  const [feeMinInput, setFeeMinInput] = useState('');
   const [fetchingRate, setFetchingRate] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -148,6 +159,8 @@ export default function ManageCatalogScreen() {
     setSymbolInput('');
     setRateInput('');
     setNameInput('');
+    setFeePercentInput('');
+    setFeeMinInput('');
     setModalVisible(true);
   };
 
@@ -164,6 +177,8 @@ export default function ManageCatalogScreen() {
     setEditingPlatform(p);
     setEditingCurrency(null);
     setNameInput(p.name);
+    setFeePercentInput(p.feePercent != null ? String(p.feePercent) : '');
+    setFeeMinInput(p.feeMinTHB != null ? String(p.feeMinTHB) : '');
     setModalVisible(true);
   };
 
@@ -234,9 +249,16 @@ export default function ManageCatalogScreen() {
     if (!name) { notify('กรุณาใส่ชื่อแพลตฟอร์ม'); return; }
     const dup = platforms.find((p) => p.name.toLowerCase() === name.toLowerCase() && p.id !== editingPlatform?.id);
     if (dup) { notify(`มีแพลตฟอร์ม "${name}" อยู่แล้ว`); return; }
+    // ว่าง = ยังไม่ตั้ง (undefined) ไม่ใช่ 0 — 0 แปลว่า "ฟรีจริง ๆ" คนละความหมายกัน
+    const numOrUndef = (raw: string): number | undefined => {
+      const v = parseFloat(raw.replace(/,/g, ''));
+      return raw.trim() !== '' && Number.isFinite(v) && v >= 0 ? v : undefined;
+    };
     const item: UserPlatform = {
       id: editingPlatform?.id ?? Date.now().toString(),
       name,
+      feePercent: numOrUndef(feePercentInput),
+      feeMinTHB: numOrUndef(feeMinInput),
       createdAt: editingPlatform?.createdAt ?? new Date().toISOString(),
     };
     const oldName = editingPlatform?.name;
@@ -363,7 +385,7 @@ export default function ManageCatalogScreen() {
                       : cur.code === 'THB'
                         ? 'สกุลหลัก'
                         : '⚠ ยังไม่ตั้งเรต — ถูกคิดเป็น 1:1 กับบาท'
-                    : 'แพลตฟอร์มการลงทุน'}
+                    : platformFeeLabel(item as UserPlatform)}
                 </Text>
               </View>
               <View style={styles.cardRight}>
@@ -463,6 +485,34 @@ export default function ManageCatalogScreen() {
                   placeholder="เช่น Bitkub, Dime!, IBKR"
                   placeholderTextColor={COLORS.textSecondary}
                 />
+
+                {/* ── ค่าธรรมเนียม / ค่าคอมมิชชัน ──
+                    เป็นคุณสมบัติของแพลตฟอร์ม กรอกครั้งเดียวใช้กับทุกไม้ที่ซื้อผ่านที่นี่
+                    เว้นว่าง = ยังไม่รู้ ไม่ใช่ฟรี — ระบบจะไม่เอาไปประมาณให้ */}
+                <Text style={styles.modalLabel}>ค่าธรรมเนียมต่อคำสั่ง (% ของมูลค่า)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={feePercentInput}
+                  onChangeText={setFeePercentInput}
+                  keyboardType="numeric"
+                  placeholder="เช่น 0.25 — เว้นว่างถ้ายังไม่รู้"
+                  placeholderTextColor={COLORS.textSecondary}
+                />
+
+                <Text style={styles.modalLabel}>ขั้นต่ำต่อคำสั่ง (บาท)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={feeMinInput}
+                  onChangeText={setFeeMinInput}
+                  keyboardType="numeric"
+                  placeholder="เช่น 50 — เว้นว่างถ้าไม่มีขั้นต่ำ"
+                  placeholderTextColor={COLORS.textSecondary}
+                />
+                <Text style={styles.modalHint}>
+                  คิดเป็น "% ของมูลค่า แต่ไม่ต่ำกว่าขั้นต่ำ" ตามที่โบรกส่วนใหญ่คิดจริง
+                  {'\n'}เว้นว่างทั้งสองช่อง = ยังไม่ได้ตั้ง (ต่างจากกรอก 0 ซึ่งแปลว่าฟรี)
+                  {'\n'}ยังใช้ไม่ได้ถ้ายังไม่ได้รัน `sql/user_platforms_fee.sql` — บันทึกได้แต่ค่าธรรมเนียมจะไม่ถูกเก็บ
+                </Text>
 
                 <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePlatform} disabled={saving}>
                   <Text style={styles.modalSaveBtnText}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</Text>

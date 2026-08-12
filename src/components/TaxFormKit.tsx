@@ -256,6 +256,8 @@ export const taxStyles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 11,
   },
+  // ช่อง "จำนวนคน" — แคบและจัดกลาง เพราะรับเลขหลักเดียวเป็นส่วนใหญ่
+  countInput: { width: 76, textAlign: 'center' },
 
   calcBox: {
     marginTop: 18,

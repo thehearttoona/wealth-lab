@@ -224,72 +224,102 @@ export default function TaxScreen() {
         ))}
       </ScrollView>
 
-      {/* ── คำตอบ: ภาษีจากที่กรอกจริง ── */}
-      <View style={styles.heroCard}>
-        <Text style={styles.heroLabel}>
-          {breakdown.filledMonths >= 12
-            ? 'ภาษีทั้งปี (ประมาณการ)'
-            : `ภาษีจากที่กรอกจริง ${breakdown.filledMonths}/12 เดือน`}
-        </Text>
-        <Text style={styles.heroValue}>{formatCurrency(breakdown.tax)}</Text>
-        <View style={styles.heroSplit}>
-          <View style={styles.heroSplitCell}>
-            <Text style={styles.heroSplitLabel}>หัก ณ ที่จ่ายแล้ว</Text>
-            <Text style={styles.heroSplitValue}>{formatCurrency(breakdown.withheld)}</Text>
-          </View>
-          <View style={styles.heroSplitCell}>
-            <Text style={styles.heroSplitLabel}>{owesMore ? 'ต้องจ่ายเพิ่ม' : 'ได้คืน'}</Text>
-            <Text
-              style={[
-                styles.heroSplitValue,
-                { color: owesMore ? COLORS.error : COLORS.success },
-              ]}
-            >
-              {formatCurrency(Math.abs(breakdown.balance))}
+      {/* ── การ์ดสรุปใบเดียว ──
+          เดิมเป็นสามใบเรียงกัน (ที่กรอกจริง / คาดทั้งปี / ภาษีจากกำไรขาย) ซึ่งมีเลขใหญ่สามตัว
+          วางเท่า ๆ กัน แล้วตอบไม่ได้ว่า "ตกลงปีนี้ต้องจ่ายเท่าไหร่" — ตัวไหนคือคำตอบ
+          ตอนนี้เลขใหญ่มีตัวเดียวคือยอดภาษีทั้งปีของทั้งก้อน (เงินได้จากงาน + กำไรขาย รวมแล้ว)
+          ที่เหลือกลายเป็นแถวย่อยที่แยกให้ดูว่าตัวเลขนั้นมาจากไหน
+
+          ⚠️ เลขใหญ่ต้องเป็น "ทั้งปี" เสมอ ห้ามเอายอดที่กรอกครึ่งปีมาโชว์เป็นคำตอบ
+          ขั้นบันไดภาษีไม่เป็นเชิงเส้น กรอก 8 เดือนแล้วคิดตรง ๆ ได้ภาษีต่ำกว่าจริงราว 5 เท่า
+          (ดู CLAUDE.md §6.1) — ป้ายจึงต้องบอกด้วยว่านี่คือเลขคาดการณ์ */}
+      {(() => {
+        const annual = projection.projected ?? breakdown;
+        const annualOwes = annual.balance > 0;
+        // กำไรที่ขายจริงทั้งปีนี้ (รวมส่วนที่ยกเว้นภาษี เช่น หุ้นไทย) — คนละตัวกับ gainIncome
+        const realizedGain = breakdown.gains.reduce((s, g) => s + g.gain, 0);
+        return (
+          <View style={styles.heroCard}>
+            <Text style={styles.heroLabel}>
+              {projection.projected
+                ? `ภาษีทั้งปี (คาดการณ์) — ถ้าเดือนที่เหลือได้เท่าเดือน ${MONTH_LABELS_TH[projection.basedOnMonth - 1]}`
+                : 'ภาษีทั้งปี (ประมาณการ)'}
             </Text>
+            <Text style={styles.heroValue}>{formatCurrency(annual.tax)}</Text>
+            <View style={styles.heroSplit}>
+              <View style={styles.heroSplitCell}>
+                <Text style={styles.heroSplitLabel}>หัก ณ ที่จ่ายแล้ว</Text>
+                <Text style={styles.heroSplitValue}>{formatCurrency(breakdown.withheld)}</Text>
+              </View>
+              <View style={styles.heroSplitCell}>
+                <Text style={styles.heroSplitLabel}>
+                  สิ้นปี{annualOwes ? 'ต้องจ่ายเพิ่ม' : 'ได้คืน'}
+                </Text>
+                <Text
+                  style={[
+                    styles.heroSplitValue,
+                    { color: annualOwes ? COLORS.error : COLORS.success },
+                  ]}
+                >
+                  {formatCurrency(Math.abs(annual.balance))}
+                </Text>
+              </View>
+            </View>
+
+            {/* ── แถวย่อย: ตัวเลขนี้ประกอบขึ้นจากอะไร ── */}
+            <View style={styles.heroBreak}>
+              <View style={styles.heroBreakRow}>
+                <Text style={styles.heroBreakLabel}>
+                  จากที่กรอกจริง {breakdown.filledMonths}/12 เดือน
+                </Text>
+                <Text style={styles.heroBreakValue}>{formatCurrency(breakdown.tax)}</Text>
+              </View>
+              {/* 3.3.2 — ภาษีจากกำไรขาย ต้องบอกยอดกำไรที่ขายได้จริงคู่กันเสมอ
+                  เห็นแต่ภาษีอย่างเดียวแล้วเทียบไม่ได้ว่าคุ้มไหมที่จะขายในปีนี้ */}
+              <View style={styles.heroBreakRow}>
+                <Text style={styles.heroBreakLabel}>
+                  ภาษีจากกำไรขายปีนี้
+                  {'\n'}
+                  <Text style={styles.heroBreakSub}>
+                    ขายได้กำไรรวม {formatCurrency(realizedGain)}
+                    {breakdown.gainIncome > 0
+                      ? ` · เข้าฐานภาษี ${formatCurrency(breakdown.gainIncome)}`
+                      : ' · ยังไม่มีส่วนที่ต้องเสียภาษี'}
+                  </Text>
+                </Text>
+                <Text style={styles.heroBreakValue}>{formatCurrency(breakdown.taxFromGains)}</Text>
+              </View>
+              {/* 3.3.1 — ลดหย่อนรวมที่หักได้จริง (ส่วนตัว + ประกันสังคม + ที่กรอกเอง)
+                  เป็นตัวเลขที่ลดภาษีโดยตรง ควรอ่านได้จากการ์ดแรกโดยไม่ต้องกดเข้าไปหน้าลูก */}
+              <View style={styles.heroBreakRow}>
+                <Text style={styles.heroBreakLabel}>
+                  ลดหย่อนรวมที่หักได้
+                  {'\n'}
+                  <Text style={styles.heroBreakSub}>
+                    ส่วนตัว {formatCurrency(breakdown.personalAllowance)} · ประกันสังคม{' '}
+                    {formatCurrency(breakdown.socialSecurity)} · กรอกเอง{' '}
+                    {formatCurrency(breakdown.extraDeductions)}
+                  </Text>
+                </Text>
+                <Text style={[styles.heroBreakValue, { color: COLORS.success }]}>
+                  −{formatCurrency(breakdown.totalDeductions)}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.heroFoot}>
+              เงินได้สุทธิ {formatCurrency(annual.netIncome)} · อยู่ขั้น{' '}
+              {(annual.marginalRate * 100).toFixed(0)}% · อัตราที่จ่ายจริง{' '}
+              {(breakdown.effectiveRate * 100).toFixed(1)}%
+            </Text>
+            {projection.projected && (
+              <Text style={styles.projectWarn}>
+                โบนัสไม่ถูกประมาณให้ (ไม่ได้รับทุกเดือน) — ถ้าปีนี้จะได้โบนัสอีก ให้ใส่ในเดือนที่คาดว่าจะได้
+              </Text>
+            )}
           </View>
-        </View>
-        <Text style={styles.heroFoot}>
-          เงินได้สุทธิ {formatCurrency(breakdown.netIncome)} · อยู่ขั้น{' '}
-          {(breakdown.marginalRate * 100).toFixed(0)}% · อัตราที่จ่ายจริง{' '}
-          {(breakdown.effectiveRate * 100).toFixed(1)}%
-        </Text>
-      </View>
-
-      {/* ── คาดทั้งปี ──
-          ขั้นบันไดภาษีไม่เป็นเชิงเส้น ยอด 8 เดือนคิดตรง ๆ จะได้ภาษีต่ำกว่าจริงหลายเท่า
-          จึงต้องโชว์แยกเป็นอีกการ์ด ไม่ใช่เอาไปปนกับเลข "ที่กรอกจริง" ด้านบน */}
-      {projection.projected && (
-        <View style={styles.projectCard}>
-          <Text style={styles.projectLabel}>
-            คาดทั้งปี — ถ้าเดือนที่เหลือได้เท่าเดือน {MONTH_LABELS_TH[projection.basedOnMonth - 1]}
-          </Text>
-          <Text style={styles.projectValue}>{formatCurrency(projection.projected.tax)}</Text>
-          <Text style={styles.projectFoot}>
-            เงินได้จากงาน {formatCurrency(projection.projected.salaryIncome)} · เงินได้สุทธิ{' '}
-            {formatCurrency(projection.projected.netIncome)} · อยู่ขั้น{' '}
-            {(projection.projected.marginalRate * 100).toFixed(0)}%
-            {'\n'}
-            {projection.projected.balance > 0
-              ? `ถ้าหัก ณ ที่จ่ายเดินต่อแบบนี้ สิ้นปีต้องจ่ายเพิ่ม ${formatCurrency(projection.projected.balance)}`
-              : `ถ้าหัก ณ ที่จ่ายเดินต่อแบบนี้ สิ้นปีได้คืน ${formatCurrency(Math.abs(projection.projected.balance))}`}
-          </Text>
-          <Text style={styles.projectWarn}>
-            โบนัสไม่ถูกประมาณให้ (ไม่ได้รับทุกเดือน) — ถ้าปีนี้จะได้โบนัสอีก ให้ใส่ในเดือนที่คาดว่าจะได้
-          </Text>
-        </View>
-      )}
-
-      {/* ── ภาษีจากกำไรขาย ── */}
-      <View style={styles.gainCard}>
-        <Text style={styles.gainCardLabel}>ภาษีที่มาจากกำไรขายปีนี้</Text>
-        <Text style={styles.gainCardValue}>{formatCurrency(breakdown.taxFromGains)}</Text>
-        <Text style={styles.gainCardHint}>
-          {breakdown.gainIncome > 0
-            ? `จากกำไรที่ต้องเสียภาษี ${formatCurrency(breakdown.gainIncome)}`
-            : 'กำไรที่ขายปีนี้ยังไม่มีส่วนที่ต้องเสียภาษี'}
-        </Text>
-      </View>
+        );
+      })()}
 
       {/* ── ทางเข้าสองหน้าที่ต้องกรอกจริง ──
           เดิมทั้งสองเป็นหัวข้อยุบได้ในหน้านี้ — ตาราง 12 เดือน × 5 ช่อง กับค่าลดหย่อน 18 รายการ
@@ -319,7 +349,7 @@ export default function TaxScreen() {
           <Text style={styles.navRowTitle}>ค่าลดหย่อน — ปีนี้ใช้อะไรได้บ้าง</Text>
           <Text style={styles.navRowSub}>
             {!profileAnswered
-              ? 'ต้องกรอกข้อมูลส่วนตัวก่อน'
+              ? 'ยังไม่ได้ตอบคำถามผู้มีสิทธิ์ — กดเข้าไปตอบได้ในหน้าเดียวกัน'
               : breakdown.extraDeductions > 0
                 ? `ใช้ไปแล้ว ${formatCurrency(breakdown.extraDeductions)}`
                 : 'ยังไม่ได้กรอก — กดเข้าไปดูรายการทั้งหมด'}
@@ -627,6 +657,23 @@ const styles = StyleSheet.create({
   heroSplitLabel: { ...TEXT.hint, color: COLORS.textSecondary },
   heroSplitValue: { ...TEXT.title, color: COLORS.text, marginTop: 2 },
   heroFoot: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 12, lineHeight: 17 },
+  // แถวย่อยที่แยกให้ดูว่ายอดภาษีก้อนใหญ่ประกอบขึ้นจากอะไร
+  heroBreak: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.divider,
+    paddingTop: 4,
+  },
+  heroBreakRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 7,
+  },
+  // flex + minWidth:0 คู่กันบังคับ — ป้ายสองบรรทัดจะดันตัวเลขล้นการ์ดบนเว็บถ้าไม่ใส่
+  heroBreakLabel: { ...TEXT.caption, color: COLORS.text, flex: 1, minWidth: 0, lineHeight: 18 },
+  heroBreakSub: { ...TEXT.hint, color: COLORS.textSecondary, lineHeight: 16 },
+  heroBreakValue: { ...TEXT.caption, fontFamily: FONTS.semibold, color: COLORS.text },
 
   // การ์ด "คาดทั้งปี" — สีเตือนเพราะเป็นเลขพยากรณ์ ไม่ใช่เลขที่เกิดขึ้นจริงแล้ว
   projectCard: {

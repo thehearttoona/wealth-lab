@@ -123,8 +123,33 @@ export interface UserCurrency {
 export interface UserPlatform {
   id: string;
   name: string;
+  /**
+   * ค่าธรรมเนียม/ค่าคอมมิชชันต่อ 1 คำสั่ง เป็น % ของมูลค่าที่ซื้อขาย
+   * (โบรกไทยคิดเป็น % ของมูลค่า, เอ็กซ์เชนจ์คริปโตก็คิดเป็น % เหมือนกัน)
+   * ไม่ตั้ง = ไม่รู้ ไม่ใช่ 0 — หน้าจอต้องแยกสองอย่างนี้ให้ออก
+   */
+  feePercent?: number;
+  /** ค่าธรรมเนียมขั้นต่ำต่อคำสั่ง (บาท) — โบรกหุ้นไทยส่วนใหญ่มีขั้นต่ำ 50 บาท/วัน */
+  feeMinTHB?: number;
   createdAt: string;
 }
+
+/**
+ * ค่าธรรมเนียมโดยประมาณของคำสั่งหนึ่ง (บาท) — null เมื่อยังไม่ได้ตั้งค่าธรรมเนียมของแพลตฟอร์มนั้น
+ *
+ * "ยังไม่ตั้ง" ต้องคืน null ไม่ใช่ 0 เพราะ 0 แปลว่า "ฟรีจริง ๆ"
+ * ถ้าคืน 0 หน้าจอจะโชว์ว่าไม่มีค่าธรรมเนียมทั้งที่แค่ยังไม่ได้กรอก
+ */
+export const estimatePlatformFee = (
+  platform: Pick<UserPlatform, 'feePercent' | 'feeMinTHB'> | undefined,
+  amountTHB: number
+): number | null => {
+  if (!platform) return null;
+  const { feePercent, feeMinTHB } = platform;
+  if (feePercent == null && feeMinTHB == null) return null;
+  const byPercent = feePercent != null ? (amountTHB * feePercent) / 100 : 0;
+  return Math.max(byPercent, feeMinTHB ?? 0);
+};
 
 // แพลตฟอร์มยอดนิยม — ใช้เป็นค่าเริ่มต้นตอน seed ครั้งแรกเท่านั้น
 export const INVESTMENT_PLATFORMS = [

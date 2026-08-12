@@ -19,35 +19,10 @@ import { saveExpense, updateExpense, saveRecurringBill, updateRecurringBill } fr
 import { setPendingReturnDate } from '../services/pendingNavigation';
 import { EXPENSE_CATEGORIES, COLORS, formatCurrency, toChristianYear } from '../utils/constants';
 import { notify } from '../utils/dialog';
-import * as ImagePicker from 'expo-image-picker';
-import { supabase } from '../services/supabase';
+import { pickAndScanReceipt } from '../utils/receiptScan';
 
 type AddExpenseScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'AddExpense'>;
 type AddExpenseScreenRouteProp = RouteProp<RootStackParamList, 'AddExpense'>;
-
-// แปลงวันที่จาก OCR ที่อาจอ่านปีพ.ศ.ผิด
-// case: "69"   → 2-digit BE → 2026
-// case: "2569" → full BE    → 2026
-// case: "2069" → AI เติม 2000 หน้าเลข BE 2 หลัก → 2026
-const normalizeScanDate = (dateStr: string): string => {
-  if (!dateStr) return dateStr;
-  const parts = dateStr.split('-');
-  if (parts.length !== 3) return dateStr;
-  let year = parseInt(parts[0], 10);
-  if (isNaN(year)) return dateStr;
-  const currentYear = new Date().getFullYear();
-  if (year < 100) {
-    // เช่น "69" → 69 + 2500 - 543 = 2026
-    year = year + 2500 - 543;
-  } else if (year > 2400) {
-    // เช่น "2569" → 2569 - 543 = 2026
-    year = year - 543;
-  } else if (year > currentYear + 20 && year < 2200) {
-    // AI เติม 2000 หน้า 2-digit BE เช่น "2069" (= 2000 + 69) → 2069 - 43 = 2026
-    year = year - 43;
-  }
-  return `${year}-${parts[1]}-${parts[2]}`;
-};
 
 export default function AddExpenseScreen() {
   const navigation = useNavigation<AddExpenseScreenNavigationProp>();
@@ -59,96 +34,19 @@ export default function AddExpenseScreen() {
   // ── OCR ──
   const [scanning, setScanning] = useState(false);
 
-  const scanWithSupabase = async (image_base64: string, media_type: string) => {
-    setScanning(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('scan-receipt', {
-        body: { image_base64, media_type },
-      });
-      if (error) throw error;
-      if (data.success) {
-        console.log('[scan] raw date from OCR:', data.date);
-        if (data.amount) setAmount(data.amount.toString());
-        if (data.description) setDescription(data.description);
-        if (data.category && EXPENSE_CATEGORIES.includes(data.category)) setCategory(data.category);
-        if (data.date) setExpenseDate(normalizeScanDate(data.date));
-      } else {
-        notify(data.error || 'ไม่สามารถอ่านข้อมูลจากรูปได้');
-      }
-    } catch (err: any) {
-      notify('Error: ' + (err?.message || JSON.stringify(err) || 'unknown'));
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  const pickAndScan = async (useCamera: boolean) => {
-    if (Platform.OS === 'web') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.style.display = 'none';
-      if (useCamera) input.capture = 'environment';
-      input.onchange = async (e: any) => {
-        const file: File = e.target.files?.[0];
-        document.body.removeChild(input);
-        if (!file) return;
-        setScanning(true);
-        try {
-          const dataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (ev) => resolve(ev.target?.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-          // resize ด้วย Canvas ก่อนส่ง — ลดขนาดรูปให้ไม่เกิน 1024px
-          const resized = await new Promise<string>((resolve) => {
-            const img = new (window as any).Image();
-            img.onload = () => {
-              const MAX = 1024;
-              let w = img.width, h = img.height;
-              if (w > h ? w > MAX : h > MAX) {
-                if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
-                else { w = Math.round(w * MAX / h); h = MAX; }
-              }
-              const canvas = document.createElement('canvas');
-              canvas.width = w; canvas.height = h;
-              canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
-              resolve(canvas.toDataURL('image/jpeg', 0.7));
-            };
-            img.src = dataUrl;
-          });
-          const base64 = resized.split(',')[1];
-          await scanWithSupabase(base64, 'image/jpeg');
-        } catch (err: any) {
-          notify('อ่านไฟล์ไม่ได้: ' + (err?.message || ''));
-          setScanning(false);
-        }
-      };
-      document.body.appendChild(input);
-      input.click();
-    } else {
-      if (useCamera) {
-        const { status } = await ImagePicker.requestCameraPermissionsAsync();
-        if (status !== 'granted') { notify('กรุณาอนุญาตใช้กล้อง'); return; }
-        const result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ['images'], quality: 0.4, exif: false, base64: true,
-        });
-        if (!result.canceled && result.assets[0]) {
-          await scanWithSupabase(result.assets[0].base64!, result.assets[0].mimeType || 'image/jpeg');
-        }
-      } else {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') { notify('กรุณาอนุญาตเข้าถึงรูปภาพ'); return; }
-        const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images'], quality: 0.4, exif: false, base64: true,
-        });
-        if (!result.canceled && result.assets[0]) {
-          await scanWithSupabase(result.assets[0].base64!, result.assets[0].mimeType || 'image/jpeg');
-        }
-      }
-    }
-  };
+  // ตัวอ่านใบเสร็จอยู่ที่ utils/receiptScan.ts — ใช้ร่วมกับการ์ดเพิ่มรายการบนหน้าหลัก
+  const pickAndScan = (useCamera: boolean) =>
+    pickAndScanReceipt(useCamera, {
+      onStart: () => setScanning(true),
+      onDone: (r) => {
+        setScanning(false);
+        if (!r) return;
+        if (r.amount) setAmount(r.amount);
+        if (r.description) setDescription(r.description);
+        if (r.category) setCategory(r.category);
+        if (r.date) setExpenseDate(r.date);
+      },
+    });
 
   const handleScanReceipt = async () => {
     if (Platform.OS === 'web') {

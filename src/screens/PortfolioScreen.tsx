@@ -104,7 +104,10 @@ const PriceRefreshStatus: React.FC<{
   lastRefresh: Date | null;
   nextRefreshAt: Date | null;
   style?: StyleProp<TextStyle>;
-}> = ({ isUpdating, lastRefresh, nextRefreshAt, style }) => {
+  /** ปุ่มรีเฟรชอยู่ติดกับเวลานับถอยหลัง — เดิมเป็นไอคอนลอยอยู่แถวปุ่มด้านล่าง
+   *  ซึ่งไกลจากข้อความที่บอกว่าราคาสดแค่ไหน คนละที่กับที่เกิดคำถาม */
+  onRefresh?: () => void;
+}> = ({ isUpdating, lastRefresh, nextRefreshAt, style, onRefresh }) => {
   const [, setTick] = useState(0);
   useEffect(() => {
     if (isUpdating || !nextRefreshAt) return;
@@ -112,19 +115,37 @@ const PriceRefreshStatus: React.FC<{
     return () => clearInterval(t);
   }, [isUpdating, nextRefreshAt]);
 
-  if (isUpdating) return <Text style={style}>กำลังดึงราคา...</Text>;
-  if (!lastRefresh) return <Text style={style}>ยังไม่ได้ดึงราคารอบนี้</Text>;
-
-  const at = lastRefresh.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+  const at = lastRefresh
+    ? lastRefresh.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+    : null;
   const leftMs = nextRefreshAt ? nextRefreshAt.getTime() - Date.now() : null;
   // ครบรอบแล้วแต่ยังไม่ได้ยิง (แท็บซ่อนอยู่ / รอ tick ถัดไป) — บอกว่ากำลังจะยิง ไม่ใช่นับเป็นเลขติดลบ
   const countdown = leftMs == null ? null : leftMs <= 0 ? 'กำลังจะอัปเดต' : `อีก ${formatCountdown(leftMs)}`;
 
+  const label = isUpdating
+    ? 'กำลังดึงราคา...'
+    : !at
+      ? 'ยังไม่ได้ดึงราคารอบนี้'
+      : `ราคาอัปเดต ${at}${countdown ? ` · ${countdown}` : ''}`;
+
   return (
-    <Text style={style}>
-      ราคาอัปเดต {at}
-      {countdown ? ` · ${countdown}` : ''}
-    </Text>
+    <View style={styles.priceStatusRow}>
+      <Text style={style}>{label}</Text>
+      {onRefresh && (
+        <TouchableOpacity
+          style={styles.priceStatusRefresh}
+          onPress={onRefresh}
+          disabled={isUpdating}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          {isUpdating ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <Ionicons name="refresh-outline" size={16} color="#ffffff" />
+          )}
+        </TouchableOpacity>
+      )}
+    </View>
   );
 };
 
@@ -166,27 +187,6 @@ const PLATFORM_BRANDS: { keys: string[]; short: string; color: string }[] = [
   { keys: ['finnomena'], short: 'FN', color: '#1F7A5C' },
   { keys: ['ทอง', 'gold', 'ห้างทอง', 'ausiris', 'ylg'], short: 'AU', color: '#B8860B' },
 ];
-
-// เทียบ "ต้องโตอีกกี่ %" กับ "ที่ทำมาได้แล้วกี่ %" → เป้านี้ไกลหรือใกล้เมื่อเทียบกับฝีมือจริง
-// นี่คือข้อมูลใหม่จริง ๆ ของบรรทัดนี้ (จำนวนเงิน/% ที่ต้องโต บรรทัดบนบอกไปแล้ว)
-// ไม่พูดเป็น "อีกกี่รอบ" เพราะ 0.5 รอบ ไม่มีใครนึกภาพออก
-const compareToTrackRecord = (needPercent: number, donePercent: number): string => {
-  const ratio = needPercent / donePercent;
-  if (ratio <= 0.55) return 'ยังไม่ถึงครึ่งของที่ทำมาได้ — เป้าอยู่ในระยะที่เคยทำได้แล้ว';
-  if (ratio <= 1.1) return 'ประมาณเท่ากับที่ทำมาได้ — เป้าอยู่ในระยะที่เคยทำได้แล้ว';
-  if (ratio <= 2.5) return `มากกว่าที่ทำมาได้ ~${ratio.toFixed(1)} เท่า`;
-  return `มากกว่าที่ทำมาได้ ~${Math.round(ratio)} เท่า — เป้านี้ต้องใช้เวลาอีกพอตัว`;
-};
-
-// ช่วงเวลาเป็นข้อความไทย — ต่ำกว่า 1 ปีพูดเป็นเดือน เกินนั้นพูดเป็นปี (+เศษเดือน)
-// "18 เดือน" อ่านแล้วต้องหารในหัว "1 ปี 6 เดือน" เห็นภาพทันที
-const formatMonthsSpan = (months: number): string => {
-  const m = Math.round(months);
-  if (m < 12) return `${m} เดือน`;
-  const years = Math.floor(m / 12);
-  const rest = m % 12;
-  return rest === 0 ? `${years} ปี` : `${years} ปี ${rest} เดือน`;
-};
 
 // สีสำรองสำหรับแพลตฟอร์มที่ไม่รู้จัก — เลือกจากชื่อแบบคงที่ ชื่อเดิมได้สีเดิมทุกครั้ง
 const PLATFORM_FALLBACK_COLORS = ['#5B6B8C', '#7A5C8E', '#3F7C6A', '#8C6239', '#4A6F8A', '#7C5A5A'];
@@ -327,9 +327,6 @@ export default function PortfolioScreen() {
   const [sellFeesInput, setSellFeesInput] = useState('');
   const [sellNotesInput, setSellNotesInput] = useState('');   // ขายเพราะอะไร — ไว้ทบทวนฝีมือย้อนหลัง
   const [sellToPowder, setSellToPowder] = useState(true);     // เงินที่ขายได้ → เข้าเงินรอลงทุนเลย
-  // กาง/ยุบรายละเอียดเป้าหมายในหัวพอร์ต — ค่าเริ่มต้นคือยุบ
-  // หัวพอร์ตต้องตอบแค่ "ตอนนี้เท่าไหร่ / ห่างเป้าแค่ไหน" ที่เหลือเป็นบริบทที่ค่อยกางดูได้
-  const [showGoalDetail, setShowGoalDetail] = useState(false);
   const [showRedAcked, setShowRedAcked] = useState(false);         // กาง/ยุบตัวที่กด "ซื้อเพิ่มแล้ว"
   // ── รอบลงทุน (ดู types/cycle.ts) ──
   // หน้านี้อ่านรอบที่เปิดอยู่อย่างเดียว เพื่อบอกบริบท "ลงเพิ่มได้อีกไหม" ตรงการ์ดถึงคิวลงไม้
@@ -1092,13 +1089,6 @@ export default function PortfolioScreen() {
   // ไม่ห่อ useMemo เพราะ realized เองก็คิดใหม่ทุก render อยู่แล้ว ห่อไปก็ไม่ได้ประหยัดอะไร
   const purchasePlan = planPurchaseGoals(purchaseGoals, realized.totalPnlTHB);
 
-  // ── กำไรสะสม = กำไรลอยตัว (ที่ยังถืออยู่) + กำไรที่ขายแล้ว ──
-  // ขายแล้วกำไรไม่ได้หายไปไหน มันแค่ย้ายจากฝั่งลอยตัวไปฝั่งรับรู้แล้ว 1:1 ผลบวกจึงนิ่ง
-  // (ลดได้เฉพาะค่าธรรมเนียมที่จ่ายจริงตอนขาย) — มีไว้กันภาพลวงตา "ขายทำกำไรแล้วพอร์ตหด"
-  // ซึ่งเกิดเพราะเงินที่ขายได้ออกไปอยู่ในเงินรอลงทุน ไม่ถูกนับใน summary.totalValue
-  // ไม่นับซ้ำตอนเอาเงินไปลงทุนต่อ เพราะไม้ใหม่เริ่มนับกำไรลอยตัวจากศูนย์
-  const lifetimeProfit = summary.totalProfit + realized.totalPnlTHB;
-
   const goalAnalysis: PortfolioGoalAnalysis | null = goal
     ? analyzePortfolioGoal(
         goal,
@@ -1243,6 +1233,7 @@ export default function PortfolioScreen() {
               lastRefresh={lastPriceRefresh}
               nextRefreshAt={nextRefreshAt}
               style={styles.summaryRefreshedAt}
+              onRefresh={handleUpdatePrices}
             />
           </View>
           <View style={styles.summaryContainer}>
@@ -1283,12 +1274,16 @@ export default function PortfolioScreen() {
               <>
                 {/* ป้ายต้องบอกให้ชัดว่าแถบนี้วัด "เงินต้นที่ลงไป" ไม่ใช่ระยะห่างจากเป้า
                     เดิมเขียนว่า "ไปได้ 79%" ซึ่งชนกับบรรทัดล่างที่บอกว่าเหลืออีกแค่ 8% */}
+                {/* ฝั่งขวาเป็น "ตัวเลขเป้า" ไม่ใช่ "% ของเป้า" — % ซ้ำกับแถบด้านล่างที่วาดสัดส่วนเดียวกันอยู่แล้ว
+                    ส่วนยอดเป้าเป็นตัวเลขที่ไม่มีที่อื่นบอก (แถวรายละเอียดที่เคยบอกถูกถอดออกไปแล้ว) */}
                 <View style={styles.goalCardTopRow}>
                   <Text style={styles.headerGoalSub}>
                     ลงเงินไปแล้ว {formatCurrency(goalAnalysis.currentValue)}
                   </Text>
                   <Text style={styles.headerGoalSub}>
-                    {goalAnalysis.reached ? 'ลงครบเป้าแล้ว' : `${Math.max(0, Math.min(100, goalAnalysis.progressRatio * 100)).toFixed(0)}% ของเป้า`}
+                    {goalAnalysis.reached
+                      ? `ลงครบเป้า ${formatCurrency(goalAnalysis.targetAmount)} แล้ว`
+                      : `เป้า ${formatCurrency(goalAnalysis.targetAmount)}`}
                   </Text>
                 </View>
                 <View style={styles.headerGoalTrack}>
@@ -1319,63 +1314,11 @@ export default function PortfolioScreen() {
               </>
             )}
 
-            {/* ── รายละเอียดที่พับไว้ ──
-                หัวพอร์ตเคยยาว 7 บรรทัดรวด กลายเป็นย่อหน้าภาษาไทยบนพื้นน้ำเงินที่ไม่มีใครอ่าน
-                บนจอเหลือแค่ "ลงไปแล้วกี่ % / ห่างเป้าเท่าไหร่" ส่วนบริบทที่เหลือกางเอาเมื่ออยากรู้ */}
-            {(goalAnalysis || realized.tradeCount > 0) && (
-              <TouchableOpacity
-                style={styles.headerGoalToggle}
-                onPress={() => setShowGoalDetail((v) => !v)}
-              >
-                <Ionicons
-                  name={showGoalDetail ? 'chevron-up' : 'chevron-down'}
-                  size={13}
-                  color="#ffffff"
-                />
-                <Text style={styles.headerGoalToggleText}>
-                  {showGoalDetail ? ' ซ่อนรายละเอียด' : ' ดูรายละเอียด'}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {showGoalDetail && (
-              <>
-                {/* "ยังไม่ได้ลงอีก" ไม่ใช่ "ขาดอีก" — เงินก้อนนี้คือเงินต้นที่ยังไม่ได้ลง
-                    คนละเรื่องกับระยะห่างจากเป้าในบรรทัดด้านบน (ซึ่งกำไรลอยตัวช่วยไปแล้ว) */}
-                {goalAnalysis && (
-                  <Text style={styles.headerGoalSub}>
-                    เป้า {formatCurrency(goalAnalysis.targetAmount)}
-                    {!goalAnalysis.reached && ` • ยังไม่ได้ลงอีก ${formatCurrency(goalAnalysis.remaining)}`}
-                  </Text>
-                )}
-
-                {/* เทียบระยะที่เหลือกับฝีมือที่ทำมาได้จริง + เวลาที่ใช้ไป (ข้อเท็จจริง ไม่ใช่พยากรณ์)
-                    บรรทัดนี้ตอบคำถามเดียว: "เป้านี้ไกลไหม เทียบกับที่ฉันทำมาได้แล้ว" */}
-                {goalAnalysis && goalGap && !goalGap.reached && summary.totalProfitPercent > 0 && (
-                  <Text style={styles.headerGoalNote}>
-                    ที่ผ่านมาทำกำไรได้ +{summary.totalProfitPercent.toFixed(2)}%
-                    {goalGap.roundMonths != null ? ` ใน ~${formatMonthsSpan(goalGap.roundMonths)}` : ''}
-                    {' · '}ที่ต้องโตอีก {goalGap.needPercent.toFixed(1)}%{' '}
-                    {compareToTrackRecord(goalGap.needPercent, summary.totalProfitPercent)}
-                  </Text>
-                )}
-
-                {/* กำไรสะสม = กำไรลอยตัว + กำไรที่ขายแล้ว — เลขที่ไม่ถอยหลังตอนขาย
-                    โชว์เฉพาะเมื่อเคยขายแล้วจริง (ก่อนหน้านั้นเท่ากับกำไรลอยตัวด้านบนเป๊ะ ๆ)
-                    บรรทัดนี้เป็น "กำไรที่ขายแล้ว" ที่เดียวในหัวพอร์ต — รายละเอียดรายดีลอยู่ที่
-                    การ์ด "ผลงานจริง" ไม่ต้องเขียนซ้ำสามที่เหมือนเดิม
-                    (แถบด้านบนคิดจากต้นทุนที่ยังอยู่ในพอร์ต ขายแล้วต้นทุนออกไปแถบเลยถอย
-                     จงใจไม่บวกกลับ ไม่งั้นนับซ้ำตอนเอาเงินก้อนเดิมไปลงไม้ใหม่) */}
-                {realized.tradeCount > 0 && (
-                  <Text style={styles.headerGoalNote}>
-                    กำไรสะสม {lifetimeProfit >= 0 ? '+' : ''}{formatCurrency(lifetimeProfit)}
-                    {'  ·  '}ลอยตัว {summary.totalProfit >= 0 ? '+' : ''}{formatCurrency(summary.totalProfit)}
-                    {' + ขายแล้ว '}{realized.totalPnlTHB >= 0 ? '+' : ''}{formatCurrency(realized.totalPnlTHB)}
-                    {' — เงินที่ขายแล้วอยู่นอกพอร์ต แถบด้านบนจึงยังไม่นับให้'}
-                  </Text>
-                )}
-              </>
-            )}
+            {/* ── รายละเอียดที่พับไว้ถูกถอดออกแล้ว (ข้อ 2.2.1) ──
+                ปุ่ม "ดูรายละเอียด" กางแล้วได้ย่อหน้าภาษาไทยบนพื้นน้ำเงินสามบรรทัด
+                (เทียบฝีมือที่ทำมาได้ / กำไรสะสม) ซึ่งเป็นบริบท ไม่ใช่สิ่งที่ต้องลงมือวันนี้
+                ตัวเลขกำไรที่ขายแล้วยังอ่านได้ครบที่แถวเมนู "ผลงานที่ขายแล้ว" ด้านล่าง
+                หัวพอร์ตจึงเหลือเฉพาะ: มูลค่ารวม · กำไร · ลงไปแล้วเท่าไหร่จากเป้าเท่าไหร่ */}
           </View>
         </View>
 
@@ -1383,30 +1326,15 @@ export default function PortfolioScreen() {
           styles.actionButtons,
           isDesktop && styles.actionButtonsDesktop,
         ]}>
-          <TouchableOpacity
-            style={[styles.addButton, styles.updateButton]}
-            onPress={handleUpdatePrices}
-            disabled={isUpdatingPrices}
-          >
-            {isUpdatingPrices ? (
-              <ActivityIndicator size="small" color={COLORS.primary} />
-            ) : (
-              <Ionicons name="refresh-outline" size={18} color={COLORS.primary} />
-            )}
-          </TouchableOpacity>
+          {/* ถอดออกแล้ว 3 ปุ่ม (ข้อ 2.4.1): รีเฟรชราคา → ย้ายไปอยู่ติดกับเวลานับถอยหลังบนหัวพอร์ต
+              · บัญชี → เข้าได้จาก โปรไฟล์ → บัญชี  · ของที่อยากได้ → มีแถวเมนูของตัวเองอยู่แล้ว
+              แถวนี้เหลือเฉพาะสิ่งที่ทำกับ "รายการลงทุน" ตรง ๆ: เพิ่ม / จัดกลุ่มตามแพลตฟอร์ม / แก้รายการตัวเลือก */}
           <TouchableOpacity
             style={styles.addButton}
             onPress={() => navigation.navigate('AddInvestment', {})}
           >
             <Ionicons name="add-circle-outline" size={18} color="#ffffff" />
             <Text style={styles.addButtonText}></Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.addButton, styles.updateButton]}
-            onPress={() => navigation.navigate('Accounts')}
-          >
-            <Ionicons name="wallet-outline" size={18} color={COLORS.primary} />
-            <Text style={styles.updateButtonText}></Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.addButton, styles.updateButton]}
@@ -1421,14 +1349,6 @@ export default function PortfolioScreen() {
             onPress={() => navigation.navigate('ManageCatalog')}
           >
             <Ionicons name="options-outline" size={18} color={COLORS.primary} />
-            <Text style={styles.updateButtonText}></Text>
-          </TouchableOpacity>
-          {/* ของที่อยากได้ — ปลดล็อกด้วยกำไรที่ขายจริง 10 เท่าของราคาของ */}
-          <TouchableOpacity
-            style={[styles.addButton, styles.updateButton]}
-            onPress={() => navigation.navigate('PurchaseGoals')}
-          >
-            <Ionicons name="gift-outline" size={18} color={COLORS.primary} />
             <Text style={styles.updateButtonText}></Text>
           </TouchableOpacity>
         </View>
@@ -1543,18 +1463,31 @@ export default function PortfolioScreen() {
             ) : null}
             {redAlertsMet.map((a) => (
               <View key={a.key} style={styles.redAlertRow}>
-                <View style={styles.loserRow}>
-                  <Text style={styles.loserName} numberOfLines={1}>
-                    {a.symbol || a.name}{' '}
-                    <Text style={styles.tpSubText}>· แดง {a.count} {redUnit(a.interval)}ติดกัน</Text>
+                {/* หนึ่งแถว = ชื่อย่อ · % ที่ร่วง · ราคาที่ลงไปแตะ · ปุ่มซื้อเพิ่ม (ข้อ 2.3.1)
+                    ราคาคือ LOW ของสตรีค เพราะเป็นเลขที่เอาไปตั้ง limit ได้จริง */}
+                <View style={styles.redAlertMain}>
+                  <Text style={styles.redAlertSymbol} numberOfLines={1}>
+                    {a.symbol || a.name}
                   </Text>
-                  {/* LOW ต่อท้าย % เลย ไม่ต้องมีบรรทัดคำอธิบายแยก — ในการ์ดที่ทุกแถวเป็น "ตัวที่ร่วง"
-                      ราคาที่ตามหลัง % ย่อมหมายถึงจุดต่ำสุดที่ลงไปแตะอยู่แล้ว (เอาไปตั้ง limit ได้เลย) */}
-                  <Text style={styles.loserPct}>
-                    {a.dropPercent.toFixed(2)}%
-                    {redLowValue(a) ? <Text style={styles.loserLow}> · {redLowValue(a)}</Text> : null}
+                  <Text style={styles.redAlertPct}>{a.dropPercent.toFixed(2)}%</Text>
+                  <Text style={styles.redAlertPrice} numberOfLines={1}>
+                    {redLowValue(a) ?? '—'}
                   </Text>
+                  <TouchableOpacity
+                    style={styles.redBuyButton}
+                    onPress={() => {
+                      const inv = investments.find((i) => a.ids.includes(i.id));
+                      // ไปที่ไม้เดิมเพื่อแก้จำนวน/ต้นทุนเฉลี่ย ไม่ใช่สร้างรายการใหม่ซ้ำชื่อเดิม
+                      navigation.navigate('AddInvestment', inv ? { investment: inv } : {});
+                    }}
+                  >
+                    <Ionicons name="add" size={14} color="#ffffff" />
+                    <Text style={styles.redBuyButtonText}>ซื้อเพิ่ม</Text>
+                  </TouchableOpacity>
                 </View>
+                <Text style={styles.tpSubText}>
+                  แดง {a.count} {redUnit(a.interval)}ติดกัน
+                </Text>
                 {/* บริบทของรอบ: ลงเพิ่มได้อีกไหม/เหลือกี่ไม้ — ต้องอยู่ตรงจุดที่ตัดสินใจลงมือ
                     ชนเพดานหรือหมดงบ = บอกเหตุผลตรงนี้ ไม่ใช่ปล่อยให้ไปเจอตอนกรอกฟอร์มแล้วงง */}
                 {(() => {
@@ -1580,7 +1513,7 @@ export default function PortfolioScreen() {
                     (ลงไปกี่หน่วย ราคาเท่าไหร่ มีแต่ผู้ใช้ที่รู้ เดาให้แล้วต้นทุนเฉลี่ยจะเพี้ยนเงียบ ๆ) */}
                 <TouchableOpacity style={styles.redAckButton} onPress={() => toggleRedAck(a, true)}>
                   <Ionicons name="checkmark-circle-outline" size={14} color={COLORS.primary} />
-                  <Text style={styles.redAckButtonText}> ซื้อเพิ่มแล้ว · ปิดเตือนจนกว่าจะครบรอบใหม่</Text>
+                  <Text style={styles.redAckButtonText}> ลงไม้แล้ว · ปิดเตือนจนกว่าจะครบรอบใหม่</Text>
                 </TouchableOpacity>
               </View>
             ))}
@@ -2208,6 +2141,18 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     textAlign: 'right',
   },
+  // เวลานับถอยหลัง + ปุ่มรีเฟรช อยู่ในแถวเดียวกันบนหัวพอร์ต (พื้นน้ำเงิน → ไอคอนต้องขาว)
+  priceStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+  },
+  priceStatusRefresh: {
+    padding: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
   // ── ส่วน "เป้าหมายพอร์ตรวม" ที่ย้ายขึ้นมาอยู่ในกล่องสรุปนี้ (ไม่มีการ์ดแยกแล้ว) ──
   headerGoalDivider: {
     height: 1,
@@ -2237,20 +2182,6 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_400Regular',
     color: '#ffffff',
     opacity: 0.9,
-  },
-  // ปุ่มกาง/ยุบรายละเอียดเป้าหมาย — อยู่บนพื้นน้ำเงิน สีต้องเป็นขาว (COLORS.primary จะจมพื้น)
-  headerGoalToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginTop: 8,
-    paddingVertical: 2,
-  },
-  headerGoalToggleText: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: '#ffffff',
-    opacity: 0.85,
   },
   headerGoalNote: {
     fontSize: 11,
@@ -2366,6 +2297,44 @@ const styles = StyleSheet.create({
     marginTop: 6,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
+  },
+  // ── แถวหลักของ "ถึงคิวลงไม้": ชื่อย่อ · % · ราคา · ปุ่ม ──
+  redAlertMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  // flex + minWidth:0 คู่กันบังคับ — ชื่อยาวจะดันปุ่มหลุดขอบการ์ดบนเว็บ (CLAUDE.md §1.4)
+  redAlertSymbol: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  redAlertPct: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.error,
+  },
+  redAlertPrice: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
+  },
+  redBuyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: COLORS.primary,
+  },
+  redBuyButtonText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: '#ffffff',
   },
   // ปุ่มรอง — จงใจให้จืดกว่าตัวเลข % ที่เป็นพระเอกของแถว
   redAckButton: {

@@ -156,7 +156,12 @@
       "Bash(awk '{print $5, $9}')",
       "Bash(grep -n \"^\\\\s*{/\\\\* \\\\|^\\\\s*// ---\\\\|<View style={styles.card\\\\|<View style={styles.section\" src/screens/PortfolioScreen.tsx)",
       "Bash(grep -n \"^\\\\s*{/\\\\* \\\\|accordion\\\\|Accordion\\\\|openSection\" src/screens/TaxScreen.tsx)",
-      "Bash(grep -n \"3564\\\\|PortfolioScreen\\\\` \\\\*\\\\*3564\\\\|src/screens/\\\\*\\\\.tsx\\\\|src/components/\\\\` \\\\|^| \\\\`PortfolioScreen\\\\`\\\\|^| \\\\`TaxScreen\\\\`\\\\|^| \\\\`HomeScreen\\\\`\\\\|Dead: \\\\*\\\\*\\\\`IncomeScreen\\\\`\" CLAUDE.md)"
+      "Bash(grep -n \"3564\\\\|PortfolioScreen\\\\` \\\\*\\\\*3564\\\\|src/screens/\\\\*\\\\.tsx\\\\|src/components/\\\\` \\\\|^| \\\\`PortfolioScreen\\\\`\\\\|^| \\\\`TaxScreen\\\\`\\\\|^| \\\\`HomeScreen\\\\`\\\\|Dead: \\\\*\\\\*\\\\`IncomeScreen\\\\`\" CLAUDE.md)",
+      "Bash(python -)",
+      "Bash(grep -n \"CycleCard\\\\`/\\\\`CycleModals\\\\|public/funds.json\\\\|sql/\\\\*.sql\\\\|\\\\`src/utils/\\\\*.ts\\\\`\" CLAUDE.md)",
+      "Bash(grep -n \"PortfolioScreen\\\\` | \\\\*\\\\*2876\\\\|HomeScreen\\\\` | 1935\\\\|TaxScreen\\\\` | 973\\\\|PersonalInfoScreen\\\\` | 311\\\\|StatisticsScreen\\\\` | 381\\\\|ManageCatalogScreen\\\\` | 602\\\\|TaxDeductionScreen\\\\` | 374\" CLAUDE.md)",
+      "Bash(grep -n \"TaxYearFacts\\\\`** \\(\\\\`tax_profiles.year_facts\\\\`\" CLAUDE.md)",
+      "Bash(grep -n \"user_profile\\\\` holds only cross-year identity\" CLAUDE.md)"
     ]
   }
 }

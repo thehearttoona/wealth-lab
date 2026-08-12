@@ -7,10 +7,24 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { Insight, getAllInsights } from '../utils/aiAnalysis';
-import { COLORS } from '../utils/constants';
+import { COLORS, FONTS, TEXT, formatCurrency } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
+
+// หน้านี้เคยเหลือมาจากธีมมืดชุดเก่า: พื้นการ์ดฮาร์ดโค้ดเป็น #2A1F0E/#162030
+// อ่านแทบไม่ออกบนพื้นสว่าง, หัวข้อเป็นอิโมจิ (📊 💰 ℹ️) ซึ่งเลิกใช้ทั้งแอปแล้ว
+// และ insight.icon เป็นชื่อไอคอน Ionicons แต่ถูกวาดเป็น "ข้อความ" — จอจึงขึ้นคำว่า
+// "bulb-outline" ตรง ๆ ตอนนี้ใช้ชุดเดียวกับหน้าอื่น: การ์ดขาวขอบเทา + Ionicons + COLORS
+
+/** สีของ insight แต่ละชนิด — ดึงจาก COLORS อย่างเดียว ห้ามฮาร์ดโค้ดเพิ่ม (CLAUDE.md §1.10) */
+const INSIGHT_COLOR: Record<Insight['type'], string> = {
+  warning: COLORS.warning,
+  alert: COLORS.error,
+  tip: COLORS.primary,
+  success: COLORS.success,
+};
 
 export default function StatisticsScreen() {
   const [insights, setInsights] = useState<Insight[]>([]);
@@ -30,68 +44,30 @@ export default function StatisticsScreen() {
     }, [])
   );
 
-  const getInsightColor = (type: string) => {
-    switch (type) {
-      case 'warning':
-        return '#ff9800';
-      case 'alert':
-        return '#f44336';
-      case 'tip':
-        return '#2196f3';
-      case 'success':
-        return '#4caf50';
-      default:
-        return COLORS.primary;
-    }
-  };
-
-  const getInsightBackground = (type: string) => {
-    switch (type) {
-      case 'warning':
-        return '#2A1F0E';
-      case 'alert':
-        return '#2A1015';
-      case 'tip':
-        return '#0F1E2E';
-      case 'success':
-        return '#0F2A1E';
-      default:
-        return COLORS.background;
-    }
-  };
-
   const renderInsight = (insight: Insight, index: number) => {
-    const color = getInsightColor(insight.type);
-    const backgroundColor = getInsightBackground(insight.type);
-
+    const color = INSIGHT_COLOR[insight.type] ?? COLORS.primary;
     return (
       <View
         key={index}
-        style={[
-          styles.insightCard,
-          { backgroundColor, borderLeftColor: color },
-          isDesktop && styles.insightCardDesktop,
-        ]}
+        style={[styles.card, { borderLeftWidth: 3, borderLeftColor: color }, isDesktop && styles.cardDesktop]}
       >
-        <View style={styles.insightHeader}>
-          <Text style={styles.insightIcon}>{insight.icon}</Text>
-          <Text style={[styles.insightTitle, { color }]}>{insight.title}</Text>
+        <View style={styles.cardHead}>
+          <Ionicons name={insight.icon as any} size={18} color={color} />
+          <Text style={[styles.cardTitle, { color }]}>{insight.title}</Text>
         </View>
-        <Text style={styles.insightMessage}>{insight.message}</Text>
+        <Text style={styles.cardMessage}>{insight.message}</Text>
 
         {insight.actionable && (
-          <View style={styles.actionableContainer}>
-            <Text style={styles.actionableLabel}>คำแนะนำ:</Text>
-            <Text style={styles.actionableText}>{insight.actionable}</Text>
+          <View style={styles.actionBox}>
+            <Text style={styles.actionLabel}>ทำอะไรได้</Text>
+            <Text style={styles.actionText}>{insight.actionable}</Text>
           </View>
         )}
 
-        {insight.savingPotential && insight.savingPotential > 0 && (
-          <View style={styles.savingContainer}>
-            <Text style={styles.savingText}>
-              💰 ประหยัดได้: ฿{insight.savingPotential.toFixed(0)}/เดือน
-            </Text>
-          </View>
+        {insight.savingPotential != null && insight.savingPotential > 0 && (
+          <Text style={styles.savingText}>
+            ถ้าทำตามนี้ ประหยัดได้ราว {formatCurrency(insight.savingPotential)} ต่อเดือน
+          </Text>
         )}
       </View>
     );
@@ -99,283 +75,101 @@ export default function StatisticsScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.center}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>กำลังวิเคราะห์ข้อมูล...</Text>
+        <Text style={styles.centerText}>กำลังวิเคราะห์ข้อมูล...</Text>
       </View>
     );
   }
 
+  // เดสก์ท็อปไม่มีเพดานความกว้าง — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts)
   return (
-    <ScrollView style={styles.container}>
-      <View style={isDesktop ? styles.desktopWrapper : undefined}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>📊 วิเคราะห์การเงิน</Text>
-          <Text style={styles.headerSubtitle}>AI วิเคราะห์และแนะนำเพื่อคุณ</Text>
-        </View>
-
-        <TouchableOpacity style={styles.refreshButton} onPress={loadInsights}>
-          <Text style={styles.refreshButtonText}>🔄 รีเฟรช</Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* แถวหัว: จำนวนข้อสังเกต + ปุ่มคำนวณใหม่ — ไม่มีแบนเนอร์สีเต็มความกว้างแล้ว
+          ชื่อหน้าอยู่บน header ของ Stack อยู่แล้ว เขียนซ้ำเป็นแบนเนอร์คือกินจอเปล่า ๆ */}
+      <View style={styles.topRow}>
+        <Text style={styles.topText}>
+          {insights.length > 0 ? `พบ ${insights.length} ข้อสังเกต` : 'ยังไม่มีข้อสังเกต'}
+        </Text>
+        <TouchableOpacity style={styles.refreshBtn} onPress={loadInsights}>
+          <Ionicons name="refresh-outline" size={15} color={COLORS.primary} />
+          <Text style={styles.refreshBtnText}> คำนวณใหม่</Text>
         </TouchableOpacity>
-
-        <View style={styles.content}>
-          {insights.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>📝</Text>
-              <Text style={styles.emptyTitle}>ยังไม่มีข้อมูลเพียงพอ</Text>
-              <Text style={styles.emptyText}>
-                เริ่มบันทึกค่าใช้จ่ายและการลงทุน{'\n'}เพื่อรับคำแนะนำจาก AI
-              </Text>
-            </View>
-          ) : (
-            <>
-              <View style={styles.summaryBox}>
-                <Text style={styles.summaryText}>
-                  พบ <Text style={styles.summaryCount}>{insights.length}</Text> คำแนะนำ
-                </Text>
-              </View>
-
-              <View style={isDesktop ? styles.insightsGridDesktop : undefined}>
-                {insights.map((insight, index) => renderInsight(insight, index))}
-              </View>
-
-              <View style={isDesktop ? styles.bottomRowDesktop : undefined}>
-                <View style={[styles.infoBox, isDesktop && styles.bottomBoxDesktop]}>
-                  <Text style={styles.infoTitle}>ℹ️ เกี่ยวกับการวิเคราะห์</Text>
-                  <Text style={styles.infoText}>
-                    • วิเคราะห์จากข้อมูลจริงของคุณ{'\n'}
-                    • ใช้กฎการเงินที่เป็นที่ยอมรับ{'\n'}
-                    • อัปเดตตามข้อมูลล่าสุดอัตโนมัติ{'\n'}
-                    • ข้อมูลไม่ออกจากเครื่อง ปลอดภัย 100%
-                  </Text>
-                </View>
-
-                <View style={[styles.tipBox, isDesktop && styles.bottomBoxDesktop]}>
-                  <Text style={styles.tipTitle}>เคล็ดลับ</Text>
-                  <Text style={styles.tipText}>
-                    บันทึกข้อมูลสม่ำเสมอเพื่อให้ AI วิเคราะห์ได้แม่นยำยิ่งขึ้น
-                  </Text>
-                </View>
-              </View>
-            </>
-          )}
-        </View>
       </View>
+
+      {insights.length === 0 ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>ยังไม่มีข้อมูลเพียงพอ</Text>
+          <Text style={styles.cardMessage}>
+            เริ่มบันทึกรายจ่ายและการลงทุนสักระยะ แล้วหน้านี้จะเริ่มชี้จุดที่ผิดปกติให้เอง
+          </Text>
+        </View>
+      ) : (
+        <View style={isDesktop ? styles.gridDesktop : undefined}>
+          {insights.map((insight, index) => renderInsight(insight, index))}
+        </View>
+      )}
+
+      <Text style={styles.footNote}>
+        ข้อสังเกตทั้งหมดคิดจากข้อมูลในฐานข้อมูลของคุณเองด้วยกฎตายตัวในเครื่อง
+        ไม่ได้ส่งข้อมูลออกไปไหน และไม่ได้เรียกโมเดลภาษาใด ๆ
+        {'\n'}เกณฑ์ที่ใช้ เช่น หมวดเดียวเกิน 30% ของรายจ่าย · เดือนนี้ต่างจากเดือนก่อนเกิน 20%
+        · หุ้นเกิน 70% หรือคริปโตเกิน 20% ของพอร์ต
+      </Text>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  // เหลือแค่ padding — เพดานความกว้าง (เดิม 900) ถอดออกแล้ว ดู utils/responsive.ts
-  desktopWrapper: {
-    paddingHorizontal: 16,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  container: { flex: 1, backgroundColor: COLORS.background },
+  content: { padding: 16, paddingBottom: 40 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.background },
+  centerText: { ...TEXT.body, color: COLORS.textSecondary, marginTop: 14 },
+
+  topRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.background,
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: COLORS.textSecondary,
-    fontFamily: 'NotoSansThai_300Light',
-  },
-  // เดิม paddingTop 60 เผื่อ status bar แต่หน้านี้มี header ของ Stack ("สถิติ & ข้อสังเกต") อยู่แล้ว
-  // จึงเป็นช่องว่างตายซ้อน header — ตัดเหลือ 20 เท่ากันทุกจอ (headerDesktop เลยไม่จำเป็นแล้ว)
-  header: {
-    backgroundColor: COLORS.primary,
-    padding: 20,
-    paddingBottom: 30,
-  },
-  headerTitle: {
-    fontSize: 28,
-    color: '#ffffff',
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#ffffff',
-    opacity: 0.9,
-    marginTop: 4,
-    fontFamily: 'NotoSansThai_300Light',
-  },
-  refreshButton: {
-    margin: 16,
-    backgroundColor: COLORS.surface,
-    borderRadius: 0,
-    padding: 12,
+  topText: { ...TEXT.body, color: COLORS.text, flex: 1, minWidth: 0 },
+  refreshBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
   },
-  refreshButtonText: {
-    fontSize: 16,
-    color: COLORS.primary,
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  content: {
-    padding: 16,
-    paddingTop: 0,
-  },
-  summaryBox: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 0,
-    padding: 16,
-    marginBottom: 16,
-  },
-  summaryText: {
-    fontSize: 16,
-    color: '#ffffff',
-    textAlign: 'center',
-    fontFamily: 'NotoSansThai_300Light',
-  },
-  summaryCount: {
-    fontSize: 20,
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  insightsGridDesktop: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 16,
-  },
-  insightCard: {
-    borderRadius: 0,
-    padding: 16,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  insightCardDesktop: {
-    flex: 1,
-    minWidth: 300,
-    marginBottom: 0,
-  },
-  insightHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  refreshBtnText: { ...TEXT.caption, color: COLORS.primary, fontFamily: FONTS.medium },
+
+  gridDesktop: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  card: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 14,
     marginBottom: 12,
-    gap: 8,
   },
-  insightIcon: {
-    fontSize: 24,
-    fontFamily: 'NotoSansThai_400Regular',
-  },
-  insightTitle: {
-    fontSize: 18,
-    flex: 1,
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  insightMessage: {
-    fontSize: 15,
-    color: COLORS.text,
-    lineHeight: 22,
-    marginBottom: 8,
-    fontFamily: 'NotoSansThai_300Light',
-  },
-  actionableContainer: {
-    backgroundColor: 'rgba(30, 55, 80, 0.7)',
-    borderRadius: 0,
-    padding: 12,
-    marginTop: 8,
-  },
-  actionableLabel: {
-    fontSize: 13,
-    color: COLORS.text,
-    marginBottom: 4,
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  actionableText: {
-    fontSize: 14,
-    color: COLORS.text,
-    lineHeight: 20,
-    fontFamily: 'NotoSansThai_300Light',
-  },
-  savingContainer: {
-    backgroundColor: COLORS.success,
-    borderRadius: 0,
+  // flexBasis ต้องมาคู่กับความกว้าง ไม่งั้น flex:1 (= flex-basis 0%) ชนะแล้วการ์ดยุบ (CLAUDE.md §1.7)
+  cardDesktop: { flexGrow: 1, flexBasis: 380, marginBottom: 0 },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  // flex + minWidth:0 คู่กันบังคับ — หัวข้อยาวจะดันไอคอนหลุดขอบการ์ดบนเว็บ
+  cardTitle: { ...TEXT.title, color: COLORS.text, flex: 1, minWidth: 0 },
+  cardMessage: { ...TEXT.caption, color: COLORS.text, lineHeight: 20 },
+  actionBox: {
+    backgroundColor: COLORS.background,
+    borderRadius: 10,
     padding: 10,
-    marginTop: 8,
+    marginTop: 10,
   },
-  savingText: {
-    fontSize: 14,
-    color: '#ffffff',
-    textAlign: 'center',
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-    fontFamily: 'NotoSansThai_400Regular',
-  },
-  emptyTitle: {
-    fontSize: 20,
-    color: COLORS.text,
-    marginBottom: 8,
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  emptyText: {
-    fontSize: 16,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    lineHeight: 24,
-    fontFamily: 'NotoSansThai_300Light',
-  },
-  bottomRowDesktop: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  bottomBoxDesktop: {
-    flex: 1,
-  },
-  infoBox: {
-    backgroundColor: '#162030',
-    borderRadius: 0,
-    padding: 16,
-    marginTop: 8,
-    marginBottom: 16,
-  },
-  infoTitle: {
-    fontSize: 16,
-    color: '#7986CB',
-    marginBottom: 8,
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#7986CB',
-    lineHeight: 22,
-    fontFamily: 'NotoSansThai_300Light',
-  },
-  tipBox: {
-    backgroundColor: '#2A2210',
-    borderRadius: 0,
-    padding: 16,
-    marginBottom: 32,
-  },
-  tipTitle: {
-    fontSize: 16,
-    color: '#FFB74D',
-    marginBottom: 8,
-    fontFamily: 'NotoSansThai_600SemiBold',
-  },
-  tipText: {
-    fontSize: 14,
-    color: '#FFB74D',
-    lineHeight: 20,
-    fontFamily: 'NotoSansThai_300Light',
-  },
+  actionLabel: { ...TEXT.hint, color: COLORS.textSecondary, marginBottom: 3 },
+  actionText: { ...TEXT.caption, color: COLORS.text, lineHeight: 19 },
+  savingText: { ...TEXT.caption, color: COLORS.success, fontFamily: FONTS.medium, marginTop: 10 },
+
+  footNote: { ...TEXT.hint, color: COLORS.textSecondary, lineHeight: 17, marginTop: 16 },
 });

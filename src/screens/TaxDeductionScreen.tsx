@@ -1,8 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useFocusEffect, useRoute, RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../types';
 import { RealizedTrade } from '../types/investment';
 import {
@@ -19,8 +18,14 @@ import {
 } from '../types/tax';
 import { calculateTax } from '../utils/taxCalc';
 import { getRealizedTrades } from '../services/realizedStorage';
-import { UserProfile, incomeExemptionFor, isUserProfileAnswered } from '../types/userProfile';
-import { getUserProfile } from '../services/userProfileStorage';
+import {
+  UserProfile,
+  MaritalStatus,
+  MARITAL_LABELS,
+  incomeExemptionFor,
+  isUserProfileAnswered,
+} from '../types/userProfile';
+import { getUserProfile, saveUserProfile } from '../services/userProfileStorage';
 import { adviseDeductions, autoFillableDeductions } from '../utils/deductionAdvice';
 import { getTaxProfile, saveTaxProfile, isTaxTableMissing } from '../services/taxStorage';
 import { COLORS, formatCurrency } from '../utils/constants';
@@ -39,18 +44,69 @@ const capTextOf = (item: DeductionItem, assessableIncome: number): string | null
   return `ใช้ได้ ${parts.join(' · ')}${parts.length > 1 ? ' (เอาตัวที่น้อยกว่า)' : ''}`;
 };
 
+/** จำนวนคนในอุปการะ — คีย์ตรงกับ UserProfile ตัวเลขล้วน */
+type CountKey = 'childrenBefore2561' | 'childrenFrom2561' | 'parentsSupported' | 'disabledSupported';
+
+const COUNT_FIELDS: { key: CountKey; label: string; hint: string }[] = [
+  { key: 'childrenBefore2561', label: 'บุตรที่เกิดก่อนปี 2561', hint: 'นับเฉพาะที่อายุ ≤20 ปี หรือ ≤25 ปีและกำลังศึกษา' },
+  { key: 'childrenFrom2561', label: 'บุตรที่เกิดตั้งแต่ปี 2561', hint: 'แยกช่องเพราะอัตราลดหย่อนต่างจากกลุ่มก่อน 2561' },
+  { key: 'parentsSupported', label: 'พ่อแม่ที่เราใช้สิทธิ์อุปการะ', hint: 'อายุ 60+ · เงินได้ทั้งปีไม่เกิน 30,000 · ตกลงกับพี่น้องแล้วว่าเราเป็นคนใช้' },
+  { key: 'disabledSupported', label: 'คนพิการ/ทุพพลภาพในอุปการะ', hint: 'ต้องมีชื่อเราเป็นผู้ดูแลในบัตรประจำตัวคนพิการ' },
+];
+
+/**
+ * แถวคำถามใช่/ไม่ใช่ — ⚠️ ต้องอยู่นอก component เท่านั้น (CLAUDE.md §1.13)
+ * ประกาศในตัว render = ทุกตัวอักษรที่พิมพ์ทำให้ React เห็นเป็นคอมโพเนนต์ชนิดใหม่แล้ว remount
+ * ทั้งซับทรี ช่องกรอกหลุดโฟกัสทันที (บั๊กที่เคยทำให้หน้าภาษีกรอกอะไรไม่ได้เลย)
+ */
+const PersonBoolRow: React.FC<{
+  label: string;
+  hint: string;
+  value?: boolean;
+  onChange: (v: boolean) => void;
+  bordered?: boolean;
+}> = ({ label, hint, value, onChange, bordered }) => (
+  <View style={[styles.factRow, bordered && styles.factRowBorder]}>
+    <View style={styles.factInfo}>
+      <Text style={styles.factLabel}>{label}</Text>
+      <Text style={styles.factHint}>{hint}</Text>
+    </View>
+    <View style={styles.yesNo}>
+      {[true, false].map((v) => {
+        const active = value === v;
+        return (
+          <TouchableOpacity
+            key={String(v)}
+            style={[styles.factChip, active && styles.factChipActive]}
+            onPress={() => onChange(v)}
+          >
+            <Text style={[styles.factChipText, active && styles.factChipTextActive]}>
+              {v ? 'ใช่' : 'ไม่'}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  </View>
+);
+
 /**
  * หน้า "ค่าลดหย่อน" — แยกออกมาจากหน้าภาษี
  * 18 รายการ + ข้อเท็จจริงรายปี 5 ข้อ กางอยู่ในหัวข้อเดียวของหน้าภาษีแล้วยาวเกินกว่าจะหาช่องที่ต้องการเจอ
  * ปีที่แก้อยู่มาจากหน้าภาษีทาง route param (year_facts ผูกกับปี — ปีเก่าต้องไม่เปลี่ยนตามปีใหม่)
+ *
+ * ตั้งแต่รอบปรับ 2026-08: คำถาม "ตัวตน" (สมรส/บุตร/พ่อแม่/ผู้พิการ) ย้ายมาอยู่บนสุดของหน้านี้
+ * เดิมอยู่หน้าข้อมูลส่วนตัวแล้วหน้านี้ล็อกไว้จนกว่าจะไปกรอก — ต้องเดินไปกลับสองหน้า
+ * ทั้งที่คำตอบพวกนี้มีที่ใช้ที่เดียวคือยอดลดหย่อนที่อยู่ในหน้านี้เอง
+ * (บันทึกลงตาราง user_profile เหมือนเดิม ไม่ได้ย้ายที่เก็บ — ปีอื่นจึงอ่านค่าเดียวกัน)
  */
 export default function TaxDeductionScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute<RouteProp<RootStackParamList, 'TaxDeduction'>>();
   const year = route.params.year;
   const [profile, setProfile] = useState<TaxProfile>(emptyTaxProfile(year));
   const [trades, setTrades] = useState<RealizedTrade[]>([]);
-  const [person, setPerson] = useState<UserProfile | null>(null);
+  // แก้ได้ในหน้านี้แล้ว จึงเป็น object เสมอ ไม่ใช่ null (null = "ยังไม่โหลด" ซึ่งแยกไม่ออกจาก "ยังไม่กรอก")
+  const [person, setPerson] = useState<UserProfile>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tableMissing, setTableMissing] = useState(false);
@@ -65,9 +121,9 @@ export default function TaxDeductionScreen() {
       setTrades([]);
     }
     try {
-      setPerson(await getUserProfile());
+      setPerson((await getUserProfile()) ?? {});
     } catch {
-      setPerson(null);
+      setPerson({});
     }
     try {
       const p = await getTaxProfile(year);
@@ -97,7 +153,7 @@ export default function TaxDeductionScreen() {
   );
   const breakdown = useMemo(() => calculateTax(profile, trades, taxOpts), [profile, trades, taxOpts]);
 
-  // ประตูของหน้านี้: ไม่มีข้อมูลส่วนตัว = ทุกสิทธิ์เป็น "ยังไม่รู้" และคิดยอดจากจำนวนคนไม่ได้
+  // ยังไม่ตอบอะไรเลย = ทุกสิทธิ์เป็น "ยังไม่รู้" — ไม่ล็อกหน้าแล้ว แค่เตือนไว้บนสุด
   const profileAnswered = isUserProfileAnswered(person);
   // คำแนะนำสิทธิ์ลดหย่อน — มาจาก 2 แหล่ง: ตัวตน (ข้ามปี) + ข้อเท็จจริงของปีที่เลือกอยู่
   const adviceByKey = useMemo(() => {
@@ -113,7 +169,7 @@ export default function TaxDeductionScreen() {
   const fillFromPersonalInfo = async () => {
     const keys = Object.keys(autoFillable);
     if (keys.length === 0) {
-      notify('ยังไม่มีรายการที่คำนวณให้ได้ — ไปกรอกข้อมูลส่วนตัวที่ โปรไฟล์ → ข้อมูลส่วนตัว ก่อน');
+      notify('ยังไม่มีรายการที่คำนวณให้ได้ — ตอบคำถามในหัวข้อ "ผู้มีสิทธิ์" ด้านบนก่อน');
       return;
     }
     const overwriting = keys.filter((k) => (profile.deductions?.[k] ?? 0) > 0);
@@ -153,9 +209,23 @@ export default function TaxDeductionScreen() {
       return { ...p, yearFacts: Object.keys(next).length > 0 ? next : undefined };
     });
 
+  /** จำนวนคน — ว่าง = "ยังไม่ตอบ" ต้องต่างจาก 0 ("ตอบว่าไม่มี") */
+  const setCount = (key: CountKey, raw: string) => {
+    const trimmed = raw.trim();
+    const n = parseInt(trimmed.replace(/[^0-9]/g, ''), 10);
+    setPerson((p) => ({ ...p, [key]: trimmed === '' || Number.isNaN(n) ? undefined : n }));
+  };
+
+  // กดค่าเดิมซ้ำ = ยกเลิกคำตอบ กลับไปเป็น "ยังไม่ตอบ" — ไม่งั้นตอบผิดแล้วแก้กลับไม่ได้
+  const setPersonBool = (key: 'spouseHasIncome' | 'isDisabled', value: boolean) =>
+    setPerson((p) => ({ ...p, [key]: p[key] === value ? undefined : value }));
+
   const handleSave = async () => {
     setSaving(true);
     try {
+      // ข้อมูลส่วนตัวอยู่คนละตาราง (user_profile) แต่กรอกในหน้าเดียวกันแล้ว
+      // จึงต้องบันทึกคู่กัน ไม่งั้นกดบันทึกแล้วคำตอบสมรส/บุตรหายไปเงียบ ๆ
+      await saveUserProfile(person);
       await saveTaxProfile({ ...profile, year });
       notify('บันทึกค่าลดหย่อนแล้ว', 'สำเร็จ');
     } catch (e) {
@@ -191,35 +261,73 @@ export default function TaxDeductionScreen() {
       </Text>
 
       <View style={styles.card}>
-        {/* ── ประตู: ไม่มีข้อมูลส่วนตัว = ตัดสินสิทธิ์ไม่ได้ ── */}
-        {!profileAnswered ? (
-          <View>
-            <View style={styles.lockBox}>
-              <Ionicons name="person-circle-outline" size={22} color={COLORS.primary} />
-              <Text style={styles.lockTitle}>ยังกรอกไม่ได้</Text>
-              <Text style={styles.lockText}>
-                หน้านี้ต้องรู้ข้อมูลส่วนตัวก่อน (วันเกิด สถานภาพสมรส จำนวนคนในอุปการะ)
-                ระบบจะได้บอกว่าปีนี้ใช้สิทธิ์อะไรได้ อะไรไม่ได้ และคิดยอดที่มาจากจำนวนคนให้อัตโนมัติ
-              </Text>
-              <TouchableOpacity
-                style={styles.lockBtn}
-                onPress={() => navigation.navigate('PersonalInfo')}
-              >
-                <Text style={styles.lockBtnText}>ไปกรอกข้อมูลส่วนตัว</Text>
-                <Ionicons name="arrow-forward" size={14} color="#ffffff" />
-              </TouchableOpacity>
+        {/* ── ผู้มีสิทธิ์: คำถามตัวตนที่ตัดสินว่าปีนี้ใช้สิทธิ์อะไรได้ ──
+            คำตอบเก็บที่ตาราง user_profile (ข้ามปี) จึงกรอกครั้งเดียวใช้ได้ทุกปี
+            "ยังไม่ตอบ" ต้องต่างจาก "ตอบว่าไม่" เสมอ — กดคำตอบเดิมซ้ำคือล้างกลับเป็นยังไม่ตอบ */}
+        <Text style={styles.factTitle}>ผู้มีสิทธิ์ — ใช้ได้ทุกปี ไม่ต้องกรอกใหม่</Text>
+        {!profileAnswered && (
+          <Text style={styles.deductGroupCap}>
+            ยังไม่ได้ตอบข้อไหนเลย — ทุกสิทธิ์ด้านล่างจึงยังเป็น "ยังไม่รู้" ไม่ได้แปลว่าใช้ไม่ได้
+          </Text>
+        )}
+        <View style={styles.factCard}>
+          <View style={styles.factRow}>
+            <View style={styles.factInfo}>
+              <Text style={styles.factLabel}>สถานภาพสมรส</Text>
+              <Text style={styles.factHint}>กดซ้ำที่ตัวเลือกเดิม = ล้างคำตอบกลับเป็น "ยังไม่ระบุ"</Text>
             </View>
-            {/* ยอดเก่าที่กรอกไว้ก่อนหน้ายังถูกคิดภาษีอยู่ — ต้องบอก ไม่งั้นดูเหมือนหายไปทั้งก้อน */}
-            {breakdown.extraDeductions > 0 && (
-              <Text style={styles.lockKeepNote}>
-                ยอดลดหย่อน {formatCurrency(breakdown.extraDeductions)} ที่กรอกไว้ก่อนหน้านี้
-                ยังถูกนำไปคำนวณอยู่ ไม่ได้ถูกลบ — กรอกข้อมูลส่วนตัวแล้วจะกลับมาแก้ไขได้
-              </Text>
-            )}
+            <View style={styles.yesNo}>
+              {(Object.keys(MARITAL_LABELS) as MaritalStatus[]).map((s) => {
+                const active = person.maritalStatus === s;
+                return (
+                  <TouchableOpacity
+                    key={s}
+                    style={[styles.factChip, active && styles.factChipActive]}
+                    onPress={() =>
+                      setPerson((p) => ({ ...p, maritalStatus: active ? undefined : s }))
+                    }
+                  >
+                    <Text style={[styles.factChipText, active && styles.factChipTextActive]}>
+                      {MARITAL_LABELS[s]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
-        ) : (
-          <>
-            <Text style={styles.tableHint}>
+          <PersonBoolRow
+            label="คู่สมรสมีเงินได้"
+            hint="ตอบเฉพาะกรณีจดทะเบียนสมรส — ตัวชี้ว่าใช้สิทธิ์คู่สมรส 60,000 ได้ไหม"
+            value={person.spouseHasIncome}
+            onChange={(v) => setPersonBool('spouseHasIncome', v)}
+            bordered
+          />
+          {COUNT_FIELDS.map((f) => (
+            <View key={f.key} style={[styles.factRow, styles.factRowBorder]}>
+              <View style={styles.factInfo}>
+                <Text style={styles.factLabel}>{f.label}</Text>
+                <Text style={styles.factHint}>{f.hint}</Text>
+              </View>
+              <NumberInput
+                style={[styles.input, styles.countInput]}
+                display={person[f.key] === undefined ? '' : String(person[f.key])}
+                onChangeNumber={(v) => setCount(f.key, v)}
+              />
+            </View>
+          ))}
+          <PersonBoolRow
+            label="เป็นผู้พิการที่มีบัตรประจำตัวคนพิการ"
+            hint="ได้ยกเว้นเงินได้ 190,000 (หักก่อนค่าใช้จ่าย 50% ไม่ใช่ค่าลดหย่อน)"
+            value={person.isDisabled}
+            onChange={(v) => setPersonBool('isDisabled', v)}
+            bordered
+          />
+          <Text style={styles.factFoot}>
+            วันเกิดยังอยู่ที่ โปรไฟล์ → ข้อมูลส่วนตัว เพราะใช้กับยกเว้นเงินได้ 65+ และเงื่อนไข RMF ด้วย
+          </Text>
+        </View>
+
+        <Text style={styles.tableHint}>
               ลดหย่อนส่วนตัว {formatCurrency(PERSONAL_ALLOWANCE)} และประกันสังคม{' '}
               {formatCurrency(breakdown.socialSecurity)} ระบบใส่ให้อัตโนมัติแล้ว ไม่ต้องกรอกซ้ำในนี้{'\n'}
               กรอก "ยอดที่จ่ายจริง" ลงไปได้เลย ระบบจะตัดให้เหลือเท่าที่สิทธิ์อนุญาตเอง
@@ -366,8 +474,6 @@ export default function TaxDeductionScreen() {
                 <Text style={styles.saveBtnText}>บันทึกค่าลดหย่อนปี {year}</Text>
               )}
             </TouchableOpacity>
-          </>
-        )}
       </View>
     </ScrollView>
   );

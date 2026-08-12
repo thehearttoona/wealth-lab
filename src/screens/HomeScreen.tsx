@@ -15,6 +15,7 @@ import { Calendar, DateData, LocaleConfig } from 'react-native-calendars';
 import { RootStackParamList, Expense, RecurringBill, Income } from '../types';
 import { getIncomes, getMonthlyIncomeTotal, deleteIncome } from '../services/incomeStorage';
 import { getPendingReturnDate, clearPendingReturnDate } from '../services/pendingNavigation';
+import QuickAddSheet from '../components/QuickAddSheet';
 
 import { getExpenses, deleteExpense, getRecurringBills, deleteRecurringBill } from '../services/storage';
 import { formatCurrency, formatDate, COLORS, getCurrentMonthYear } from '../utils/constants';
@@ -69,7 +70,10 @@ export default function HomeScreen() {
   const [expenseSelectMode, setExpenseSelectMode] = useState(false);
   const [incomeSelectMode, setIncomeSelectMode] = useState(false);
   const [viewMode, setViewMode] = useState<'week' | 'month'>('week');
-  const [showWeekTable, setShowWeekTable] = useState(false);
+  // แท็บของบล็อกกลางหน้า — เริ่มที่ปฏิทินเสมอ (ข้อ 1.2)
+  const [calendarView, setCalendarView] = useState<'calendar' | 'weekly'>('calendar');
+  // การ์ดเลื่อนขึ้นสำหรับเพิ่มรายรับ/รายจ่าย — เปิดจากปุ่มลอยมุมขวาล่าง (ข้อ 1.3/1.4)
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
   const [weekStart, setWeekStart] = useState<Date>(() => {
@@ -734,13 +738,8 @@ export default function HomeScreen() {
     }
     return (
       <View>
-        {!isDesktop && (
-          <TouchableOpacity style={styles.weekTableToggle} onPress={() => setShowWeekTable(v => !v)}>
-            <Text style={styles.weekTableToggleText}>สรุปรายสัปดาห์</Text>
-            <Ionicons name={showWeekTable ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
-          </TouchableOpacity>
-        )}
-        {(isDesktop || showWeekTable) ? <View style={styles.weekTableContainer}>
+        {/* หัวข้อยุบได้ถูกถอดออกแล้ว — บล็อกนี้เป็นแท็บของตัวเอง กดเข้ามาแล้วต้องเห็นตารางเลย */}
+        <View style={styles.weekTableContainer}>
           <View style={styles.weekTableHeader}>
             {/* คอลัมน์ "สัปดาห์" กว้างกว่าเพราะป้ายเป็นช่วงวันที่ (เช่น 1 ก.ค.–7) ยาวกว่าตัวเลขเงิน
                 บนเดสก์ท็อปตารางนี้อยู่ในคอลัมน์ขวาแคบ ~250px แบ่ง 4 ช่องเท่ากันแล้วเลขจะเบียด */}
@@ -774,7 +773,7 @@ export default function HomeScreen() {
               </View>
             );
           })}
-        </View> : null}
+        </View>
       </View>
     );
   };
@@ -859,7 +858,8 @@ export default function HomeScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
+    <View style={styles.screen}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
       <View>
 
@@ -876,102 +876,87 @@ export default function HomeScreen() {
           ) : (
             <View />
           )}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            {isDesktop && (
-              <>
-                <TouchableOpacity
-                  style={styles.topBarAddBtn}
-                  onPress={() => navigation.navigate('AddIncome', { date: selectedDate || undefined })}
-                >
-                  <Ionicons name="add-circle-outline" size={16} color={COLORS.success} />
-                  <Text style={[styles.topBarAddBtnText, { color: COLORS.success }]}>เพิ่มรายรับ</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.topBarAddBtn}
-                  onPress={() => navigation.navigate('AddExpense', { type: 'daily', date: selectedDate || undefined })}
-                >
-                  <Ionicons name="add-circle-outline" size={16} color={COLORS.primary} />
-                  <Text style={[styles.topBarAddBtnText, { color: COLORS.primary }]}>เพิ่มรายจ่าย</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
+          {/* ปุ่มเพิ่มรายรับ/รายจ่ายรวมเป็นปุ่มเดียวที่ลอยอยู่มุมขวาล่างแล้ว (ข้อ 1.3)
+              ไม่มีชุดปุ่มบน topBar อีก ไม่งั้นเป็นทางเข้าเดียวกันสองที่ */}
+          <View />
         </View>
 
-        {/* ── Summary Cards ── */}
+        {/* ── สรุปเดือนนี้: กล่องเดียว ──
+            เดิมเป็นการ์ด 3 ใบแยกกัน (รายรับ/รายจ่าย/คงเหลือ) ซึ่งบนมือถือกลายเป็น 3 กล่องซ้อนกัน
+            กินความสูงเกือบเต็มจอก่อนจะเห็นปฏิทิน ทั้งสามตัวเป็นเลขของเดือนเดียวกัน
+            และต้องอ่านเทียบกัน จึงควรอยู่ในกรอบเดียวโดยมีเส้นคั่นแทน */}
         {(() => {
           const viewKey = `${calendarMonth.year}-${String(calendarMonth.month + 1).padStart(2, '0')}`;
           const viewIncome = incomes.filter(i => i.date?.startsWith(viewKey)).reduce((s, i) => s + i.amount, 0);
           const viewExpense = expenses.filter(e => e.date?.startsWith(viewKey)).reduce((s, e) => s + e.amount, 0);
           const viewBalance = viewIncome - viewExpense;
-          const monthLabel = new Date(calendarMonth.year, calendarMonth.month, 1).toLocaleDateString('th-TH', { month: 'short', year: 'numeric' });
-          // แท็บเล็ต (768–1023) เคยหลุด: isMobile=false, isDesktop=false → การ์ด 3 ใบเบียดในแถวเดียว
-          // จนตัวเลขหลักล้านตกบรรทัด เลยเทียบกับ isDesktop ตรง ๆ ให้ทุกอย่างที่ไม่ใช่เดสก์ท็อปวางเป็นคอลัมน์
+          const monthLabel = new Date(calendarMonth.year, calendarMonth.month, 1).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
           return (
-            <View style={[styles.summaryContainer, !isDesktop && styles.summaryContainerMobile]}>
-              <View style={[styles.summaryCard, styles.summaryCardIncome, isDesktop && styles.summaryCardDesktop]}>
-                <Text style={styles.summaryLabel}>รายรับ</Text>
-                <Text style={[styles.summaryAmount, styles.summaryAmountIncome, isDesktop && styles.summaryAmountDesktop]}>
-                  {formatCurrency(viewIncome)}
-                </Text>
-                <Text style={styles.summarySubLabel}>{monthLabel}</Text>
-              </View>
-              <View style={[styles.summaryCard, styles.summaryCardExpense, isDesktop && styles.summaryCardDesktop]}>
-                <Text style={styles.summaryLabel}>รายจ่าย</Text>
-                <Text style={[styles.summaryAmount, styles.summaryAmountExpense, isDesktop && styles.summaryAmountDesktop]}>
-                  {formatCurrency(viewExpense)}
-                </Text>
-                <Text style={styles.summarySubLabel}>{monthLabel}</Text>
-              </View>
-              <View style={[styles.summaryCard, styles.summaryCardNet, isDesktop && styles.summaryCardDesktop]}>
-                <Text style={styles.summaryLabel}>คงเหลือ</Text>
-                <Text style={[styles.summaryAmount, viewBalance >= 0 ? styles.summaryAmountIncome : styles.summaryAmountExpense, isDesktop && styles.summaryAmountDesktop]}>
-                  {formatCurrency(viewBalance)}
-                </Text>
-                <Text style={styles.summarySubLabel}>{monthLabel}</Text>
+            <View style={styles.summaryContainer}>
+              <View style={styles.summaryBox}>
+                <Text style={styles.summaryBoxMonth}>{monthLabel}</Text>
+                <View style={styles.summaryBoxRow}>
+                  <View style={styles.summaryCell}>
+                    <Text style={styles.summaryLabel}>รายรับ</Text>
+                    <Text
+                      style={[styles.summaryAmount, styles.summaryAmountIncome, isDesktop && styles.summaryAmountDesktop]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {formatCurrency(viewIncome)}
+                    </Text>
+                  </View>
+                  <View style={styles.summaryCellDivider} />
+                  <View style={styles.summaryCell}>
+                    <Text style={styles.summaryLabel}>รายจ่าย</Text>
+                    <Text
+                      style={[styles.summaryAmount, styles.summaryAmountExpense, isDesktop && styles.summaryAmountDesktop]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {formatCurrency(viewExpense)}
+                    </Text>
+                  </View>
+                  <View style={styles.summaryCellDivider} />
+                  <View style={styles.summaryCell}>
+                    <Text style={styles.summaryLabel}>คงเหลือ</Text>
+                    <Text
+                      style={[styles.summaryAmount, viewBalance >= 0 ? styles.summaryAmountIncome : styles.summaryAmountExpense, isDesktop && styles.summaryAmountDesktop]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {formatCurrency(viewBalance)}
+                    </Text>
+                  </View>
+                </View>
               </View>
             </View>
           );
         })()}
 
-        {/* ── Calendar ── */}
-        {isDesktop ? (
-          <View style={styles.desktopTwoColumn}>
-            <View style={styles.desktopColumnLeft}>
-              {renderCalendar()}
-            </View>
-            <View style={styles.desktopColumnRight}>
-              {renderWeeklySummary()}
-            </View>
-          </View>
-        ) : (
-          <>
-            {renderCalendar()}
-            {renderWeeklySummary()}
-          </>
-        )}
-
-        {/* ── Add Buttons (mobile only) ── */}
-        {!isDesktop && (
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity
-              style={[styles.button, styles.buttonIncome]}
-              onPress={() => navigation.navigate('AddIncome', { date: selectedDate || undefined })}
-            >
-              <Ionicons name="add-circle-outline" size={24} color={COLORS.success} />
-              <Text style={[styles.buttonText, styles.buttonTextIncome]}>เพิ่มรายรับ</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.button, styles.buttonExpense]}
-              onPress={() => navigation.navigate('AddExpense', { type: 'daily', date: selectedDate || undefined })}
-            >
-              <Ionicons name="add-circle-outline" size={24} color={COLORS.primary} />
-              <Text style={[styles.buttonText, styles.buttonTextExpense]}>เพิ่มรายจ่าย</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ปุ่มเพิ่มรายรับ/รายจ่ายของเดสก์ท็อปอยู่บน topBar แล้ว — เคยมีชุดที่สองซ้ำตรงนี้ เอาออก */}
+        {/* ── ปฏิทิน / รายสัปดาห์ เป็นแท็บ ──
+            เดิมบนมือถือวางต่อกันลงมา ต้องเลื่อนผ่านปฏิทินทั้งใบกว่าจะถึงตารางสัปดาห์
+            บนเดสก์ท็อปเป็นสองคอลัมน์ ตารางสัปดาห์เลยถูกบีบเหลือ ~250px
+            ทั้งสองมุมมองตอบคำถามคนละข้อ ไม่ต้องเห็นพร้อมกัน — เริ่มที่ปฏิทินเสมอ */}
+        <View style={styles.viewTabRow}>
+          {([
+            { key: 'calendar' as const, label: 'ปฏิทิน', icon: 'calendar-outline' as const },
+            { key: 'weekly' as const, label: 'รายสัปดาห์', icon: 'list-outline' as const },
+          ]).map((t) => {
+            const active = calendarView === t.key;
+            return (
+              <TouchableOpacity
+                key={t.key}
+                style={[styles.viewTab, active && styles.viewTabActive]}
+                onPress={() => setCalendarView(t.key)}
+              >
+                <Ionicons name={t.icon} size={15} color={active ? COLORS.primary : COLORS.textSecondary} />
+                <Text style={[styles.viewTabText, active && styles.viewTabTextActive]}>{t.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        {calendarView === 'calendar' ? renderCalendar() : renderWeeklySummary()}
 
         {/* ── Income / Expense Lists ── */}
         <View style={isDesktop ? styles.desktopListsRow : undefined}>
@@ -1067,13 +1052,67 @@ export default function HomeScreen() {
 
       </View>
     </ScrollView>
+
+    {/* ── ปุ่มเดียวสำหรับเพิ่มรายการ ลอยมุมขวาล่าง ──
+        ต้องอยู่นอก ScrollView ไม่งั้นมันจะเลื่อนหายไปกับเนื้อหา
+        มือถือไม่ต้องบวก insets.bottom เพราะแถบแท็บด้านล่างกินพื้นที่ปลอดภัยไปแล้ว
+        (หน้าจอจบเหนือแถบแท็บ) — เดสก์ท็อปไม่มีแถบแท็บ จึงต้องเผื่อเอง */}
+    <TouchableOpacity
+      style={[styles.fab, { bottom: 24 + (isDesktop ? insets.bottom : 0) }]}
+      onPress={() => setQuickAddOpen(true)}
+      activeOpacity={0.85}
+    >
+      <Ionicons name="add" size={26} color="#ffffff" />
+      <Text style={styles.fabText}>เพิ่มรายการ</Text>
+    </TouchableOpacity>
+
+    <QuickAddSheet
+      visible={quickAddOpen}
+      onClose={() => setQuickAddOpen(false)}
+      defaultDate={selectedDate || undefined}
+      onSaved={() => loadExpenses()}
+    />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  // เผื่อที่ว่างท้ายหน้าไว้ให้ปุ่มลอยไม่ทับบรรทัดสุดท้าย
+  scrollContent: {
+    paddingBottom: 96,
+  },
+
+  // ── ปุ่มลอยเพิ่มรายการ ──
+  fab: {
+    position: 'absolute',
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingLeft: 16,
+    paddingRight: 20,
+    paddingVertical: 14,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary,
+    // เงาให้ลอยเหนือเนื้อหาจริง ๆ (RN web แปลง shadow* เป็น box-shadow ให้เอง)
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  fabText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
 
   // ── Section toggle header ──
@@ -1189,40 +1228,46 @@ const styles = StyleSheet.create({
 
   // ── Summary cards ──
   summaryContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 24,
-    paddingVertical: 24,
-    gap: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
   },
-  summaryContainerMobile: {
-    flexDirection: 'column',
-  },
-  summaryCard: {
-    flex: 1,
+  // กล่องเดียวสำหรับสามตัวเลข — เส้นคั่นแทนการแยกเป็นสามการ์ด
+  summaryBox: {
     backgroundColor: COLORS.surface,
-    borderRadius: 0,
-    padding: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
   },
-  summaryCardDesktop: {
-    padding: 24,
-    borderRadius: 0,
+  summaryBoxMonth: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_500Medium',
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginBottom: 12,
   },
-  summaryCardIncome: {
-    borderColor: `${COLORS.success}40`,
+  summaryBoxRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  // flex + minWidth:0 คู่กันบังคับ — ไม่งั้นตัวเลขหลักล้านดันช่องข้าง ๆ ล้นกล่องบนเว็บ
+  summaryCell: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    gap: 4,
+  },
+  summaryCellDivider: {
+    width: 1,
+    backgroundColor: COLORS.border,
+    marginHorizontal: 4,
   },
   summaryAmountIncome: {
     color: COLORS.success,
   },
-  summaryCardExpense: {
-    borderColor: `${COLORS.error}40`,
-  },
   summaryAmountExpense: {
     color: COLORS.error,
-  },
-  summaryCardNet: {
-    borderColor: `${COLORS.accent}40`,
   },
   summarySubLabel: {
     fontSize: 9,
@@ -1267,20 +1312,54 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   summaryLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontFamily: 'NotoSansThai_400Regular',
-    letterSpacing: 1.5,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
     color: COLORS.textSecondary,
   },
   summaryAmount: {
-    fontSize: 22,
-    fontFamily: 'NotoSansThai_300Light',
-    letterSpacing: 0.5,
+    fontSize: 17,
+    fontFamily: 'NotoSansThai_500Medium',
+    letterSpacing: 0.3,
     color: COLORS.primary,
+    textAlign: 'center',
   },
   summaryAmountDesktop: {
-    fontSize: 28,
+    fontSize: 24,
+  },
+
+  // ── แท็บ ปฏิทิน / รายสัปดาห์ ──
+  viewTabRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  viewTab: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  viewTabActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: `${COLORS.primary}12`,
+  },
+  viewTabText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_500Medium',
+    color: COLORS.textSecondary,
+  },
+  viewTabTextActive: {
+    color: COLORS.primary,
   },
 
   // ── Buttons ──
