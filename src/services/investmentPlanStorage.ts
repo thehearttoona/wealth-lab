@@ -20,6 +20,20 @@ export interface InvestmentPlan {
   // รายการย่อยของเงินรอลงทุน — dryPowder ด้านบนคือผลรวมของรายการเหล่านี้เสมอ
   // (คอลัมน์ dry_powder_items เพิ่มทีหลัง ยังไม่รัน SQL ก็ใช้แบบยอดรวมก้อนเดียวได้)
   dryPowderItems?: DryPowderItem[];
+  // ── ขนาดไม้ (sql/investment_plan_leg_sizing.sql) — คณิตอยู่ที่ utils/dryPowder.ts ──
+  // ไม้ถัดไป = เงินทุนปัจจุบัน ÷ (จำนวนหุ้น × ครั้งต่อหุ้น)
+  // จำนวนหุ้นนับสดจากพอร์ต จึงไม่มีคอลัมน์ · ครั้งต่อหุ้น = powderSpanDays ÷ powderEveryDays
+  // ตัวหารที่โค้ดใช้จริงคือไม้ที่ยังเหลือ — ไม่มี powderLegsUsed ขนาดไม้จะหดทุกครั้งที่แก้ยอด
+  powderLegsUsed?: number;
+  /** ทุนตั้งต้นของก้อน — คนละตัวกับ dryPowder (ยอดที่เหลือตอนนี้) */
+  powderBaseTHB?: number;
+  powderStartedAt?: string;
+  /** ระยะห่างต่อไม้ (%) — ใช้แปลง "เหลือกี่ครั้งต่อหุ้น" เป็น "รับดิ่งได้อีกกี่ %" */
+  powderStepPercent?: number;
+  /** ช่วงเวลาที่จะกระจายก้อนนี้ให้หมด (วัน) — 1 = ยิงทีเดียว ... 365 = ทยอยทั้งปี */
+  powderSpanDays?: number;
+  /** ซื้อทุกกี่วันในช่วงเวลานั้น */
+  powderEveryDays?: number;
 }
 
 // ผลรวมของรายการย่อย "เป็น THB" — แปลงด้วยเรตชุดเดียวกับ getPortfolioSummary
@@ -44,13 +58,30 @@ export const getInvestmentPlan = async (): Promise<InvestmentPlan | null> => {
     dryPowder: data.dry_powder ?? undefined,
     dryPowderAsOf: data.dry_powder_as_of ?? undefined,
     dryPowderItems: Array.isArray(data.dry_powder_items) ? data.dry_powder_items : undefined,
+    powderLegsUsed: data.powder_legs_used ?? undefined,
+    powderBaseTHB: data.powder_base_thb ?? undefined,
+    powderStartedAt: data.powder_started_at ?? undefined,
+    powderStepPercent: data.powder_step_percent ?? undefined,
+    powderSpanDays: data.powder_span_days ?? undefined,
+    powderEveryDays: data.powder_every_days ?? undefined,
   };
 };
 
 // คอลัมน์กลุ่ม dry_powder* เพิ่มทีหลัง (sql/investment_plan_dry_powder.sql)
 // ยังไม่ได้รัน SQL → ตัดทิ้งเฉพาะคอลัมน์ที่ error ฟ้องชื่อมา แล้วลองใหม่
 // (ตัดทีละตัว ไม่ทิ้งทั้งชุด เพื่อไม่ให้คนที่รัน SQL แค่บางส่วนเสียของที่มีจริง)
-const OPTIONAL_COLUMNS = ['dry_powder_items', 'dry_powder_as_of', 'dry_powder'] as const;
+// (กลุ่ม powder_* มาจาก sql/investment_plan_leg_sizing.sql — ใหม่กว่า ตัดก่อน)
+const OPTIONAL_COLUMNS = [
+  'powder_span_days',
+  'powder_every_days',
+  'powder_legs_used',
+  'powder_base_thb',
+  'powder_started_at',
+  'powder_step_percent',
+  'dry_powder_items',
+  'dry_powder_as_of',
+  'dry_powder',
+] as const;
 
 export const saveInvestmentPlan = async (plan: InvestmentPlan): Promise<void> => {
   const userId = await getUserId();
@@ -70,6 +101,12 @@ export const saveInvestmentPlan = async (plan: InvestmentPlan): Promise<void> =>
     dry_powder: plan.dryPowder ?? null,
     dry_powder_as_of: plan.dryPowderAsOf ?? null,
     dry_powder_items: plan.dryPowderItems ?? null,
+    powder_legs_used: plan.powderLegsUsed ?? null,
+    powder_base_thb: plan.powderBaseTHB ?? null,
+    powder_started_at: plan.powderStartedAt ?? null,
+    powder_step_percent: plan.powderStepPercent ?? null,
+    powder_span_days: plan.powderSpanDays ?? null,
+    powder_every_days: plan.powderEveryDays ?? null,
   };
 
   const logPlan = () =>

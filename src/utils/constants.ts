@@ -15,22 +15,76 @@ export const EXPENSE_CATEGORIES = [
   'อื่นๆ',
 ];
 
+// ── สีหลัก ──
+// ทุกค่าที่ใช้เป็น "ตัวอักษร" ผ่านเกณฑ์ WCAG AA (4.5:1) บนพื้นขาวและพื้น background แล้ว
+// ตัวเลขในวงเล็บคืออัตราส่วนคอนทราสต์บน #F6F8FB ซึ่งเป็นพื้นที่ข้อความส่วนใหญ่วางอยู่
+// (ชุดเดิม success #22A06B = 3.33 · error #D64545 = 4.38 · textSecondary #64748B = 4.47 ตกทั้งสามตัว)
 export const COLORS = {
-  primary: '#294E80',
-  accent: '#D6B35A',
+  primary: '#294E80',        // 8.4 — ผ่าน AAA
+  accent: '#D6B35A',         // 2.0 — ⚠️ พื้น/แถบเท่านั้น ห้ามใช้เป็นสีตัวอักษร ใช้ accentText แทน
+  accentText: '#8A6D1F',     // 4.9 — ทองเวอร์ชันที่อ่านออก สำหรับตัวอักษร/เส้นขอบสถานะ
   background: '#F6F8FB',
   surface: '#FFFFFF',
 
-  success: '#22A06B',
-  error: '#D64545',
-  warning: '#D97706',
+  success: '#15805A',        // 4.9
+  error: '#C13333',          // 5.5
+  warning: '#9A5B00',        // 5.1
 
   text: '#172033',
-  textSecondary: '#64748B',
+  textSecondary: '#5A6675',  // 5.5
 
   border: '#E2E8F0',
   divider: '#F1F5F9',
 };
+
+// ── ความโค้งของมุม ──
+// เดิมทั้งแอปเป็น 0 (เหลี่ยมล้วน) ซึ่งอ่านเป็น "ตารางระบบหลังบ้าน" มากกว่าแอปที่เปิดดูทุกวัน
+// ไล่ระดับตามขนาดของกล่อง: ยิ่งกล่องใหญ่ มุมยิ่งโค้งได้มากโดยไม่ดูบวม
+export const RADIUS = {
+  sm: 8,     // ชิป ป้ายเล็ก
+  md: 12,    // ปุ่ม ช่องกรอก
+  lg: 16,    // การ์ด
+  xl: 20,    // การ์ดใหญ่/โมดัล
+  pill: 999, // ปุ่มกลม แถบความคืบหน้า
+} as const;
+
+// ── เงา ──
+// react-native-web แปลง shadow* เป็น box-shadow ให้เอง ส่วน elevation ใช้ฝั่ง Android
+// เงาอ่อนมากโดยตั้งใจ — หน้าที่ของมันคือบอกว่า "นี่คือของชิ้นหนึ่ง" ไม่ใช่ทำให้ลอย
+export const SHADOW = {
+  card: {
+    shadowColor: '#0B1B33',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  lift: {
+    shadowColor: '#0B1B33',
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
+  },
+} as const;
+
+// ── สีประจำชนิดสินทรัพย์ ──
+// ให้แต่ละชนิดจำได้ด้วยสีตั้งแต่ยังไม่อ่านตัวหนังสือ — ไล่ดูพอร์ตยาว ๆ แล้วแยกออกทันที
+// ทุกค่าเข้มพอจะเป็นสีไอคอนบนพื้นอ่อน (≥ 4.5:1 บนขาว) ใช้คู่กับ assetTint() เป็นพื้นวงกลม
+export const ASSET_COLORS: { [type: string]: string } = {
+  stock_th: '#1F7A4D',
+  stock_foreign: '#2563A8',
+  fund: '#6B4FA8',
+  crypto: '#B4621A',
+  gold: '#8A6D1F',
+  other: '#5A6675',
+};
+
+export const assetColor = (type?: string): string =>
+  ASSET_COLORS[type || 'other'] || ASSET_COLORS.other;
+
+/** พื้นอ่อนของสีชนิดสินทรัพย์ — ใช้เป็นพื้นหลังวงไอคอน/ชิป (ตัวอักษรยังใช้สีเข้มตัวเต็ม) */
+export const assetTint = (type?: string): string => `${assetColor(type)}16`;
 
 // ── สีสำหรับกราฟ ──
 // ห้ามใช้คู่ เขียว/แดง เด็ดขาด — ตรวจด้วย simulation ตาบอดสีเขียว-แดง (deuteranopia) แล้ว

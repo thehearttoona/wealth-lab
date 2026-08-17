@@ -23,6 +23,14 @@ import {
   sumDryPowderItems,
 } from '../services/investmentPlanStorage';
 import {
+  powderStatus,
+  countSymbols,
+  SPAN_PRESETS,
+  DEFAULT_STEP_PERCENT,
+  DEFAULT_SPAN_DAYS,
+  DEFAULT_EVERY_DAYS,
+} from '../utils/dryPowder';
+import {
   COLORS,
   formatCurrency,
   formatCurrencyWithType,
@@ -30,22 +38,65 @@ import {
   convertFromTHB,
   toChristianYear,
 } from '../utils/constants';
-import { notify } from '../utils/dialog';
+import { notify, confirmAsk } from '../utils/dialog';
+import { useResponsive } from '../utils/responsive';
 
 const fmtDateTH = (iso: string): string =>
   new Date(iso).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
 
+/** "เหลือกี่ครั้งต่อหุ้น" หารไม่ลงตัวได้ (17 ไม้ / 5 หุ้น) — ทศนิยม 1 ตำแหน่งเฉพาะตอนไม่ลงตัว */
+const fmtRounds = (n: number): string => (Number.isInteger(n) ? `${n}` : n.toFixed(1));
+
+/** ค่าตั้งต้นของก้อนใหม่ — คิดไว้ที่ utils/dryPowder ที่เดียว จอแค่ยืมมาใส่ตอนสร้าง */
+const SEED_POWDER = {
+  powderSpanDays: DEFAULT_SPAN_DAYS,
+  powderEveryDays: DEFAULT_EVERY_DAYS,
+  powderStepPercent: DEFAULT_STEP_PERCENT,
+};
+
 /**
- * หน้า "เงินรอลงทุน" — ยกการ์ดเงินรอลงทุนออกมาจากพอร์ต
- * ตอบคำถามเดียว: มีกระสุนเท่าไหร่ · แบ่งลงได้ครั้งละเท่าไหร่ · ทุกกี่วัน
- * ตั้งใจไม่หักอัตโนมัติเมื่อซื้อ — ผู้ใช้กรอกยอดจริงทับเมื่อไหร่ก็ได้ ระบบแค่เตือนถ้าซื้อหลังวันที่จด
+ * แถวปรับตัวเลข — ต้องอยู่ระดับโมดูล ไม่ใช่ในตัว render ของหน้าจอ
+ * (ประกาศในตัว render = React มองเป็น component คนละตัวทุกครั้งที่ re-render แล้ว remount ทิ้ง)
+ */
+const StepperRow = ({
+  label,
+  value,
+  hint,
+  onStep,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  onStep: (delta: number) => void;
+}) => (
+  <View style={styles.stepperRow}>
+    <Text style={styles.planLineLabel}>{label}</Text>
+    <View style={styles.stepper}>
+      <TouchableOpacity style={styles.stepperBtn} onPress={() => onStep(-1)}>
+        <Ionicons name="remove" size={16} color={COLORS.primary} />
+      </TouchableOpacity>
+      <Text style={styles.stepperValue}>{value}</Text>
+      <TouchableOpacity style={styles.stepperBtn} onPress={() => onStep(1)}>
+        <Ionicons name="add" size={16} color={COLORS.primary} />
+      </TouchableOpacity>
+    </View>
+    <Text style={styles.stepperHint}>{hint ?? ''}</Text>
+  </View>
+);
+
+/**
+ * หน้า "เงินรอลงทุน" — กระสุนมีเท่าไหร่ · ไม้ถัดไปเท่าไหร่ · รับดิ่งได้อีกกี่ %
+ *
+ * ยอดเงินไม่หักอัตโนมัติเมื่อซื้อ — ผู้ใช้กรอกยอดจริงทับเมื่อไหร่ก็ได้ ระบบแค่เตือนถ้าซื้อหลังวันที่จด
+ * ขนาดไม้คิดที่ utils/dryPowder.ts ที่เดียว (จอรอบลงทุน/การ์ดถึงคิวลงไม้ ใช้ตัวเดียวกัน)
+ * ตัวหารคือ "ไม้ที่ยังเหลือ" ไม่ใช่ "ไม้ทั้งหมด" — ไม่งั้นแก้ยอดทีขนาดไม้หดที
  */
 export default function DryPowderScreen() {
+  const { isDesktop } = useResponsive();
   const [plan, setPlan] = useState<InvestmentPlan | null>(null);
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
   const [loading, setLoading] = useState(true);
-  const [powderMonths, setPowderMonths] = useState(1); // จะกระจายเงินก้อนนี้กี่เดือน
   const [powderModalVisible, setPowderModalVisible] = useState(false);
   const [powderRows, setPowderRows] = useState<
     { id: string; label: string; amount: string; currency: string }[]
@@ -55,9 +106,16 @@ export default function DryPowderScreen() {
     DEFAULT_CURRENCIES.map((c) => c.code)
   );
 
+  const today = new Date().toISOString().slice(0, 10);
+
+  // กดถี่ ๆ ไม่ยิง DB ทุกครั้ง — อัปเดตจอทันที แล้วค่อยเซฟหลังหยุดกด
+  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPlan = React.useRef<InvestmentPlan | null>(null);
+
   const loadData = useCallback(async () => {
     try {
       setPlan(await getInvestmentPlan());
+      pendingPlan.current = null;
     } catch {
       setPlan(null);
     }
@@ -86,19 +144,23 @@ export default function DryPowderScreen() {
     }, [loadData])
   );
 
-  // ── แบ่งลงกี่ครั้งต่อเดือน ──
-  // กดถี่ ๆ ไม่ยิง DB ทุกครั้ง — อัปเดตจอทันที แล้วค่อยเซฟหลังหยุดกด
-  const roundsSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const changeDcaRounds = (delta: number) => {
-    const base: InvestmentPlan = plan ?? { setAsidePercent: 0, dcaRounds: 0 };
-    const next = Math.max(0, Math.min(60, base.dcaRounds + delta));
-    const nextPlan: InvestmentPlan = { ...base, dcaRounds: next };
-    setPlan(nextPlan);
-    if (roundsSaveTimer.current) clearTimeout(roundsSaveTimer.current);
-    roundsSaveTimer.current = setTimeout(() => {
-      saveInvestmentPlan(nextPlan).catch(() => notify('บันทึกจำนวนครั้งไม่สำเร็จ'));
-    }, 700);
+  const patchPlan = (patch: Partial<InvestmentPlan>, immediate = false) => {
+    const base: InvestmentPlan = pendingPlan.current ?? plan ?? { setAsidePercent: 0, dcaRounds: 0 };
+    const next: InvestmentPlan = { ...base, ...patch };
+    pendingPlan.current = next;
+    setPlan(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    const flush = () => {
+      const toSave = pendingPlan.current;
+      pendingPlan.current = null;
+      if (toSave) {
+        saveInvestmentPlan(toSave).catch(() =>
+          notify('บันทึกไม่สำเร็จ — ถ้ายังไม่ได้รัน sql/investment_plan_leg_sizing.sql ให้รันก่อน')
+        );
+      }
+    };
+    if (immediate) flush();
+    else saveTimer.current = setTimeout(flush, 700);
   };
 
   // ── จดยอดเงินรอลงทุน ──
@@ -143,7 +205,6 @@ export default function DryPowderScreen() {
   const parseAmount = (s: string) => parseFloat(s.replace(/,/g, '').trim());
 
   const handleSavePowder = async () => {
-    const today = new Date().toISOString().slice(0, 10);
     const prevById = new Map((plan?.dryPowderItems || []).map((i) => [i.id, i]));
     const items: DryPowderItem[] = [];
     for (const r of powderRows) {
@@ -173,15 +234,31 @@ export default function DryPowderScreen() {
     try {
       // ยังไม่มีแถวในตาราง = สร้างขึ้นมาใหม่โดยไม่ต้องให้กรอกแผนก่อน
       const base: InvestmentPlan = plan ?? { setAsidePercent: 0, dcaRounds: 0 };
+      // จดยอดครั้งแรก = ตั้งหมุดของก้อนให้เลย ผู้ใช้จะได้ไม่ต้องไปกด "เริ่มก้อนใหม่" ก่อนใช้งาน
+      // (แค่ "แก้ยอด" ครั้งต่อ ๆ ไปห้ามแตะหมุด ไม่งั้นตัวนับไม้รีเซ็ตแล้วสูตรกลับไปพังแบบเดิม)
+      const firstTime = !base.powderBaseTHB || base.powderBaseTHB <= 0;
+      const seed: Partial<InvestmentPlan> =
+        firstTime && total > 0
+          ? {
+              powderBaseTHB: total,
+              powderStartedAt: today,
+              powderLegsUsed: 0,
+              powderSpanDays: base.powderSpanDays ?? SEED_POWDER.powderSpanDays,
+              powderEveryDays: base.powderEveryDays ?? SEED_POWDER.powderEveryDays,
+              powderStepPercent: base.powderStepPercent ?? SEED_POWDER.powderStepPercent,
+            }
+          : {};
       const next: InvestmentPlan = {
         ...base,
+        ...seed,
         dryPowderItems: items.length > 0 ? items : undefined,
-        // dryPowder = ยอดรวมเสมอ ส่วนที่คำนวณต่อ (ลงได้ครั้งละ/คำเตือน) จึงใช้ตัวเดิมได้
+        // dryPowder = ยอดรวมเสมอ ส่วนที่คำนวณต่อ (ขนาดไม้/คำเตือน) จึงใช้ตัวเดิมได้
         dryPowder: total > 0 ? total : undefined,
         dryPowderAsOf:
           total <= 0 ? undefined : total !== base.dryPowder ? today : base.dryPowderAsOf,
       };
       await saveInvestmentPlan(next);
+      pendingPlan.current = null;
       setPlan(next);
       setPowderModalVisible(false);
     } catch {
@@ -195,20 +272,19 @@ export default function DryPowderScreen() {
     return s + (Number.isFinite(n) && n > 0 ? convertToTHB(n, r.currency || 'THB') : 0);
   }, 0);
 
-  const dcaRoundsCount = plan?.dcaRounds && plan.dcaRounds > 0 ? plan.dcaRounds : null;
-  const dryPowder = plan?.dryPowder && plan.dryPowder > 0 ? plan.dryPowder : 0;
-  const powderItemCount = plan?.dryPowderItems?.length ?? 0;
-  const powderTotalRounds = dcaRoundsCount ? dcaRoundsCount * powderMonths : null;
-  const powderPerRound = powderTotalRounds && dryPowder > 0 ? dryPowder / powderTotalRounds : null;
-  const powderEveryDays = dcaRoundsCount ? 30 / dcaRoundsCount : null;
+  // ── ตัวเลขของก้อนปัจจุบัน ──
+  // จำนวนหุ้น = นับ "ตัว" จากพอร์ต ไม่ใช่นับแถว (ไม้ของหุ้นเดียวกันเป็นคนละแถวใน investments)
+  const symbolCount = countSymbols(investments);
+  const status = powderStatus(plan, symbolCount);
+  const dryPowder = status.remainingTHB;
   // ยอดที่จดไว้เป็นคนละสกุล รวมกันเป็นบาทไว้แล้ว — โชว์คู่กับดอลลาร์ด้วย
   // เพราะไม้ที่ลงบน Binance คิดเป็น USD จะได้ไม่ต้องหารในหัวเองทุกครั้ง
   const dryPowderUSD = dryPowder > 0 ? convertFromTHB(dryPowder, 'USD') : 0;
-  const powderPerRoundUSD = powderPerRound != null ? convertFromTHB(powderPerRound, 'USD') : null;
-  // ซื้อไปแล้วกี่รายการหลังวันที่จดยอด — สัญญาณว่ายอดที่จดไว้เก่าแล้ว
-  const boughtSincePowder = (() => {
-    const asOf = plan?.dryPowderAsOf;
-    if (!asOf || dryPowder <= 0) return null;
+  const nextLegUSD = status.nextLegTHB != null ? convertFromTHB(status.nextLegTHB, 'USD') : null;
+
+  // ซื้อไปแล้วกี่รายการหลังวันที่กำหนด — สัญญาณว่ายอด/ตัวนับที่จดไว้เก่าแล้ว
+  const purchasesSince = (asOf?: string): { count: number; cost: number } | null => {
+    if (!asOf) return null;
     let count = 0;
     let cost = 0;
     const add = (dateStr: string, amount: number) => {
@@ -220,8 +296,41 @@ export default function DryPowderScreen() {
       add(inv.buyDate, convertToTHB(inv.buyPrice, inv.currency) * inv.quantity + (inv.fees || 0))
     );
     realizedTrades.forEach((t) => add(t.buyDate, convertToTHB(t.buyPrice, t.currency) * t.quantity));
-    return count > 0 ? { count, cost, asOf } : null;
-  })();
+    return { count, cost };
+  };
+
+  const boughtSincePowder = dryPowder > 0 ? purchasesSince(plan?.dryPowderAsOf) : null;
+  const boughtSinceStart = purchasesSince(plan?.powderStartedAt);
+  // ตัวนับไม้เป็นของที่ผู้ใช้กดเอง (เหมือนยอดเงินที่ไม่หักอัตโนมัติ) — ไม่ตรงก็แค่เตือน
+  const legsMismatch =
+    plan?.powderStartedAt != null &&
+    boughtSinceStart != null &&
+    boughtSinceStart.count !== status.legsUsed;
+
+  const startNewBatch = async () => {
+    if (dryPowder <= 0) {
+      notify('จดยอดเงินรอลงทุนก่อน แล้วค่อยเริ่มก้อนใหม่');
+      return;
+    }
+    const ok = await confirmAsk(
+      'เริ่มก้อนใหม่',
+      `ตั้งทุนตั้งต้นของก้อนเป็น ฿${formatCurrency(dryPowder)} และนับไม้ใหม่จาก 0\n` +
+        'ใช้ตอนเติมเงินเข้าพอร์ตหรือขึ้นรอบใหม่ — ถ้าแค่แก้ยอดให้ตรงจริง ไม่ต้องกดปุ่มนี้',
+      'เริ่มก้อนใหม่'
+    );
+    if (!ok) return;
+    patchPlan(
+      {
+        powderBaseTHB: dryPowder,
+        powderStartedAt: today,
+        powderLegsUsed: 0,
+        powderSpanDays: plan?.powderSpanDays ?? SEED_POWDER.powderSpanDays,
+        powderEveryDays: plan?.powderEveryDays ?? SEED_POWDER.powderEveryDays,
+        powderStepPercent: plan?.powderStepPercent ?? SEED_POWDER.powderStepPercent,
+      },
+      true
+    );
+  };
 
   if (loading) {
     return (
@@ -234,57 +343,29 @@ export default function DryPowderScreen() {
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.card}>
+        {/* ── เดสก์ท็อป: สองการ์ดเรียงซ้าย-ขวา ──
+            สองใบนี้อ่านคู่กันเสมอ ("กระสุนมีเท่าไหร่" → "ไม้ละเท่าไหร่") วางซ้อนกันแล้ว
+            ต้องเลื่อนขึ้นลงเทียบ ทั้งที่จอกว้างมีที่ว่างข้าง ๆ เหลือเฟือ
+            ต่ำกว่าเดสก์ท็อป (รวมแท็บเล็ต 768–1023) ยังเรียงลงมาเหมือนเดิม — แบ่งครึ่งตรงนั้น
+            แถวสเต็ปเปอร์ในการ์ดขวาจะโดนบีบจนป้ายกับปุ่มชนกัน */}
+        <View style={isDesktop ? styles.splitRow : undefined}>
+        {/* ── การ์ด 1: กระสุนมีเท่าไหร่ ── */}
+        <View style={[styles.card, isDesktop && styles.splitCol]}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>
-              <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> เงินรอลงทุน · แบ่งลงกี่ครั้ง
+              <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> เงินรอลงทุน
             </Text>
             <TouchableOpacity onPress={openPowderModal}>
               <Text style={styles.cardEdit}>{dryPowder > 0 ? 'แก้ยอด' : 'จดยอด'}</Text>
             </TouchableOpacity>
           </View>
 
-          {/* แบ่งลงกี่ครั้ง/เดือน — ปรับตรงนี้ ไม่มี modal แผนแยก */}
-          <View style={styles.roundsRow}>
-            <Text style={styles.planLineLabel}>แบ่งลงกี่ครั้ง / เดือน</Text>
-            <View style={styles.roundsStepper}>
-              <TouchableOpacity style={styles.roundsBtn} onPress={() => changeDcaRounds(-1)}>
-                <Ionicons name="remove" size={16} color={COLORS.primary} />
-              </TouchableOpacity>
-              <Text style={styles.roundsValue}>{dcaRoundsCount ?? '—'}</Text>
-              <TouchableOpacity style={styles.roundsBtn} onPress={() => changeDcaRounds(1)}>
-                <Ionicons name="add" size={16} color={COLORS.primary} />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.roundsHint}>
-              {powderEveryDays ? `~${Math.max(1, Math.round(powderEveryDays))} วัน/ครั้ง` : 'ยังไม่ตั้ง'}
-            </Text>
-          </View>
-
           {dryPowder <= 0 ? (
             <Text style={styles.cardEmpty}>
-              กด "จดยอด" ใส่เงินที่พร้อมลงตอนนี้ → ระบบจะบอกว่าลงได้ครั้งละเท่าไหร่ ทุกกี่วัน
-            </Text>
-          ) : !dcaRoundsCount ? (
-            <Text style={styles.cardEmpty}>
-              มีเงินรอลงทุน {formatCurrency(dryPowder)} — กด + ตั้ง "แบ่งลงกี่ครั้ง/เดือน" ก่อน ถึงจะหารให้ได้
+              กด "จดยอด" ใส่เงินที่พร้อมลงตอนนี้ → ระบบจะบอกว่าไม้ถัดไปเท่าไหร่ และรับดิ่งได้อีกกี่ %
             </Text>
           ) : (
             <>
-              <View style={styles.chipRow}>
-                {[1, 3, 6, 12].map((m) => (
-                  <TouchableOpacity
-                    key={m}
-                    style={[styles.chip, m === powderMonths && styles.chipActive]}
-                    onPress={() => setPowderMonths(m)}
-                  >
-                    <Text style={[styles.chipText, m === powderMonths && styles.chipTextActive]}>
-                      {m} เดือน
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              {/* รายการย่อยที่จดไว้ — แยกตามแหล่งเงิน/โบรก */}
               {(plan?.dryPowderItems || []).map((it) => (
                 <View key={it.id} style={styles.planLine}>
                   <Text style={styles.planLineLabel}>
@@ -299,39 +380,35 @@ export default function DryPowderScreen() {
                   </Text>
                 </View>
               ))}
-              <View style={styles.planLine}>
-                <Text style={styles.planLineLabel}>
-                  เงินรอลงทุนที่จดไว้
-                  {powderItemCount > 0 ? ` (รวม ${powderItemCount} รายการ)` : ''}
+              <View style={[styles.planLine, styles.totalRow]}>
+                <Text style={styles.totalLabel}>
+                  กระสุนที่เหลือ
+                  {(plan?.dryPowderItems?.length ?? 0) > 0
+                    ? ` (${plan?.dryPowderItems?.length} รายการ)`
+                    : ''}
                 </Text>
                 <View style={styles.dualCurrencyValue}>
-                  <Text style={styles.planLineValue}>฿{formatCurrency(dryPowder)}</Text>
-                  <Text style={styles.dualCurrencySub}>≈ {formatCurrencyWithType(dryPowderUSD, 'USD')}</Text>
-                </View>
-              </View>
-              <View style={[styles.planLine, styles.reserveTotalRow]}>
-                <Text style={[styles.reserveTotalLabel, { flex: 1 }]}>
-                  ลงได้ครั้งละ ({dcaRoundsCount} ครั้ง/ด. × {powderMonths} ด. = {powderTotalRounds} ครั้ง)
-                </Text>
-                <View style={styles.dualCurrencyValue}>
-                  <Text style={styles.reserveTotalValue}>
-                    {powderPerRound == null ? '—' : `฿${formatCurrency(powderPerRound)}`}
+                  <Text style={styles.totalValue}>฿{formatCurrency(dryPowder)}</Text>
+                  <Text style={styles.dualCurrencySub}>
+                    ≈ {formatCurrencyWithType(dryPowderUSD, 'USD')}
                   </Text>
-                  {powderPerRoundUSD != null && (
-                    <Text style={styles.dualCurrencySub}>
-                      ≈ {formatCurrencyWithType(powderPerRoundUSD, 'USD')}
-                    </Text>
-                  )}
                 </View>
               </View>
-              {boughtSincePowder ? (
+              {status.spentTHB != null && status.spentTHB > 0 && plan?.powderBaseTHB ? (
+                <Text style={styles.subTextMuted}>
+                  ทุนตั้งต้นของก้อน ฿{formatCurrency(plan.powderBaseTHB)}
+                  {plan.powderStartedAt ? ` · เริ่ม ${fmtDateTH(plan.powderStartedAt)}` : ''} · ลงไปแล้ว ฿
+                  {formatCurrency(status.spentTHB)}
+                </Text>
+              ) : null}
+              {boughtSincePowder && boughtSincePowder.count > 0 && plan?.dryPowderAsOf ? (
                 <Text style={[styles.subText, { color: COLORS.warning }]}>
                   <Ionicons name="alert-circle-outline" size={13} color={COLORS.warning} />
-                  {' '}ซื้อไป {boughtSincePowder.count} รายการ (~{formatCurrency(boughtSincePowder.cost)}) หลังจดยอดเมื่อ{' '}
-                  {fmtDateTH(boughtSincePowder.asOf)} — กด "แก้ยอด" อัปเดตเงินรอลงทุนให้ตรงจริง
+                  {' '}ซื้อไป {boughtSincePowder.count} รายการ (~{formatCurrency(boughtSincePowder.cost)})
+                  หลังจดยอดเมื่อ {fmtDateTH(plan.dryPowderAsOf)} — กด "แก้ยอด" ให้ตรงจริง
                 </Text>
               ) : plan?.dryPowderAsOf ? (
-                <Text style={styles.subText}>
+                <Text style={styles.subTextMuted}>
                   จดยอดไว้เมื่อ {fmtDateTH(plan.dryPowderAsOf)} · ยังไม่มีการซื้อหลังจากนั้น
                 </Text>
               ) : null}
@@ -339,10 +416,152 @@ export default function DryPowderScreen() {
           )}
         </View>
 
-        {/* เลขต่อครั้งนี้เป็นตัวเดียวกับที่การ์ดรอบลงทุนใช้แปลงงบเป็น "เหลือกี่ไม้" — บอกไว้ให้รู้ว่าเกี่ยวกัน */}
+        {/* ── การ์ด 2: ไม้ถัดไปเท่าไหร่ (คำตอบก่อน แล้วค่อยตามด้วยปุ่มปรับ) ── */}
+        <View style={[styles.card, isDesktop && styles.splitColWide]}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>
+              <Ionicons name="layers-outline" size={18} color={COLORS.primary} /> ขนาดไม้
+            </Text>
+            <TouchableOpacity onPress={startNewBatch}>
+              <Text style={styles.cardEdit}>เริ่มก้อนใหม่</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.heroRow}>
+            <View style={styles.heroMain}>
+              <Text style={styles.heroLabel}>ไม้ถัดไป</Text>
+              <Text style={styles.heroValue}>
+                {status.nextLegTHB == null ? '—' : `฿${formatCurrency(status.nextLegTHB)}`}
+              </Text>
+              {nextLegUSD != null && (
+                <Text style={styles.heroSub}>≈ {formatCurrencyWithType(nextLegUSD, 'USD')}</Text>
+              )}
+            </View>
+            <View style={styles.heroSide}>
+              <Text style={styles.heroLabel}>เหลืออีก</Text>
+              <Text style={styles.heroSideValue}>{status.legsLeft} ไม้</Text>
+              <Text style={styles.heroSub}>
+                ลงไปแล้ว {status.legsUsed}/{status.legsPlanned}
+              </Text>
+            </View>
+          </View>
+
+          {/* ที่มาของเลข — เขียนตัวหารตามที่ใช้จริง ไม่ใช่ตามที่อยากให้ดูสวย */}
+          <Text style={styles.formulaText}>
+            {status.nextLegTHB != null
+              ? `฿${formatCurrency(status.remainingTHB)} ÷ ${status.legsLeft} ไม้ที่เหลือ`
+              : 'ยังคิดไม้ถัดไปไม่ได้'}
+            {'\n'}ไม้ทั้งก้อน {status.legsPlanned} ไม้ = {status.symbolCount} หุ้น ×{' '}
+            {status.roundsPerSymbol} ครั้ง (กระจาย {status.spanDays} วัน · ซื้อทุก {status.everyDays}{' '}
+            วัน)
+          </Text>
+
+          {status.reason ? <Text style={styles.reasonText}>{status.reason}</Text> : null}
+
+          {status.symbolCountAssumed ? (
+            <Text style={styles.subTextMuted}>
+              ยังไม่มีหุ้นในพอร์ต — คิดที่ 1 ตัวไปก่อน ซื้อตัวแรกแล้วเลขนี้จะปรับตามจำนวนหุ้นจริงเอง
+            </Text>
+          ) : null}
+
+          {status.depthCoveredPercent != null && status.legsLeft > 0 ? (
+            <View style={styles.depthBox}>
+              <Text style={styles.depthLabel}>รับดิ่งได้อีกประมาณ</Text>
+              <Text style={styles.depthValue}>{status.depthCoveredPercent.toFixed(0)}%</Text>
+              <Text style={styles.depthHint}>
+                = เหลือ {fmtRounds(status.roundsLeftPerSymbol)} ครั้ง/หุ้น × ระยะห่าง{' '}
+                {plan?.powderStepPercent ?? DEFAULT_STEP_PERCENT}%/ไม้
+              </Text>
+            </View>
+          ) : null}
+
+          {status.underfunded && status.plannedLegTHB != null ? (
+            <Text style={[styles.subText, { color: COLORS.warning }]}>
+              <Ionicons name="alert-circle-outline" size={13} color={COLORS.warning} />
+              {' '}ไม้ที่เหลือหดลงจากแผน (แผนไว้ ฿{formatCurrency(status.plannedLegTHB)}) — ลงเกินแผนไปแล้ว
+              เติมเงินแล้วเริ่มก้อนใหม่ หรือย่นช่วงเวลาให้สั้นลง
+            </Text>
+          ) : null}
+
+          {legsMismatch && boughtSinceStart ? (
+            <Text style={styles.subTextMuted}>
+              ซื้อไป {boughtSinceStart.count} รายการหลังเริ่มก้อน แต่ตัวนับอยู่ที่ {status.legsUsed} —
+              ปรับ "ลงไปแล้ว" ให้ตรงถ้าจำนวนไม้ไม่ตรงกัน
+            </Text>
+          ) : null}
+
+          {/* ── ปุ่มปรับ ── */}
+          <View style={styles.settingsBox}>
+            {/* ช่วงเวลาคือ "สไตล์" ของก้อน — สั้น = ไม้ใหญ่ลงเร็ว, ยาว = ไม้เล็กรับดิ่งได้ลึก */}
+            <Text style={styles.settingsLabel}>สไตล์การลงเงิน — กระจายก้อนนี้ให้หมดในกี่วัน</Text>
+            <View style={styles.chipRow}>
+              {SPAN_PRESETS.map((s) => {
+                const active = status.spanDays === s.days;
+                return (
+                  <TouchableOpacity
+                    key={s.days}
+                    style={[styles.spanChip, active && styles.chipActive]}
+                    onPress={() => patchPlan({ powderSpanDays: s.days })}
+                  >
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{s.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={styles.shapeHint}>
+              {SPAN_PRESETS.find((s) => s.days === status.spanDays)?.hint ??
+                `กระจาย ${status.spanDays} วัน`}
+            </Text>
+
+            <StepperRow
+              label="ซื้อทุก ๆ"
+              value={`${status.everyDays} วัน`}
+              hint={`${status.roundsPerSymbol} ครั้ง/หุ้น`}
+              onStep={(d) =>
+                patchPlan({
+                  powderEveryDays: Math.max(
+                    1,
+                    Math.min(90, (plan?.powderEveryDays ?? DEFAULT_EVERY_DAYS) + d)
+                  ),
+                })
+              }
+            />
+            <StepperRow
+              label="ลงไปแล้ว"
+              value={`${status.legsUsed}`}
+              hint={`จาก ${status.legsPlanned} ไม้`}
+              onStep={(d) =>
+                patchPlan({
+                  powderLegsUsed: Math.max(
+                    0,
+                    Math.min(status.legsPlanned, (plan?.powderLegsUsed ?? 0) + d)
+                  ),
+                })
+              }
+            />
+            <StepperRow
+              label="ระยะห่างต่อไม้"
+              value={`${plan?.powderStepPercent ?? DEFAULT_STEP_PERCENT}%`}
+              hint="ต่ำกว่าไม้ก่อน"
+              onStep={(d) =>
+                patchPlan({
+                  powderStepPercent: Math.max(
+                    1,
+                    Math.min(50, (plan?.powderStepPercent ?? DEFAULT_STEP_PERCENT) + d)
+                  ),
+                })
+              }
+            />
+          </View>
+        </View>
+        </View>
+        {/* ── จบแถวสองคอลัมน์ ── */}
+
+        {/* เลขไม้ถัดไปนี้เป็นตัวเดียวกับที่การ์ดรอบลงทุนใช้แปลงงบเป็น "เหลือกี่ไม้" — บอกไว้ให้รู้ว่าเกี่ยวกัน */}
         <Text style={styles.hint}>
-          ยอด "ลงได้ครั้งละ" ที่กรอบ 1 เดือน คือตัวที่หน้า "รอบลงทุน" ใช้แปลงงบที่เหลือของรอบ
-          ให้เป็นจำนวนไม้ที่ยังลงได้
+          ยอด "ไม้ถัดไป" คือตัวที่หน้า "รอบลงทุน" ใช้แปลงงบที่เหลือของรอบให้เป็นจำนวนไม้ที่ยังลงได้
+          {'\n'}จำนวนหุ้นนับสดจากพอร์ต — ซื้อหุ้นตัวใหม่เข้ามา ไม้ทั้งก้อนจะเพิ่มตามและขนาดไม้จะเล็กลงเอง
+          {'\n'}ตัวหารคือไม้ที่ยังเหลือ ไม่ใช่ไม้ทั้งก้อน — ลงตามแผนขนาดไม้จะคงที่ ลงเกินแผนไม้ที่เหลือถึงจะหด
         </Text>
       </ScrollView>
 
@@ -407,13 +626,14 @@ export default function DryPowderScreen() {
               <Ionicons name="add" size={16} color={COLORS.primary} />
               <Text style={styles.powderAddBtnText}> เพิ่มรายการ</Text>
             </TouchableOpacity>
-            <View style={[styles.planLine, styles.reserveTotalRow]}>
-              <Text style={styles.reserveTotalLabel}>ยอดรวมที่จะจด (แปลงเป็น THB)</Text>
-              <Text style={styles.reserveTotalValue}>{formatCurrency(powderRowsTotal)}</Text>
+            <View style={[styles.planLine, styles.totalRow]}>
+              <Text style={styles.totalLabel}>ยอดรวมที่จะจด (แปลงเป็น THB)</Text>
+              <Text style={styles.totalValue}>{formatCurrency(powderRowsTotal)}</Text>
             </View>
             <Text style={styles.modalHint}>
               ยอดนี้ไม่หักอัตโนมัติ — ซื้อเสร็จแล้วกลับมาแก้ยอดของรายการนั้นได้เลย
               (ล้างทั้งชื่อและยอดของแถว = ลบรายการนั้นทิ้ง)
+              {'\n'}แก้ยอดตรงนี้ไม่แตะทุนตั้งต้นและตัวนับไม้ — เติมเงินเข้าก้อนใหม่ให้กด "เริ่มก้อนใหม่"
               {plan?.dryPowderAsOf ? ` · จดล่าสุด ${fmtDateTH(plan.dryPowderAsOf)}` : ''}
             </Text>
             <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePowder}>
@@ -465,6 +685,30 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     lineHeight: 18,
   },
+  // ── เดสก์ท็อป: การ์ดสองใบเรียงซ้าย-ขวา ──
+  // ระยะห่างมาจาก gap/padding ของแถว การ์ดจึงต้องล้าง margin ของตัวเองทิ้ง (ดู splitCol)
+  splitRow: {
+    flexDirection: 'row',
+    // การ์ดซ้ายเนื้อหาน้อยกว่ามาก — ปล่อยให้สูงตามเนื้อหาจริง ไม่ยืดตามใบขวา
+    alignItems: 'flex-start',
+    gap: 16,
+    paddingHorizontal: 16,
+  },
+  // flex ต้องมากับ minWidth:0 เสมอบนเว็บ ไม่งั้นบรรทัดยาว ๆ ในการ์ดดันคอลัมน์จนล้นแถว
+  splitCol: {
+    flex: 1,
+    minWidth: 0,
+    marginHorizontal: 0,
+    marginBottom: 0,
+  },
+  // การ์ด "ขนาดไม้" กว้างกว่าเพราะมีแถวสเต็ปเปอร์ (ป้าย + ปุ่ม − / ตัวเลข / ปุ่ม + + คำอธิบาย)
+  // กับชิปสไตล์การลงเงิน 6 ตัว ถ้าแบ่งเท่ากันชิปจะตกบรรทัดตั้งแต่จอ 1024
+  splitColWide: {
+    flex: 1.35,
+    minWidth: 0,
+    marginHorizontal: 0,
+    marginBottom: 0,
+  },
   hint: {
     marginHorizontal: 16,
     fontSize: 11,
@@ -472,32 +716,128 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     lineHeight: 17,
   },
-  roundsRow: {
+  // ── คำตอบหลัก: ไม้ถัดไป | เหลืออีกกี่ไม้ ──
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 6,
+  },
+  heroMain: { flex: 1, minWidth: 0 },
+  heroSide: { alignItems: 'flex-end' },
+  heroLabel: {
+    fontSize: 10,
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: COLORS.textSecondary,
+    marginBottom: 2,
+  },
+  heroValue: {
+    fontSize: 26,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+  },
+  heroSideValue: {
+    fontSize: 18,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  heroSub: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  // ที่มาของเลขไม้ถัดไป — โชว์ตัวหารจริง กันคนคิดว่าแอปเสกเลขมา
+  formulaText: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  reasonText: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  depthBox: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  depthLabel: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  depthValue: {
+    fontSize: 18,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.accent,
+  },
+  depthHint: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'right',
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  settingsBox: {
+    marginTop: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  settingsLabel: {
+    fontSize: 10,
+    fontFamily: 'NotoSansThai_400Regular',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: COLORS.textSecondary,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  stepperRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
   },
-  roundsStepper: {
+  stepper: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  roundsBtn: { paddingHorizontal: 10, paddingVertical: 5 },
-  roundsValue: {
-    minWidth: 34,
+  stepperBtn: { paddingHorizontal: 10, paddingVertical: 5 },
+  stepperValue: {
+    minWidth: 40,
     textAlign: 'center',
     fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
-  roundsHint: {
+  stepperHint: {
     width: 92,
     textAlign: 'right',
     fontSize: 11,
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
+  },
+  shapeHint: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    lineHeight: 16,
   },
   planLine: {
     flexDirection: 'row',
@@ -526,10 +866,11 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 1,
   },
-  chipRow: { flexDirection: 'row', gap: 6, marginTop: 12, marginBottom: 6 },
-  chip: {
-    flex: 1,
+  // 6 ตัวเลือกในแถวเดียวบนมือถือจะแคบจนอ่านไม่ออก — ให้ตัดบรรทัดแทนการบีบ
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  spanChip: {
     paddingVertical: 7,
+    paddingHorizontal: 12,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -541,18 +882,19 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   chipTextActive: { color: '#ffffff', fontFamily: 'NotoSansThai_600SemiBold' },
-  reserveTotalRow: {
+  totalRow: {
     marginTop: 6,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
     paddingTop: 8,
   },
-  reserveTotalLabel: {
+  totalLabel: {
+    flex: 1,
     fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
-  reserveTotalValue: {
+  totalValue: {
     fontSize: 15,
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.primary,
@@ -561,7 +903,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.accent,
-    marginTop: 3,
+    marginTop: 6,
+    lineHeight: 17,
+  },
+  subTextMuted: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    marginTop: 6,
+    lineHeight: 17,
   },
   modalOverlay: {
     flex: 1,

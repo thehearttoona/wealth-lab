@@ -22,6 +22,7 @@ import {
   DryPowderItem,
   sumDryPowderItems,
 } from '../services/investmentPlanStorage';
+import { nextLegTHBOf, countSymbols } from '../utils/dryPowder';
 import { InvestmentCycle, BasketKey, BASKET_ORDER, basketLabel, basketAccepts } from '../types/cycle';
 import {
   getOpenCycles,
@@ -125,11 +126,10 @@ export default function CyclesScreen() {
     }, [loadData])
   );
 
-  // เงินต่อไม้ = เงินรอลงทุน ÷ จำนวนครั้งต่อเดือน (ฐานเดียวกับการ์ดเงินรอลงทุน ที่กรอบ 1 เดือน)
+  // เงินต่อไม้ = "ไม้ถัดไป" จากหน้าเงินรอลงทุน (utils/dryPowder — ทางเดียวกันทั้งแอป)
   // ตัวนี้คือตัวแปลงงบที่เหลือให้เป็น "ลงได้อีกกี่ไม้" ซึ่งเป็นเลขที่ตัดสินกลยุทธ์นี้จริง ๆ
-  const dryPowder = plan?.dryPowder && plan.dryPowder > 0 ? plan.dryPowder : 0;
-  const dcaRoundsCount = plan?.dcaRounds && plan.dcaRounds > 0 ? plan.dcaRounds : null;
-  const powderPerRound = dcaRoundsCount && dryPowder > 0 ? dryPowder / dcaRoundsCount : null;
+  // ต้องส่งจำนวนหุ้นไปด้วย (สูตรหารด้วย หุ้น × ครั้งต่อหุ้น) ไม่งั้นจอนี้ได้เลขคนละตัวกับหน้าเงินรอลงทุน
+  const powderPerRound = nextLegTHBOf(plan, countSymbols(investments));
 
   const cycleViews = cycles.map((cycle) => ({
     cycle,
@@ -501,7 +501,7 @@ export default function CyclesScreen() {
         {powderPerRound == null && cycles.length > 0 && (
           <Text style={styles.hint}>
             ยังคำนวณ "เหลือลงได้อีกกี่ไม้" ไม่ได้ — ไปที่ พอร์ต → เงินรอลงทุน
-            จดยอดเงินที่พร้อมลงและตั้งจำนวนครั้งต่อเดือนก่อน
+            จดยอดเงินที่พร้อมลงและตั้ง "ไม้ทั้งก้อน" ก่อน
           </Text>
         )}
 

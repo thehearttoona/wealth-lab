@@ -41,6 +41,11 @@ const TH_MONTHS_SHORT = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', '
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
+// ความกว้างขั้นต่ำของ "พื้นที่หน้า" (หักไซด์บาร์แล้ว) ที่คุ้มจะแบ่งเป็นสองคอลัมน์
+// ต่ำกว่านี้คอลัมน์ลิสต์จะเหลือไม่ถึง ~300px แล้วชื่อหมวด/คำอธิบาย/ยอดเงินจะเบียดกันจนอ่านไม่ออก
+// (จอ 1024 หักไซด์บาร์ 200 เหลือ 824 → ยังเรียงลงมาเหมือนเดิม)
+const TWO_COL_MIN_PANE = 940;
+
 // สีไฮไลต์ช่องปฏิทินวันที่มีแต่รายรับ — เขียวอ่อนให้เข้ากับธีมสว่าง (เดิมเป็น #0F2A1E เขียวเข้มจนตัวเลขจม)
 const INCOME_DAY_BG = '#E3F3EC';
 const INCOME_DAY_BORDER = '#B7E0CE';
@@ -48,8 +53,11 @@ const INCOME_DAY_TEXT = '#136B47';
 
 export default function HomeScreen() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
-  const { isDesktop } = useResponsive();
+  const { isDesktop, width, sidebarWidth } = useResponsive();
   const insets = useSafeAreaInsets();
+  // เดสก์ท็อปมีไซด์บาร์ค้างอยู่เสมอ ความกว้างจริงของหน้าจึงเป็น width ลบไซด์บาร์
+  const paneWidth = isDesktop ? width - sidebarWidth : width;
+  const twoCol = isDesktop && paneWidth >= TWO_COL_MIN_PANE;
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [weekTotal, setWeekTotal] = useState(0);
   const [totalMonth, setTotalMonth] = useState(0);
@@ -857,29 +865,135 @@ export default function HomeScreen() {
     );
   };
 
+  // ── แท็บ ปฏิทิน / รายสัปดาห์ ──
+  // แยกออกมาเพื่อให้วางได้ทั้งในคอลัมน์ซ้ายของเดสก์ท็อปและแบบเรียงลงมาบนมือถือ โดยไม่ต้องเขียน JSX ซ้ำ
+  const renderViewTabs = () => (
+    <View style={[styles.viewTabRow, twoCol && styles.viewTabRowDesktop]}>
+      {([
+        { key: 'calendar' as const, label: 'ปฏิทิน', icon: 'calendar-outline' as const },
+        { key: 'weekly' as const, label: 'รายสัปดาห์', icon: 'list-outline' as const },
+      ]).map((t) => {
+        const active = calendarView === t.key;
+        return (
+          <TouchableOpacity
+            key={t.key}
+            style={[styles.viewTab, active && styles.viewTabActive]}
+            onPress={() => setCalendarView(t.key)}
+          >
+            <Ionicons name={t.icon} size={15} color={active ? COLORS.primary : COLORS.textSecondary} />
+            <Text style={[styles.viewTabText, active && styles.viewTabTextActive]}>{t.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+
+  const renderIncomeList = () => {
+    if (filteredIncomes.length === 0) return null;
+    return (
+      <View style={[styles.incomeSection, isDesktop && !twoCol && { flex: 1, minWidth: 0 }, twoCol && styles.listCardDesktop]}>
+        <View style={[styles.listHeader, twoCol && styles.listHeaderDesktop]}>
+          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => setShowIncomeList(v => !v)}>
+            <Text style={styles.listTitle}>รายรับ ({filteredIncomes.length})</Text>
+            <Ionicons name={showIncomeList ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            {incomeSelectMode ? (
+              <>
+                {selectedIncomeIds.size > 0 && (
+                  <TouchableOpacity onPress={handleDeleteSelectedIncomes} style={styles.deleteSelectedBtn}>
+                    <Ionicons name="trash-outline" size={12} color={COLORS.error} />
+                    <Text style={styles.deleteSelectedText}>ลบ ({selectedIncomeIds.size})</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={() => { setIncomeSelectMode(false); setSelectedIncomeIds(new Set()); }} style={styles.cancelSelectBtn}>
+                  <Text style={styles.cancelSelectText}>ยกเลิก</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity onPress={() => setIncomeSelectMode(true)} style={styles.selectModeBtn}>
+                  <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
+                  <Text style={styles.selectModeText}>เลือก</Text>
+                </TouchableOpacity>
+                <Text style={styles.incomeTotalText}>{formatCurrency(filteredIncomes.reduce((s, i) => s + i.amount, 0))}</Text>
+              </>
+            )}
+          </View>
+        </View>
+        {showIncomeList && filteredIncomes.map((item) => renderIncomeItem(item))}
+      </View>
+    );
+  };
+
+  const renderExpenseList = () => (
+    <View style={[isDesktop && !twoCol && { flex: 1, minWidth: 0 }, twoCol && styles.listCardDesktop]}>
+      <View style={[styles.listHeader, twoCol && styles.listHeaderDesktop]}>
+        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => setShowExpenseList(v => !v)}>
+          <Text style={styles.listTitle}>
+            {selectedDate ? `รายจ่าย (${filteredExpenses.length})` : `สัปดาห์นี้ · ${filteredExpenses.length} รายการ`}
+          </Text>
+          <Ionicons name={showExpenseList ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
+        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          {expenseSelectMode ? (
+            <>
+              {selectedExpenseIds.size > 0 && (
+                <TouchableOpacity onPress={handleDeleteSelectedExpenses} style={styles.deleteSelectedBtn}>
+                  <Ionicons name="trash-outline" size={12} color={COLORS.error} />
+                  <Text style={styles.deleteSelectedText}>ลบ ({selectedExpenseIds.size})</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => { setExpenseSelectMode(false); setSelectedExpenseIds(new Set()); }} style={styles.cancelSelectBtn}>
+                <Text style={styles.cancelSelectText}>ยกเลิก</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity onPress={() => setExpenseSelectMode(true)} style={styles.selectModeBtn}>
+                <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
+                <Text style={styles.selectModeText}>เลือก</Text>
+              </TouchableOpacity>
+              <Text style={styles.expenseTotalText}>{formatCurrency(filteredExpenses.reduce((s, e) => s + e.amount, 0))}</Text>
+            </>
+          )}
+        </View>
+      </View>
+
+      {showExpenseList && (
+        <View style={styles.listContainer}>
+          {filteredExpenses.length > 0 ? (
+            filteredExpenses.map((item) => <View key={item.id}>{renderExpenseItem(item)}</View>)
+          ) : (
+            <Text style={styles.emptyText}>
+              {selectedDate ? 'วันนี้ยังไม่มีรายจ่าย' : 'ยังไม่มีรายจ่าย'}
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
+  );
+
   return (
     <View style={styles.screen}>
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       {/* เดสก์ท็อปไม่มีเพดานความกว้างแล้ว — เนื้อหาใช้เต็ม pane (ดู utils/responsive.ts) */}
       <View>
 
-        {/* ── Header ── */}
-        <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
-          {/* เดสก์ท็อปมีโลโก้อยู่บน sidebar แล้ว โชว์ซ้ำในนี้จะซ้อนกันเปล่า ๆ */}
-          {!isDesktop ? (
+        {/* ── Header ──
+            เดสก์ท็อปมีโลโก้อยู่บนไซด์บาร์แล้ว และปุ่มเพิ่มรายการรวมเป็น FAB มุมขวาล่างไปแล้ว (ข้อ 1.3)
+            แถบนี้บนเดสก์ท็อปจึงเหลือแค่กล่องเปล่ากับเส้นขอบ กินที่ฟรี ๆ — ไม่ต้อง render เลย */}
+        {!isDesktop && (
+          <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
             <Image
               source={require('../../assets/brand-pakmutwealth-mark.png')}
               style={styles.topBarLogo}
               resizeMode="contain"
               alt="Pakmut Wealth"
             />
-          ) : (
             <View />
-          )}
-          {/* ปุ่มเพิ่มรายรับ/รายจ่ายรวมเป็นปุ่มเดียวที่ลอยอยู่มุมขวาล่างแล้ว (ข้อ 1.3)
-              ไม่มีชุดปุ่มบน topBar อีก ไม่งั้นเป็นทางเข้าเดียวกันสองที่ */}
-          <View />
-        </View>
+          </View>
+        )}
 
         {/* ── สรุปเดือนนี้: กล่องเดียว ──
             เดิมเป็นการ์ด 3 ใบแยกกัน (รายรับ/รายจ่าย/คงเหลือ) ซึ่งบนมือถือกลายเป็น 3 กล่องซ้อนกัน
@@ -892,8 +1006,8 @@ export default function HomeScreen() {
           const viewBalance = viewIncome - viewExpense;
           const monthLabel = new Date(calendarMonth.year, calendarMonth.month, 1).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
           return (
-            <View style={styles.summaryContainer}>
-              <View style={styles.summaryBox}>
+            <View style={[styles.summaryContainer, isDesktop && styles.summaryContainerDesktop]}>
+              <View style={[styles.summaryBox, isDesktop && styles.summaryBoxDesktop]}>
                 <Text style={styles.summaryBoxMonth}>{monthLabel}</Text>
                 <View style={styles.summaryBoxRow}>
                   <View style={styles.summaryCell}>
@@ -934,121 +1048,35 @@ export default function HomeScreen() {
           );
         })()}
 
-        {/* ── ปฏิทิน / รายสัปดาห์ เป็นแท็บ ──
-            เดิมบนมือถือวางต่อกันลงมา ต้องเลื่อนผ่านปฏิทินทั้งใบกว่าจะถึงตารางสัปดาห์
-            บนเดสก์ท็อปเป็นสองคอลัมน์ ตารางสัปดาห์เลยถูกบีบเหลือ ~250px
-            ทั้งสองมุมมองตอบคำถามคนละข้อ ไม่ต้องเห็นพร้อมกัน — เริ่มที่ปฏิทินเสมอ */}
-        <View style={styles.viewTabRow}>
-          {([
-            { key: 'calendar' as const, label: 'ปฏิทิน', icon: 'calendar-outline' as const },
-            { key: 'weekly' as const, label: 'รายสัปดาห์', icon: 'list-outline' as const },
-          ]).map((t) => {
-            const active = calendarView === t.key;
-            return (
-              <TouchableOpacity
-                key={t.key}
-                style={[styles.viewTab, active && styles.viewTabActive]}
-                onPress={() => setCalendarView(t.key)}
-              >
-                <Ionicons name={t.icon} size={15} color={active ? COLORS.primary : COLORS.textSecondary} />
-                <Text style={[styles.viewTabText, active && styles.viewTabTextActive]}>{t.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-        {calendarView === 'calendar' ? renderCalendar() : renderWeeklySummary()}
+        {/* ── ปฏิทิน / รายสัปดาห์ + ลิสต์รายการ ──
+            ทั้งสองมุมมองของปฏิทินตอบคำถามคนละข้อ ไม่ต้องเห็นพร้อมกัน — เริ่มที่ปฏิทินเสมอ
 
-        {/* ── Income / Expense Lists ── */}
-        <View style={isDesktop ? styles.desktopListsRow : undefined}>
-
-        {/* ── Income List ── */}
-        {filteredIncomes.length > 0 && (
-          <View style={[styles.incomeSection, isDesktop && { flex: 1 }]}>
-            <View style={styles.listHeader}>
-              <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => setShowIncomeList(v => !v)}>
-                <Text style={styles.listTitle}>Income ({filteredIncomes.length})</Text>
-                <Ionicons name={showIncomeList ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
-              </TouchableOpacity>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                {incomeSelectMode ? (
-                  <>
-                    {selectedIncomeIds.size > 0 && (
-                      <TouchableOpacity onPress={handleDeleteSelectedIncomes} style={styles.deleteSelectedBtn}>
-                        <Ionicons name="trash-outline" size={12} color={COLORS.error} />
-                        <Text style={styles.deleteSelectedText}>Delete ({selectedIncomeIds.size})</Text>
-                      </TouchableOpacity>
-                    )}
-                    <TouchableOpacity onPress={() => { setIncomeSelectMode(false); setSelectedIncomeIds(new Set()); }} style={styles.cancelSelectBtn}>
-                      <Text style={styles.cancelSelectText}>ยกเลิก</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <>
-                    <TouchableOpacity onPress={() => setIncomeSelectMode(true)} style={styles.selectModeBtn}>
-                      <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
-                      <Text style={styles.selectModeText}>เลือก</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.incomeTotalText}>{formatCurrency(filteredIncomes.reduce((s, i) => s + i.amount, 0))}</Text>
-                  </>
-                )}
-              </View>
+            บนจอกว้าง (pane ≥ 940 หลังหักไซด์บาร์) แบ่งเป็นสองคอลัมน์:
+            ซ้าย = ปฏิทิน (ของที่สูงและต้องการความกว้าง), ขวา = ลิสต์รายการของวัน/สัปดาห์ที่เลือก
+            เดิมเรียงลงมาคอลัมน์เดียวเหมือนมือถือ ปฏิทินเลยยืดจนช่องวันกว้างเกิน 200px
+            และต้องเลื่อนผ่านปฏิทินทั้งใบกว่าจะเห็นรายการ ทั้งที่ครึ่งจอขวาว่างเปล่า
+            แคบกว่านั้นยังเรียงลงมาเหมือนเดิม (ดู TWO_COL_MIN_PANE) */}
+        {twoCol ? (
+          <View style={styles.desktopGrid}>
+            <View style={styles.desktopColMain}>
+              {renderViewTabs()}
+              {calendarView === 'calendar' ? renderCalendar() : renderWeeklySummary()}
             </View>
-            {showIncomeList && filteredIncomes.map((item) => renderIncomeItem(item))}
+            <View style={styles.desktopColSide}>
+              {renderIncomeList()}
+              {renderExpenseList()}
+            </View>
           </View>
+        ) : (
+          <>
+            {renderViewTabs()}
+            {calendarView === 'calendar' ? renderCalendar() : renderWeeklySummary()}
+            <View style={isDesktop ? styles.desktopListsRow : undefined}>
+              {renderIncomeList()}
+              {renderExpenseList()}
+            </View>
+          </>
         )}
-
-        {/* ── Expense List Header ── */}
-        <View style={[{ flex: isDesktop ? 1 : undefined }]}>
-        <View style={styles.listHeader}>
-          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => setShowExpenseList(v => !v)}>
-            <Text style={styles.listTitle}>
-              {selectedDate
-                ? `Expenses (${filteredExpenses.length})`
-                : viewMode === 'week'
-                ? `This Week · ${filteredExpenses.length} items`
-                : `Expenses (${filteredExpenses.length})`}
-            </Text>
-            <Ionicons name={showExpenseList ? 'chevron-up' : 'chevron-down'} size={10} color={COLORS.textSecondary} />
-          </TouchableOpacity>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            {expenseSelectMode ? (
-              <>
-                {selectedExpenseIds.size > 0 && (
-                  <TouchableOpacity onPress={handleDeleteSelectedExpenses} style={styles.deleteSelectedBtn}>
-                    <Ionicons name="trash-outline" size={12} color={COLORS.error} />
-                    <Text style={styles.deleteSelectedText}>Delete ({selectedExpenseIds.size})</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity onPress={() => { setExpenseSelectMode(false); setSelectedExpenseIds(new Set()); }} style={styles.cancelSelectBtn}>
-                  <Text style={styles.cancelSelectText}>ยกเลิก</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <TouchableOpacity onPress={() => setExpenseSelectMode(true)} style={styles.selectModeBtn}>
-                  <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
-                  <Text style={styles.selectModeText}>เลือก</Text>
-                </TouchableOpacity>
-                <Text style={styles.expenseTotalText}>{formatCurrency(filteredExpenses.reduce((s, e) => s + e.amount, 0))}</Text>
-              </>
-            )}
-          </View>
-        </View>
-
-        {/* ── Expense List ── */}
-        {showExpenseList && <View style={styles.listContainer}>
-          {filteredExpenses.length > 0 ? (
-            filteredExpenses.map((item) => (
-              <View key={item.id}>{renderExpenseItem(item)}</View>
-            ))
-          ) : (
-            <Text style={styles.emptyText}>
-              {selectedDate ? 'วันนี้ยังไม่มีรายจ่าย' : 'ยังไม่มีรายจ่าย'}
-            </Text>
-          )}
-        </View>}
-        </View>
-        </View>
 
       </View>
     </ScrollView>
@@ -1193,6 +1221,42 @@ const styles = StyleSheet.create({
     padding: 24
   },
 
+  // ── เดสก์ท็อปจอกว้าง: ปฏิทินซ้าย / ลิสต์ขวา ──
+  // แก้ความโปร่งด้วยการเพิ่มคอลัมน์ ไม่ใช่ใส่เพดานความกว้าง (ดู utils/responsive.ts)
+  desktopGrid: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+  },
+  // flex ต้องมากับ minWidth:0 เสมอบนเว็บ ไม่งั้นเนื้อหายาว (ชื่อหมวด/ยอดเงิน) ดันคอลัมน์จนล้นแถว
+  desktopColMain: {
+    flex: 2,
+    minWidth: 0,
+  },
+  desktopColSide: {
+    flex: 1,
+    minWidth: 0,
+  },
+  // ในโหมดสองคอลัมน์ ลิสต์เป็นการ์ดของตัวเองให้เข้าชุดกับกรอบปฏิทินฝั่งซ้าย
+  listCardDesktop: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginTop: 0,
+    marginBottom: 16,
+  },
+  // หัวลิสต์บนมือถือเว้นบน 48 เพื่อคั่นจากปฏิทินที่อยู่เหนือขึ้นไป
+  // ในคอลัมน์ขวาไม่มีอะไรอยู่เหนือมัน ช่องว่างนั้นเลยกลายเป็นหัวการ์ดลอย
+  listHeaderDesktop: {
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+  },
+  viewTabRowDesktop: {
+    paddingHorizontal: 0,
+  },
+
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1230,6 +1294,17 @@ const styles = StyleSheet.create({
   summaryContainer: {
     paddingHorizontal: 16,
     paddingVertical: 16,
+  },
+  // เดสก์ท็อปไม่มี topBar แล้ว กล่องสรุปจึงเป็นของชิ้นแรกของหน้า ต้องเว้นบนเอง
+  // ระยะขอบ 24 ให้ตรงกับ desktopGrid ข้างล่าง คอลัมน์จะได้เรียงเป็นเส้นเดียวกัน
+  summaryContainerDesktop: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 20,
+  },
+  summaryBoxDesktop: {
+    paddingVertical: 22,
+    paddingHorizontal: 24,
   },
   // กล่องเดียวสำหรับสามตัวเลข — เส้นคั่นแทนการแยกเป็นสามการ์ด
   summaryBox: {

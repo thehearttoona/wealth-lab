@@ -15,6 +15,7 @@ import {
   TextStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -45,8 +46,12 @@ import {
   formatCurrency,
   formatCurrencyWithType,
   convertToTHB,
+  convertFromTHB,
   toChristianYear,
   COLORS,
+  RADIUS,
+  assetColor,
+  assetTint,
 } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
 import { fetchPricesForItems, isPriceRefreshable, getTwoRedDays } from '../services/priceApi';
@@ -72,6 +77,7 @@ import { getUserProfile } from '../services/userProfileStorage';
 import { InvestmentCycle, basketLabel } from '../types/cycle';
 import { getOpenCycles } from '../services/cycleStorage';
 import { legsOfCycle, summarizeCycle, canAddLeg } from '../utils/cycles';
+import { powderStatus, countSymbols } from '../utils/dryPowder';
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -120,13 +126,13 @@ const PriceRefreshStatus: React.FC<{
     : null;
   const leftMs = nextRefreshAt ? nextRefreshAt.getTime() - Date.now() : null;
   // ครบรอบแล้วแต่ยังไม่ได้ยิง (แท็บซ่อนอยู่ / รอ tick ถัดไป) — บอกว่ากำลังจะยิง ไม่ใช่นับเป็นเลขติดลบ
-  const countdown = leftMs == null ? null : leftMs <= 0 ? 'กำลังจะอัปเดต' : `อีก ${formatCountdown(leftMs)}`;
+  const countdown = leftMs == null ? null : leftMs <= 0 ? 'กำลังจะอัปเดต' : `${formatCountdown(leftMs)}`;
 
   const label = isUpdating
     ? 'กำลังดึงราคา...'
     : !at
       ? 'ยังไม่ได้ดึงราคารอบนี้'
-      : `ราคาอัปเดต ${at}${countdown ? ` · ${countdown}` : ''}`;
+      : `${countdown ? `${countdown}` : ''}`;
 
   return (
     <View style={styles.priceStatusRow}>
@@ -160,8 +166,12 @@ const GRID_GAP = 12;
 const GRID_PADDING = 16;
 // เพดานคอลัมน์ — จอ 5K ที่ 12 คอลัมน์อ่านไม่ทันอยู่ดี และ FlatList แถวละ 12 ใบเริ่มหนัก
 const GRID_MAX_COLS = 6;
-// การ์ดสรุปด้านหัว (เป้าหมาย/ภาษี/ผลงานจริง/เงินรอลงทุน) — กว้างกว่าการ์ดรายการเพราะมี KPI 3 ช่อง
-const CARD_GRID_BASIS = 520;
+// ── แถวสรุปของพอร์ต: เมนู | ถึงคิวลงไม้ ──
+// แบ่งครึ่งเท่ากันตั้งแต่เดสก์ท็อป (≥1024) เดิมเป็นความกว้างคงที่ 380/520 ซึ่งทำให้
+// การ์ดซ้ายแคบค้างที่ 380 ส่วนขวากินที่เหลือทั้งหมด — จอยิ่งกว้าง สองใบยิ่งไม่เท่ากัน
+// เป็น % ไม่ใช่ flexBasis: 0 เพราะถ้าไม่มีการ์ด "ถึงคิวลงไม้" (ไม่มีคริปโต/หุ้นให้เช็ค)
+// เมนูที่เหลือใบเดียวต้องคงความกว้างครึ่งจอ ไม่ใช่ยืดเป็นแถบขวางจอ
+const SUMMARY_COL_BASIS = '50%';
 
 // ── เครื่องหมายแพลตฟอร์มมุมขวาบนของการ์ด ──
 // ไม่ได้ดึงโลโก้จริงจากเน็ต: ชื่อแพลตฟอร์มเป็นข้อความที่ผู้ใช้พิมพ์เองได้อิสระ (user_platforms)
@@ -206,6 +216,23 @@ const platformMark = (name: string): { short: string; color: string } => {
 };
 
 /**
+ * ทุกยอดที่แปลงเป็นบาทแล้วต้องมี ฿ นำหน้าเสมอ — พอร์ตถือหลายสกุล ถ้าปล่อยเป็นเลขเปล่า
+ * ยอดที่แปลงแล้วกับยอดในสกุลเดิมจะหน้าตาเหมือนกันเป๊ะ แยกไม่ออกว่าตัวไหนเป็นตัวไหน
+ * (ฝั่งสกุลเดิมใช้ formatCurrencyWithType ซึ่งใส่สัญลักษณ์ของสกุลนั้นให้อยู่แล้ว)
+ */
+const baht = (n: number, showPlus = false): string => {
+  const sign = n < 0 ? '-' : showPlus ? '+' : '';
+  return `${sign}฿${formatCurrency(Math.abs(n))}`;
+};
+
+/**
+ * ยอดบาทเดียวกัน แปลงเป็นดอลลาร์ด้วย "เรตที่ผู้ใช้ตั้งเอง" (ชุดเดียวกับ convertToTHB
+ * ที่ยอดรวมทั้งแอปใช้อยู่) ไม่ใช่เรตสดจาก priceApi — เลขสองฝั่งจึงกลับไปกลับมาได้ตรงเสมอ
+ * ยังไม่ได้ตั้งเรต USD ในหน้าจัดการสกุลเงิน = ใช้ค่าเริ่มต้น 35 เหมือนที่ทั้งแอปใช้
+ */
+const usd = (thb: number): string => formatCurrencyWithType(convertFromTHB(thb, 'USD'), 'USD');
+
+/**
  * บรรทัดเมนูของพอร์ต: ชื่อเรื่อง + ตัวเลขล่าสุด + บรรทัดขยายความ แล้วกดเข้าไปหน้าเต็ม
  *
  * ⚠️ ต้องอยู่นอก PortfolioScreen — คอมโพเนนต์ที่ประกาศในตัว render จะเป็น "ชนิดใหม่"
@@ -217,25 +244,39 @@ const MenuRow: React.FC<{
   value: string;
   sub: string;
   valueNegative?: boolean;
+  /** สีประจำเรื่องของแถวนี้ — วงไอคอนใช้สีนี้ ไล่ดูเมนูแล้วแยกออกก่อนอ่านตัวหนังสือ */
+  tone?: string;
   /** แถวบนสุดของการ์ด — เส้นคั่นเป็น "ขอบบน" ของทุกแถวยกเว้นแถวแรก
    *  (ใช้ขอบล่างไม่ได้ เพราะแถวสุดท้ายเป็นแถวที่ซ่อนได้ตามเงื่อนไข แล้วจะเหลือเส้นซ้อนขอบการ์ด) */
   first?: boolean;
   onPress: () => void;
-}> = ({ icon, title, value, sub, valueNegative, first, onPress }) => (
-  <TouchableOpacity style={[styles.menuRow, first && styles.menuRowFirst]} onPress={onPress}>
-    <Ionicons name={icon} size={18} color={COLORS.primary} style={styles.menuRowIcon} />
-    <View style={styles.menuRowMain}>
-      <Text style={styles.menuRowTitle}>{title}</Text>
-      <Text style={styles.menuRowSub} numberOfLines={2}>{sub}</Text>
-    </View>
-    <Text style={[styles.menuRowValue, valueNegative && styles.menuRowValueNeg]}>{value}</Text>
-    <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
-  </TouchableOpacity>
-);
+}> = ({ icon, title, value, sub, valueNegative, tone, first, onPress }) => {
+  const color = tone || COLORS.primary;
+  return (
+    <TouchableOpacity
+      style={[styles.menuRow, first && styles.menuRowFirst]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${title} ${value}`}
+    >
+      <View style={[styles.menuRowIcon, { backgroundColor: `${color}16` }]}>
+        <Ionicons name={icon} size={18} color={color} />
+      </View>
+      <View style={styles.menuRowMain}>
+        <Text style={styles.menuRowTitle}>{title}</Text>
+        <Text style={styles.menuRowSub} numberOfLines={2}>{sub}</Text>
+      </View>
+      <Text style={[styles.menuRowValue, valueNegative && styles.menuRowValueNeg]}>{value}</Text>
+      <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+    </TouchableOpacity>
+  );
+};
 
 export default function PortfolioScreen() {
   const navigation = useNavigation<PortfolioScreenNavigationProp>();
   const { isDesktop, width: windowWidth, sidebarWidth } = useResponsive();
+  // ใช้กับปุ่มลอยมุมขวาล่างเท่านั้น — เดสก์ท็อปไม่มีแถบแท็บมากันขอบล่างให้
+  const insets = useSafeAreaInsets();
   // ── กริดเต็มจอ: ไม่จำกัด max-width แล้ว จอยิ่งกว้างยิ่งได้จำนวนคอลัมน์มากขึ้น ──
   // ถ้าปล่อยเต็มจอโดยคง numColumns={2} ไว้ การ์ดจะอ้วน ~1140px บนจอ 2560 (แย่กว่าเดิม)
   // จึงต้องคิดคอลัมน์จากความกว้างจริงของ pane โดยล็อกความกว้างการ์ดไว้ราว ๆ COL_TARGET
@@ -908,10 +949,16 @@ export default function PortfolioScreen() {
         <TouchableOpacity
           style={styles.investmentContent}
           onPress={() => handleEdit(item)}
+          accessibilityRole="button"
+          accessibilityLabel={`แก้ไข ${item.symbol || item.name}`}
         >
           <View style={styles.investmentLeft}>
             <View style={styles.investmentHeader}>
-              <Ionicons name={getTypeIcon(item.type) as any} size={24} color={COLORS.primary} />
+              {/* วงไอคอนสีประจำชนิดสินทรัพย์ — ไล่ดูพอร์ตยาว ๆ แล้วแยกคริปโต/หุ้น/ทองออกจากกัน
+                  ได้ตั้งแต่ยังไม่อ่านตัวหนังสือ (ดู ASSET_COLORS ใน utils/constants.ts) */}
+              <View style={[styles.investmentIconBubble, { backgroundColor: assetTint(item.type) }]}>
+                <Ionicons name={getTypeIcon(item.type) as any} size={20} color={assetColor(item.type)} />
+              </View>
               {/* ชื่อย่อเป็นตัวหลัก ชื่อเต็มเป็นตัวรอง — เวลาไล่ดูพอร์ตคนจำ/หาด้วยตัวย่อ
                   (BTC, PTT) ไม่ใช่ชื่อเต็ม และชื่อเต็มยาวกว่าจนกินพื้นที่การ์ด
                   ไม่มีตัวย่อ (ทอง/อื่น ๆ) → ชื่อเต็มขึ้นเป็นตัวหลักแทน ไม่ปล่อยหัวการ์ดว่าง */}
@@ -1005,13 +1052,27 @@ export default function PortfolioScreen() {
               </View>
             )}
             {/* ตัวเลขอยู่กลางพื้นที่ที่เหลือ (flex:1) — ไม่งั้นป้ายแพลตฟอร์มดันชุดตัวเลขลงล่าง */}
+            {/* กำไร/ขาดทุนเป็น "ชิป" ไม่ใช่ตัวหนังสือเปล่า — พื้นสีอ่อน + ลูกศร ทำให้รู้ทิศทาง
+                ตั้งแต่ยังไม่ทันอ่านเลข และไม่ต้องพึ่งสีเขียว/แดงอย่างเดียว (เผื่อตาบอดสี) */}
             <View style={styles.investmentNums}>
-              <Text style={styles.investmentValue}>{formatCurrency(value)}</Text>
+              <Text style={styles.investmentValue}>{baht(value)}</Text>
+              <View
+                style={[
+                  styles.pnlChip,
+                  { backgroundColor: `${isProfit ? COLORS.success : COLORS.error}14` },
+                ]}
+              >
+                <Ionicons
+                  name={isProfit ? 'trending-up' : 'trending-down'}
+                  size={13}
+                  color={isProfit ? COLORS.success : COLORS.error}
+                />
+                <Text style={[styles.pnlChipText, isProfit ? styles.profitPositive : styles.profitNegative]}>
+                  {isProfit ? '+' : ''}{profitPercent.toFixed(2)}%
+                </Text>
+              </View>
               <Text style={[styles.investmentProfit, isProfit ? styles.profitPositive : styles.profitNegative]}>
-                {isProfit ? '+' : ''}{formatCurrency(profit)}
-              </Text>
-              <Text style={[styles.investmentPercent, isProfit ? styles.profitPositive : styles.profitNegative]}>
-                {isProfit ? '+' : ''}{profitPercent.toFixed(2)}%
+                {baht(profit, true)}
               </Text>
             </View>
           </View>
@@ -1133,10 +1194,11 @@ export default function PortfolioScreen() {
 
   // ── เงินต่อไม้: อ่านอย่างเดียวจากแผน (ตั้งค่าที่หน้า "เงินรอลงทุน") ──
   // ที่ยังต้องคิดในหน้านี้ เพราะการ์ด "ถึงคิวลงไม้" ต้องตอบตรงจุดว่ารอบนี้ลงเพิ่มได้อีกกี่ไม้
-  // ใช้กรอบ 1 เดือนเป็นฐาน — ตัวเดียวกับที่หน้าเงินรอลงทุน/รอบลงทุนใช้
+  // คิดที่ utils/dryPowder ที่เดียว — ตัวหารคือไม้ที่ยังเหลือ ไม่ใช่ไม้ทั้งก้อน
+  // จำนวนหุ้นต้องส่งไปด้วย (สูตรหารด้วย หุ้น × ครั้งต่อหุ้น) ไม่งั้นการ์ดนี้ได้เลขคนละตัวกับหน้าเงินรอลงทุน
   const dryPowder = plan?.dryPowder && plan.dryPowder > 0 ? plan.dryPowder : 0;
-  const dcaRoundsCount = plan?.dcaRounds && plan.dcaRounds > 0 ? plan.dcaRounds : null;
-  const powderPerRound = dcaRoundsCount && dryPowder > 0 ? dryPowder / dcaRoundsCount : null;
+  const powderStat = powderStatus(plan, countSymbols(investments));
+  const powderPerRound = powderStat.nextLegTHB != null && powderStat.nextLegTHB > 0 ? powderStat.nextLegTHB : null;
 
   // สถานะของรอบที่เปิดอยู่ — ใช้เฉพาะเป็นบริบทของการ์ด "ถึงคิวลงไม้" และบรรทัดสรุปในเมนู
   const cycleViews = cycles.map((cycle) => ({
@@ -1329,30 +1391,29 @@ export default function PortfolioScreen() {
           {/* ถอดออกแล้ว 3 ปุ่ม (ข้อ 2.4.1): รีเฟรชราคา → ย้ายไปอยู่ติดกับเวลานับถอยหลังบนหัวพอร์ต
               · บัญชี → เข้าได้จาก โปรไฟล์ → บัญชี  · ของที่อยากได้ → มีแถวเมนูของตัวเองอยู่แล้ว
               แถวนี้เหลือเฉพาะสิ่งที่ทำกับ "รายการลงทุน" ตรง ๆ: เพิ่ม / จัดกลุ่มตามแพลตฟอร์ม / แก้รายการตัวเลือก */}
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => navigation.navigate('AddInvestment', {})}
-          >
-            <Ionicons name="add-circle-outline" size={18} color="#ffffff" />
-            <Text style={styles.addButtonText}></Text>
-          </TouchableOpacity>
+          {/* ⚠️ ทั้งสามปุ่มเคยเป็น <Text></Text> ว่างเปล่า = ไอคอนลอย ๆ ที่เดาไม่ออกว่าอันไหนคืออะไร
+              โดยเฉพาะสองปุ่มขวาที่หน้าตาเหมือนกันเป๊ะ ต่างแค่รูปไอคอน
+              ปุ่ม "เพิ่ม" ย้ายไปเป็นปุ่มลอยมุมขวาล่างแล้ว (ดูท้ายไฟล์) — แถวนี้จึงเหลือเฉพาะ
+              ของที่ทำนาน ๆ ครั้ง ไม่ต้องอยู่ในสายตาตลอดเวลา */}
           <TouchableOpacity
             style={[styles.addButton, styles.updateButton]}
             onPress={() => navigation.navigate('ManageByPlatform')}
+            accessibilityRole="button"
+            accessibilityLabel="จัดกลุ่มตามแพลตฟอร์ม"
           >
             <Ionicons name="layers-outline" size={18} color={COLORS.primary} />
-            <Text style={styles.updateButtonText}></Text>
+            <Text style={styles.updateButtonText}> ตามแพลตฟอร์ม</Text>
           </TouchableOpacity>
           {/* จัดการรายการสกุลเงิน/แพลตฟอร์มที่เลือกได้ตอนบันทึกการลงทุน */}
-          <TouchableOpacity
-            style={[styles.addButton, styles.updateButton]}
-            onPress={() => navigation.navigate('ManageCatalog')}
-          >
-            <Ionicons name="options-outline" size={18} color={COLORS.primary} />
-            <Text style={styles.updateButtonText}></Text>
-          </TouchableOpacity>
         </View>
 
+        {/* ── แถวสรุปของพอร์ต ──
+            เดสก์ท็อปวางสองใบข้างกัน: ซ้าย = เมนู (ตัวเลขล่าสุด + ทางเข้า)
+            ขวา = "ถึงคิวลงไม้" (สิ่งที่ต้องลงมือวันนี้)
+            สองใบแบ่งครึ่งเท่ากัน (ดู SUMMARY_COL_BASIS) เมนูเป็นการ์ดเตี้ย ๆ วางเดี่ยว ๆ
+            เลยเหลือที่ว่างครึ่งจอทางขวา แล้วดันการ์ดแจ้งเตือนลงไปใต้เส้นพับ
+            จอที่แคบกว่านั้น (และแท็บเล็ต 768–1023) กริดจะ wrap กลับเป็นซ้อนบนล่างเอง */}
+        <View style={isDesktop ? styles.cardGrid : undefined}>
         {/* ── เมนูของพอร์ต ──
             เดิมทุกเรื่อง (ผลงานที่ขายแล้ว / รอบลงทุน / เงินรอลงทุน / ภาษี / ของที่อยากได้)
             เป็นการ์ดเต็มใบเรียงต่อกันอยู่หน้านี้ ต้องเลื่อนผ่านทั้งหมดกว่าจะถึงรายการลงทุน
@@ -1362,11 +1423,8 @@ export default function PortfolioScreen() {
           <MenuRow
             icon="ribbon-outline"
             title="ผลงานที่ขายแล้ว"
-            value={
-              realized.tradeCount > 0
-                ? `${realized.totalPnlTHB >= 0 ? '+' : ''}${formatCurrency(realized.totalPnlTHB)}`
-                : '—'
-            }
+            tone={COLORS.success}
+            value={realized.tradeCount > 0 ? baht(realized.totalPnlTHB, true) : '—'}
             valueNegative={realized.totalPnlTHB < 0}
             sub={
               realized.tradeCount > 0
@@ -1379,6 +1437,7 @@ export default function PortfolioScreen() {
           <MenuRow
             icon="repeat-outline"
             title="รอบลงทุน"
+            tone={assetColor('fund')}
             value={cycleViews.length > 0 ? `${cycleViews.length} รอบ` : '—'}
             sub={
               cycleViews.length > 0
@@ -1402,11 +1461,16 @@ export default function PortfolioScreen() {
           <MenuRow
             icon="cash-outline"
             title="เงินรอลงทุน"
-            value={dryPowder > 0 ? `฿${formatCurrency(dryPowder)}` : '—'}
-            sub={
+            tone={COLORS.accentText}
+            value={
               powderPerRound != null
-                ? `ลงได้ครั้งละ ฿${formatCurrency(powderPerRound)} · ${dcaRoundsCount} ครั้ง/เดือน`
-                : 'ยังไม่ได้จดยอด/ตั้งจำนวนครั้ง'
+                ? `${baht(powderPerRound)} (${usd(powderPerRound)})\n${powderStat.legsPlanned} ครั้ง`
+                : '—'
+            }
+            sub={
+              dryPowder > 0
+                ? `${baht(dryPowder)} (${usd(dryPowder)})`
+                : powderStat.reason ?? 'ยังไม่ได้จดยอด'
             }
             onPress={() => navigation.navigate('DryPowder')}
           />
@@ -1415,11 +1479,12 @@ export default function PortfolioScreen() {
             <MenuRow
               icon="receipt-outline"
               title={`ภาษีจากกำไรที่ขาย ปี ${currentTaxYear}`}
-              value={formatCurrency(taxThisYear.tax)}
+              tone={COLORS.warning}
+              value={baht(taxThisYear.tax)}
               sub={
                 !taxProfile
                   ? 'ยังไม่ได้กรอกเงินเดือนที่หน้าภาษี — ยังไม่ใช่ขั้นจริง'
-                  : `เข้าฐานภาษี ${formatCurrency(taxThisYear.assessable)} · ตกขั้น ${(taxThisYear.marginalRate * 100).toFixed(0)}%`
+                  : `เข้าฐานภาษี ${baht(taxThisYear.assessable)} · ตกขั้น ${(taxThisYear.marginalRate * 100).toFixed(0)}%`
               }
               onPress={() => navigation.navigate('Tax')}
             />
@@ -1428,10 +1493,11 @@ export default function PortfolioScreen() {
             <MenuRow
               icon="gift-outline"
               title="ของที่อยากได้"
+              tone={assetColor('crypto')}
               value={`${purchasePlan.unlockedCount}/${purchasePlan.pending.length}`}
               sub={
                 purchasePlan.nextUp
-                  ? `คิวถัดไป ${purchasePlan.nextUp.goal.name} · ขาดอีก ${formatCurrency(purchasePlan.nextUp.remainingTHB)}`
+                  ? `คิวถัดไป ${purchasePlan.nextUp.goal.name} · ขาดอีก ${baht(purchasePlan.nextUp.remainingTHB)}`
                   : 'ปลดล็อกครบทุกชิ้นในคิวแล้ว'
               }
               onPress={() => navigation.navigate('PurchaseGoals')}
@@ -1440,9 +1506,8 @@ export default function PortfolioScreen() {
         </View>
 
         {/* การ์ดที่ยังอยู่หน้านี้เหลือใบเดียว: "ถึงคิวลงไม้" — เป็นรายการที่ต้องลงมือวันนี้
-            ย้ายไปหน้าอื่นแล้วจะกลายเป็นแจ้งเตือนที่ไม่มีใครเห็น */}
-        <View style={isDesktop ? styles.cardGrid : undefined}>
-        {/* การ์ดนี้โชว์ตลอดถ้ามีของที่เช็คแท่งเทียนได้ (คริปโต/หุ้น) —
+            ย้ายไปหน้าอื่นแล้วจะกลายเป็นแจ้งเตือนที่ไม่มีใครเห็น
+            การ์ดนี้โชว์ตลอดถ้ามีของที่เช็คแท่งเทียนได้ (คริปโต/หุ้น) —
             เมื่อก่อนซ่อนทั้งการ์ดตอนไม่มีสัญญาณ ทำให้แยกไม่ออกว่า "เช็คแล้วไม่มี" หรือ "พัง/ไม่ได้เช็ค" */}
         {redCheckedCount > 0 && (
           <View style={[styles.losersCard, isDesktop && styles.cardGridItem]}>
@@ -1771,6 +1836,23 @@ export default function PortfolioScreen() {
         )}
       </View>
 
+      {/* ── ปุ่มเพิ่มการลงทุน ลอยมุมขวาล่าง ──
+          เดิมอยู่ในแถวปุ่มบนหัวพอร์ต ซึ่งเป็นส่วนหนึ่งของ listHeaderElement — เลื่อนดูพอร์ต
+          ลงไปนิดเดียวปุ่มก็หายไปกับหัว ทั้งที่ "เพิ่มการลงทุน" คือสิ่งที่ทำบ่อยที่สุดของหน้านี้
+          ต้องอยู่นอก FlatList/ScrollView ไม่งั้นมันเลื่อนตามเนื้อหา (ท่าเดียวกับ FAB ของหน้าหลัก)
+          มือถือไม่ต้องบวก insets.bottom เพราะแถบแท็บล่างกินพื้นที่ปลอดภัยไปแล้ว
+          เดสก์ท็อปไม่มีแถบแท็บ จึงต้องเผื่อเอง */}
+      <TouchableOpacity
+        style={[styles.fab, { bottom: 24 + (isDesktop ? insets.bottom : 0) }]}
+        onPress={() => navigation.navigate('AddInvestment', {})}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="เพิ่มการลงทุน"
+      >
+        <Ionicons name="add" size={26} color="#ffffff" />
+        <Text style={styles.fabText}>เพิ่มการลงทุน</Text>
+      </TouchableOpacity>
+
       {/* ── Modal บันทึกการขาย ── */}
       <Modal
         visible={sellTarget !== null}
@@ -2008,13 +2090,20 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 16,
   },
-  // เดสก์ท็อป: เมนูเป็นคอลัมน์เดียวจะยาวเป็นแถบขวางจอ — คุมด้วย flexBasis เท่าการ์ดสรุปเดิม
-  // (ไม่ใช่ maxWidth ของหน้า ซึ่งห้ามใช้ — ดู CLAUDE.md §1.3)
+  // เดสก์ท็อป: เมนูเป็นช่องซ้ายของกริดสรุป — ครึ่งหนึ่งของแถว
+  // flexGrow: 0 เพราะถ้าไม่มีการ์ด "ถึงคิวลงไม้" (ไม่มีคริปโต/หุ้นให้เช็ค) เมนูจะยืดเป็นแถบขวางจอ
+  // flexShrink: 1 ต้องมีทั้งสองใบ — 50% + 50% + gap 16 เกินแถวไป 16px ทั้งคู่จึงหดใบละ 8px
+  //   เท่ากันพอดี (ถ้าใบใดใบหนึ่ง shrink 0 อีกใบจะโดนหักคนเดียว 16px แล้วสองใบไม่เท่ากัน
+  //   — react-native ตั้งค่าเริ่มต้น flexShrink เป็น 0 ต่างจากเว็บ ห้ามละไว้)
+  // คุมด้วย flexBasis ของการ์ด ไม่ใช่ maxWidth ของหน้า ซึ่งห้ามใช้ — ดู CLAUDE.md §1.3
   menuCardDesktop: {
-    flexBasis: CARD_GRID_BASIS,
+    flexBasis: SUMMARY_COL_BASIS,
     flexGrow: 0,
-    alignSelf: 'flex-start',
+    flexShrink: 1,
     minWidth: 0,
+    // ระยะห่างมาจาก gap/margin ของ cardGrid แทน margin ของการ์ดเอง
+    marginHorizontal: 0,
+    marginBottom: 0,
   },
   menuRow: {
     flexDirection: 'row',
@@ -2028,8 +2117,13 @@ const styles = StyleSheet.create({
   menuRowFirst: {
     borderTopWidth: 0,
   },
+  // วงไอคอนสีประจำเรื่อง — สีพื้นถูกส่งมาจาก MenuRow (tone) จึงไม่ตั้งไว้ตรงนี้
   menuRowIcon: {
-    width: 20,
+    width: 34,
+    height: 34,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   // minWidth: 0 เพื่อให้บรรทัดขยายความยาว ๆ ตัดคำแทนที่จะดันตัวเลขทางขวาหลุดขอบ
   menuRowMain: {
@@ -2058,9 +2152,11 @@ const styles = StyleSheet.create({
     color: COLORS.error,
   },
   cardGridItem: {
-    // flexBasis เป็นตัวคุมว่าแถวหนึ่งจะวางได้กี่ใบ, flexGrow ให้ใบที่เหลือกินที่ว่างจนหมดแถว
-    flexBasis: CARD_GRID_BASIS,
+    // ครึ่งขวาของแถวสรุป — คู่กับ menuCardDesktop (ดูคำอธิบายการหด 8px ที่นั่น)
+    // flexGrow: 1 ไว้เผื่อกรณีเหลือใบเดียว ให้กินเต็มแถวแทนที่จะค้างครึ่งจอ
+    flexBasis: SUMMARY_COL_BASIS,
     flexGrow: 1,
+    flexShrink: 1,
     // การ์ดมี TextInput/ข้อความยาว — ขาด minWidth:0 แล้ว flexShrink จะทำงานไม่ได้บนเว็บ
     minWidth: 0,
     // margin เดิมของการ์ดมาจาก goalCard/losersCard ทับด้วย gap ของกริดแทน
@@ -2615,6 +2711,34 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingTop: 0,
+    // เผื่อที่ว่างท้ายลิสต์ให้ปุ่มลอยไม่ทับการ์ดใบสุดท้าย
+    paddingBottom: 96,
+  },
+  // ── ปุ่มลอยเพิ่มการลงทุน ──
+  // ชุดเดียวกับ FAB ของหน้าหลัก (HomeScreen) เพื่อให้สองแท็บหลักมีท่าเพิ่มของเหมือนกัน
+  // ตำแหน่ง bottom ถูกส่งมาจากตัว render เพราะต้องบวก safe-area เฉพาะบนเดสก์ท็อป
+  fab: {
+    position: 'absolute',
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingLeft: 16,
+    paddingRight: 20,
+    paddingVertical: 14,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.primary,
+    // เงาให้ลอยเหนือเนื้อหาจริง ๆ (rn-web แปลง shadow* เป็น box-shadow ให้เอง)
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  fabText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_600SemiBold',
   },
   listcontainer:{
     paddingHorizontal:16
@@ -2664,6 +2788,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
     gap: 8,
+  },
+  // วงไอคอนสีประจำชนิดสินทรัพย์ (ดู assetColor/assetTint) — พื้นสีส่งมาจากตัว render
+  investmentIconBubble: {
+    width: 38,
+    height: 38,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   investmentInfo: {
@@ -2724,10 +2856,9 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_400Regular',
     color: COLORS.textSecondary,
     marginTop: 4,
-    marginLeft: 32,
   },
   investmentDetails: {
-    marginLeft: 32,
+    
   },
   investmentQuantity: {
     fontSize: 13,
@@ -2788,9 +2919,23 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 4,
   },
-  investmentProfit: {
-    fontSize: 15,
+  // ชิปกำไร/ขาดทุน — พื้นสีอ่อน + ลูกศร บอกทิศทางโดยไม่ต้องพึ่งสีอย่างเดียว
+  pnlChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.pill,
+    marginBottom: 4,
+  },
+  pnlChipText: {
+    fontSize: 13,
     fontFamily: 'NotoSansThai_600SemiBold',
+  },
+  investmentProfit: {
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_400Regular',
     marginBottom: 2,
   },
   investmentPercent: {
