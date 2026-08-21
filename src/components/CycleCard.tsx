@@ -43,17 +43,24 @@ export const CycleCard: React.FC<{
   const bounce = status.requiredBouncePercent;
   // พับไว้เป็นค่าเริ่มต้น — การ์ดต้องเห็นปุ่ม "ปิดรอบทั้งตะกร้า" โดยไม่ต้องเลื่อน
   const [showExits, setShowExits] = useState(false);
-  // ตอนพับ โชว์ตัวที่ใกล้ถึงเป้าที่สุด (ช่องว่าง % น้อยสุด) — เลขที่มีโอกาสได้ใช้ก่อนเพื่อน
-  const nearest = exits
-    .filter((e) => e.targetPrice != null && e.gapPercent != null)
-    .sort((a, b) => (a.gapPercent as number) - (b.gapPercent as number))[0];
-  // ภาษีคิดครั้งเดียวจากกำไรรวมของรอบ ตัวเลขจึงเท่ากันทุกแถว — พิมพ์ที่หมายเหตุพอ
-  const taxSample = exits.find((e) => e.taxTHB != null && (e.taxTHB as number) > 0);
-  const taxNote = !exits.some((e) => e.taxIncluded)
-    ? ' · ยังไม่รวมภาษีกำไร (ไปกรอกเงินเดือนที่หน้าภาษีก่อน ราคานี้จะยังต่ำกว่าความจริง)'
-    : taxSample
-      ? ` · เผื่อภาษีกำไรไว้แล้ว ~฿${formatCurrency(taxSample.taxTHB as number)} (คิดจากฐานเงินเดือนของคุณ)`
-      : ' · รอบนี้ไม่มีภาษีกำไรที่ต้องเผื่อ';
+  // ราคาเดียวต่อหุ้น = ค่าที่มากกว่าระหว่าง "ราคาถึงเป้า" กับ "ราคาคุ้มทุน"
+  // ต้องมีตัวคุ้มทุนคุมพื้นไว้ ไม่งั้นตอนตัวอื่นในตะกร้ากำไรมากจนพาทั้งรอบเลยเป้าไปแล้ว
+  // สมการจะให้ราคาถึงเป้าที่ต่ำกว่าทุน = ชวนให้ขายขาดทุนเพื่อทำกำไรตามเป้า ซึ่งไม่มีเหตุผล
+  const askRows = exits.map((e) => {
+    const ask = Math.max(e.targetPrice ?? 0, e.breakEvenPrice);
+    return {
+      symbol: e.symbol,
+      currency: e.currency,
+      ask,
+      ready: e.currentPrice != null && e.currentPrice >= ask,
+      upPercent:
+        e.currentPrice != null && e.currentPrice > 0 ? (ask / e.currentPrice - 1) * 100 : null,
+    };
+  });
+  // ตัวที่ยังไม่ถึงและใกล้ที่สุด — ตอนพับโชว์ตัวนี้ตัวเดียวพอ ("ตอนนี้รออะไรอยู่")
+  const waiting = askRows
+    .filter((r) => !r.ready && r.upPercent != null)
+    .sort((a, b) => (a.upPercent as number) - (b.upPercent as number))[0];
 
   return (
     <View style={[styles.card, style]}>
@@ -129,6 +136,13 @@ export const CycleCard: React.FC<{
           %กำไรบอกได้แค่ "ยังไม่ถึง" แต่เอาไปตั้งคำสั่งขายไม่ได้ ต้องมานั่งคิดเองทุกครั้ง
           สองเลขนี้เอาไปตั้งได้เลย: รวมค่าธรรมเนียมขาย + เผื่อภาษีกำไรแล้ว (ดู utils/cycles)
           พับได้เพราะรอบที่มีหลายตัวจะยาวจนดันปุ่มปิดรอบตกจอ */}
+      {/* ── ขายไม่ต่ำกว่านี้ ──
+          เคยแยกเป็น "ราคาถึงเป้า" กับ "ราคาคุ้มทุน" สองตัวต่อหุ้น พร้อมป้ายที่เปลี่ยนไปมา
+          ตามสถานะ — เจ้าของอ่านแล้วงงว่าตกลงต้องตั้งเท่าไหร่ (2026-08-21)
+          ยุบเหลือ "ราคาเดียวต่อหุ้น" ได้เพราะเลขเดียวกันใช้ได้ทั้งสองสถานะ:
+            ยังไม่ถึงเป้า → ขายที่ราคานี้ขึ้นไป ทั้งรอบถึงเป้า
+            ถึงเป้าแล้ว   → ขายต่ำกว่านี้เมื่อไหร่ รอบหลุดเป้า
+          ทั้งคู่แปลว่า "ห้ามขายต่ำกว่านี้" เหมือนกัน จึงเหลือป้ายเดียวคุมทั้งตาราง */}
       {exits.length > 0 && (
         <View style={styles.exitBox}>
           <TouchableOpacity
@@ -136,13 +150,11 @@ export const CycleCard: React.FC<{
             onPress={() => setShowExits((v) => !v)}
             accessibilityRole="button"
           >
-            <Text style={styles.exitTitle}>ตั้งขายที่ราคาไหน</Text>
+            <Text style={styles.exitTitle}>ขายไม่ต่ำกว่านี้</Text>
             <Text style={styles.exitHeadSub} numberOfLines={1}>
-              {showExits ? `${exits.length} ตัว` : nearest
-                ? `ใกล้สุด ${nearest.symbol} ${formatCurrencyWithType(nearest.targetPrice as number, nearest.currency)}${
-                    exits.length > 1 ? ` · อีก ${exits.length - 1} ตัว` : ''
-                  }`
-                : `${exits.length} ตัว`}
+              {waiting
+                ? `รอ ${waiting.symbol} ${formatCurrencyWithType(waiting.ask, waiting.currency)}`
+                : 'ทุกตัวถึงราคาแล้ว'}
             </Text>
             <Ionicons
               name={showExits ? 'chevron-up' : 'chevron-down'}
@@ -153,56 +165,30 @@ export const CycleCard: React.FC<{
 
           {showExits && (
             <>
-              {exits.map((e) => {
-                const isNearest =
-                  nearest && nearest.symbol === e.symbol && nearest.currency === e.currency;
-                // ── ราคาที่ "ควรตั้ง" คือค่าที่มากกว่าระหว่างราคาถึงเป้ากับราคาคุ้มทุน ──
-                // ตัวอื่นในตะกร้ากำไรเยอะพอจะพาทั้งรอบถึงเป้าได้เอง สมการจะได้ราคาถึงเป้า
-                // ที่ต่ำกว่าทุน (หรือติดลบจนกลายเป็น null) ซึ่งแปลว่า "ขายตัวนี้ทิ้งขาดทุนก็ยังถึงเป้า"
-                // จริงตามเลข แต่เอาไปเป็นคำแนะนำไม่ได้ — ไม่มีเหตุผลให้ขายขาดทุนเพื่อทำกำไรตามเป้า
-                const ask = Math.max(e.targetPrice ?? 0, e.breakEvenPrice);
-                // ราคาตอนนี้ถึงแล้วหรือยัง — ถึงแล้วเลขนี้เปลี่ยนความหมายจาก "เป้าที่รอ" เป็น "พื้นที่ห้ามหลุด"
-                const ready = e.currentPrice != null && e.currentPrice >= ask;
-                const upPercent =
-                  e.currentPrice != null && e.currentPrice > 0 ? (ask / e.currentPrice - 1) * 100 : null;
-                // เป้าโดนคุ้มทุนกลบ = ตัวอื่นพาถึงเป้าแล้ว ตัวนี้แค่อย่าขายขาดทุนก็พอ
-                const carriedByOthers = (e.targetPrice ?? 0) < e.breakEvenPrice;
-                return (
-                  <View key={`${e.symbol}:${e.currency}`} style={styles.exitCard}>
-                    <View style={styles.exitTop}>
-                      <Text style={styles.exitSymbol} numberOfLines={1}>
-                        {e.symbol}
-                      </Text>
-                      <Text style={styles.exitSellLabel}>
-                        {ready ? 'ขายได้แล้ว ไม่ต่ำกว่า' : 'ตั้งขาย'}
-                      </Text>
-                      <Text style={[styles.exitSellValue, ready && styles.exitSellValueReady]}>
-                        {formatCurrencyWithType(ask, e.currency)}
-                      </Text>
-                      {!ready && upPercent != null && (
-                        <Text style={styles.exitGap}>+{upPercent.toFixed(1)}%</Text>
-                      )}
-                      {isNearest && exits.length > 1 && !ready && (
-                        <Text style={styles.exitBadge}>ใกล้สุด</Text>
-                      )}
-                    </View>
-                    <Text style={styles.exitFloor}>
-                      {carriedByOthers
-                        ? 'ตัวอื่นพาถึงเป้าแล้ว — ตัวนี้แค่อย่าขายต่ำกว่าทุน'
-                        : `ทุน + ค่าธรรมเนียม ${formatCurrencyWithType(e.breakEvenPrice, e.currency)}`}
-                    </Text>
-                  </View>
-                );
-              })}
+              {askRows.map((r) => (
+                <View key={`${r.symbol}:${r.currency}`} style={styles.askRow}>
+                  <Text style={styles.askSymbol} numberOfLines={1}>
+                    {r.symbol}
+                  </Text>
+                  <Text style={styles.askPrice}>
+                    {formatCurrencyWithType(r.ask, r.currency)}
+                  </Text>
+                  <Text style={[styles.askState, r.ready && styles.askStateReady]}>
+                    {r.ready
+                      ? 'ถึงแล้ว'
+                      : r.upPercent != null
+                        ? `อีก ${r.upPercent.toFixed(1)}%`
+                        : 'ยังไม่มีราคา'}
+                  </Text>
+                </View>
+              ))}
               <Text style={styles.exitNote}>
-                {status.met ? 'รอบนี้ถึงเป้าแล้ว — ราคาข้างบนคือขั้นต่ำที่ขายแล้วยังถึงเป้า · ' : ''}
-                รวมค่าธรรมเนียมขาย{exits.some((e) => e.taxIncluded) ? 'และภาษี' : ''}แล้ว ·
-                ตัวไหนถึงราคาก่อน ขายตัวนั้นก็ปิดรอบได้
+                รวมค่าธรรมเนียมขาย{exits.some((e) => e.taxIncluded) ? 'และภาษี' : ''}แล้ว
                 {!exits.some((e) => e.taxIncluded)
-                  ? '\nยังไม่รวมภาษีกำไร — กรอกเงินเดือนที่หน้าภาษีก่อน'
+                  ? ' · ยังไม่รวมภาษี ไปกรอกเงินเดือนที่หน้าภาษีก่อน'
                   : ''}
                 {exits.some((e) => e.feeUnknown)
-                  ? '\nบางตัวยังไม่ได้ตั้งค่าธรรมเนียม — ไปตั้งที่ โปรไฟล์ → สกุลเงิน & แพลตฟอร์ม'
+                  ? ' · บางตัวยังไม่ได้ตั้งค่าธรรมเนียม'
                   : ''}
               </Text>
             </>
@@ -415,43 +401,29 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
   // minWidth: 0 ที่คอลัมน์ซ้ายจำเป็นบนเว็บ ไม่งั้นชื่อยาวดันคอลัมน์ราคาหลุดขอบการ์ด
-  // การ์ดย่อยต่อหนึ่งตัว — สองบรรทัดพอ: ราคาที่ต้องตั้ง กับ พื้นที่ห้ามต่ำกว่า
-  exitCard: {
-    borderWidth: 1,
-    borderColor: COLORS.divider,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+  // แถวเดียวต่อหุ้น: ชื่อ | ราคา | สถานะ — minWidth: 0 ที่ชื่อกันชื่อยาวดันราคาหลุดขอบ
+  askRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    paddingVertical: 3,
   },
-  // flexWrap เพราะบนมือถือชื่อยาว ๆ กับป้ายจะดันกันจนตัวเลขหลุดขอบ
-  exitTop: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' },
-  exitSymbol: { fontSize: 13.5, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
-  exitSellLabel: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    marginLeft: 'auto',
+  askSymbol: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    fontFamily: 'NotoSansThai_500Medium',
+    color: COLORS.text,
   },
-  exitSellValue: { fontSize: 17, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
-  exitSellValueReady: { color: COLORS.success },
-  exitGap: { fontSize: 11, fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary },
-  exitBadge: {
-    fontSize: 10,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.success,
-    backgroundColor: `${COLORS.success}14`,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  exitFloor: {
-    fontSize: 10.5,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
+  askPrice: { fontSize: 15, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  askState: {
+    width: 66,
     textAlign: 'right',
-    marginTop: 2,
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
   },
+  askStateReady: { color: COLORS.success, fontFamily: 'NotoSansThai_600SemiBold' },
   exitNote: {
     fontSize: 10.5,
     fontFamily: 'NotoSansThai_300Light',
