@@ -161,6 +161,21 @@ export default function CyclesScreen() {
   // ต้องส่งจำนวนหุ้นไปด้วย (สูตรหารด้วย หุ้น × ครั้งต่อหุ้น) ไม่งั้นจอนี้ได้เลขคนละตัวกับหน้าเงินรอลงทุน
   const powderPerRound = nextLegTHBOf(plan, countSymbols(investments));
 
+  // ค่าธรรมเนียมของคำสั่ง: แพลตฟอร์มก่อน → สกุลเงิน → ไม่รู้ (ดู utils/tradeFee.ts)
+  //
+  // ⚠️ ต้องประกาศ **เหนือ** cycleViews เสมอ — cycleViews เป็น .map() ที่รันทันทีตอน render
+  // ไม่ใช่ callback ที่รอไว้ ถ้า feeOf อยู่ใต้มัน จะโดน TDZ แล้วทั้งจอพังด้วย
+  // "Cannot access 'feeOf' before initialization" (เคยหลุดขึ้น production มาแล้ว 2026-08-21)
+  // tsc จับไม่ได้เพราะการอ้างถึงอยู่ในตัว arrow function ซึ่ง TS ถือว่า "อาจรันทีหลัง"
+  // ขั้นต่ำถูกแปลงเป็นบาทให้แล้วในตัว resolver ($1 ของ IBKR ไม่ใช่ 1 บาท)
+  const feeOf = useCallback(
+    (platform?: string, currency?: string): FeeRule | undefined => {
+      const f = resolveTradeFee(platform, currency, platforms, currencies);
+      return f.source == null ? undefined : { percent: f.percent, minTHB: f.minTHB };
+    },
+    [platforms, currencies]
+  );
+
   const cycleViews = cycles.map((cycle) => {
     const legs = legsOfCycle(cycle, investments);
     return {
@@ -465,16 +480,6 @@ export default function CyclesScreen() {
     }
     loadData();
   };
-
-  // ค่าธรรมเนียมของคำสั่ง: แพลตฟอร์มก่อน → สกุลเงิน → ไม่รู้ (ดู utils/tradeFee.ts)
-  // ขั้นต่ำถูกแปลงเป็นบาทให้แล้วในตัว resolver ($1 ของ IBKR ไม่ใช่ 1 บาท)
-  const feeOf = useCallback(
-    (platform?: string, currency?: string): FeeRule | undefined => {
-      const f = resolveTradeFee(platform, currency, platforms, currencies);
-      return f.source == null ? undefined : { percent: f.percent, minTHB: f.minTHB };
-    },
-    [platforms, currencies]
-  );
 
   // สรุปผลของทุกดีลที่ขายแล้ว — ใช้เป็นตัวเลขบนทางเข้า "ผลงานที่ขายแล้ว" ท้ายหน้า
   const realized = useMemo(() => summarizeRealized(realizedTrades), [realizedTrades]);
