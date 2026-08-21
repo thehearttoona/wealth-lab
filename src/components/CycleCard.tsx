@@ -156,35 +156,46 @@ export const CycleCard: React.FC<{
               {exits.map((e) => {
                 const isNearest =
                   nearest && nearest.symbol === e.symbol && nearest.currency === e.currency;
+                // ── ราคาที่ "ควรตั้ง" คือค่าที่มากกว่าระหว่างราคาถึงเป้ากับราคาคุ้มทุน ──
+                // ตัวอื่นในตะกร้ากำไรเยอะพอจะพาทั้งรอบถึงเป้าได้เอง สมการจะได้ราคาถึงเป้า
+                // ที่ต่ำกว่าทุน (หรือติดลบจนกลายเป็น null) ซึ่งแปลว่า "ขายตัวนี้ทิ้งขาดทุนก็ยังถึงเป้า"
+                // จริงตามเลข แต่เอาไปเป็นคำแนะนำไม่ได้ — ไม่มีเหตุผลให้ขายขาดทุนเพื่อทำกำไรตามเป้า
+                const ask = Math.max(e.targetPrice ?? 0, e.breakEvenPrice);
+                // ราคาตอนนี้ถึงแล้วหรือยัง — ถึงแล้วเลขนี้เปลี่ยนความหมายจาก "เป้าที่รอ" เป็น "พื้นที่ห้ามหลุด"
+                const ready = e.currentPrice != null && e.currentPrice >= ask;
+                const upPercent =
+                  e.currentPrice != null && e.currentPrice > 0 ? (ask / e.currentPrice - 1) * 100 : null;
+                // เป้าโดนคุ้มทุนกลบ = ตัวอื่นพาถึงเป้าแล้ว ตัวนี้แค่อย่าขายขาดทุนก็พอ
+                const carriedByOthers = (e.targetPrice ?? 0) < e.breakEvenPrice;
                 return (
                   <View key={`${e.symbol}:${e.currency}`} style={styles.exitCard}>
-                    {/* บรรทัดเดียวจบ: ชื่อ + ราคาที่ต้องตั้ง + ห่างอีกกี่ %
-                        ตัดทุนเฉลี่ย/ราคาปัจจุบัน/จำนวนหน่วยออก — ดูได้ที่รายการลงทุนอยู่แล้ว
-                        และมันทำให้ราคาที่ต้องใช้จริงจมหายไปในกองตัวเลขที่หน้าตาเหมือนกันหมด */}
                     <View style={styles.exitTop}>
                       <Text style={styles.exitSymbol} numberOfLines={1}>
                         {e.symbol}
                       </Text>
-                      <Text style={styles.exitSellLabel}>ตั้งขาย</Text>
-                      <Text style={styles.exitSellValue}>
-                        {e.targetPrice != null
-                          ? formatCurrencyWithType(e.targetPrice, e.currency)
-                          : 'ไม่ต้องรอตัวนี้'}
+                      <Text style={styles.exitSellLabel}>
+                        {ready ? 'ขายได้แล้ว ไม่ต่ำกว่า' : 'ตั้งขาย'}
                       </Text>
-                      {e.gapPercent != null && (
-                        <Text style={styles.exitGap}>+{e.gapPercent.toFixed(1)}%</Text>
+                      <Text style={[styles.exitSellValue, ready && styles.exitSellValueReady]}>
+                        {formatCurrencyWithType(ask, e.currency)}
+                      </Text>
+                      {!ready && upPercent != null && (
+                        <Text style={styles.exitGap}>+{upPercent.toFixed(1)}%</Text>
                       )}
-                      {isNearest && exits.length > 1 && (
+                      {isNearest && exits.length > 1 && !ready && (
                         <Text style={styles.exitBadge}>ใกล้สุด</Text>
                       )}
                     </View>
                     <Text style={styles.exitFloor}>
-                      ห้ามต่ำกว่า {formatCurrencyWithType(e.breakEvenPrice, e.currency)}
+                      {carriedByOthers
+                        ? 'ตัวอื่นพาถึงเป้าแล้ว — ตัวนี้แค่อย่าขายต่ำกว่าทุน'
+                        : `ทุน + ค่าธรรมเนียม ${formatCurrencyWithType(e.breakEvenPrice, e.currency)}`}
                     </Text>
                   </View>
                 );
               })}
               <Text style={styles.exitNote}>
+                {status.met ? 'รอบนี้ถึงเป้าแล้ว — ราคาข้างบนคือขั้นต่ำที่ขายแล้วยังถึงเป้า · ' : ''}
                 รวมค่าธรรมเนียมขาย{exits.some((e) => e.taxIncluded) ? 'และภาษี' : ''}แล้ว ·
                 ตัวไหนถึงราคาก่อน ขายตัวนั้นก็ปิดรอบได้
                 {!exits.some((e) => e.taxIncluded)
@@ -421,7 +432,8 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginLeft: 'auto',
   },
-  exitSellValue: { fontSize: 17, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.success },
+  exitSellValue: { fontSize: 17, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  exitSellValueReady: { color: COLORS.success },
   exitGap: { fontSize: 11, fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary },
   exitBadge: {
     fontSize: 10,
@@ -434,9 +446,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   exitFloor: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.error,
+    color: COLORS.textSecondary,
     textAlign: 'right',
     marginTop: 2,
   },
