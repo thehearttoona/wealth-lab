@@ -217,7 +217,9 @@ export default function CyclesScreen() {
     [taxProfile]
   );
 
-  const cycleViews = cycles.map((cycle) => {
+  // memo ไว้เพราะ exitPlanForCycle หมุนแก้สมการภาษี 8 รอบต่อสัญลักษณ์ (calculateTax รอบละ 2 ครั้ง)
+  // ปล่อยให้คิดใหม่ทุก render = ทุกตัวอักษรที่พิมพ์ในโมดัลลากคำนวณภาษีทั้งชุดไปด้วย
+  const cycleViews = useMemo(() => cycles.map((cycle) => {
     const legs = legsOfCycle(cycle, investments);
     return {
       cycle,
@@ -230,7 +232,7 @@ export default function CyclesScreen() {
         taxWeightOf: taxProfile ? taxWeightOf : undefined,
       }),
     };
-  });
+  }), [cycles, investments, powderPerRound, feeOf, taxProfile, taxOfGain, taxWeightOf]);
   // ตะกร้าที่ยังไม่มีรอบเปิด และมีของถืออยู่จริง — ใช้ในการ์ด "ยังไม่ได้เปิดรอบ"
   const basketsWithoutCycle = BASKET_ORDER.map((basket) => {
     const legs = investments.filter((i) => basketAccepts(basket, i.type));

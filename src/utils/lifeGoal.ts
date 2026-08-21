@@ -9,7 +9,9 @@
 // (เหตุผลเดียวกับที่ขั้นของน้องหมุดห้ามผูกกับมูลค่าพอร์ต — ดู components/Mascot.tsx)
 
 import { LifeGoal } from '../types/lifeGoal';
-import { MascotStage } from '../components/Mascot';
+// import type เท่านั้น — ถูกลบตอน compile จึงไม่เกิดเส้น utils → components ตอนรันจริง
+// (utils ทั้งโฟลเดอร์เป็นโดเมนล้วน ห้ามลากคอมโพเนนต์/services เข้ามาเป็น dependency)
+import type { MascotStage } from '../components/Mascot';
 
 export interface LifeGoalProgress {
   goal: LifeGoal;
@@ -19,7 +21,6 @@ export interface LifeGoalProgress {
   remainingTHB: number;
   /** ยอดความมั่งคั่งถึงเป้าแล้ว (ยังไม่ได้กดยืนยันผ่านด่านก็จริงได้) */
   reached: boolean;
-  achieved: boolean;
 }
 
 export interface LifeGoalPlan {
@@ -57,7 +58,6 @@ export const planLifeGoals = (goals: LifeGoal[], netWorthTHB: number): LifeGoalP
       percent: target > 0 ? clampPercent((netWorthTHB / target) * 100) : 0,
       remainingTHB: Math.max(0, target - netWorthTHB),
       reached: target > 0 && netWorthTHB >= target,
-      achieved: false,
     };
   };
 

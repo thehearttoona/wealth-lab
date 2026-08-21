@@ -74,9 +74,3 @@ export const resolveTradeFee = (
 
   return { source: null };
 };
-
-/** ค่าธรรมเนียมเป็นบาทของคำสั่งมูลค่า `amountTHB` — null = ยังไม่ได้ตั้ง (ไม่ใช่ฟรี) */
-export const tradeFeeTHB = (fee: ResolvedFee, amountTHB: number): number | null => {
-  if (fee.source == null) return null;
-  return Math.max(((fee.percent ?? 0) * amountTHB) / 100, fee.minTHB ?? 0);
-};

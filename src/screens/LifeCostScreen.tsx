@@ -27,7 +27,7 @@ import {
   restartLifeCostCycle,
   isLifeCostTableMissing,
 } from '../services/lifeCostStorage';
-import { summarizeLifeCosts, LifeCostStatus } from '../utils/lifeCost';
+import { summarizeLifeCosts, addMonths, LifeCostStatus } from '../utils/lifeCost';
 import { COLORS, RADIUS, TEXT, FONTS, formatCurrency, toChristianYear } from '../utils/constants';
 import { ActionButton } from '../components/ActionButton';
 import { Mascot, MascotEmpty, MascotState } from '../components/Mascot';
@@ -217,7 +217,8 @@ export default function LifeCostScreen() {
     const ok = await confirmAsk(
       'เริ่มรอบใหม่',
       `จ่าย/ทำ "${row.item.name}" ไปแล้ววันนี้ใช่ไหม\n\n` +
-        `รอบใหม่จะครบอีกที ${fmtDateTH(row.dueAt.slice(0, 4) + row.dueAt.slice(4))}\n` +
+        // วันครบรอบใหม่นับจาก "วันนี้" ไม่ใช่ row.dueAt ซึ่งเป็นวันครบของรอบที่เพิ่งจบ
+        `รอบใหม่จะครบอีกที ${fmtDateTH(addMonths(today, row.item.cycleMonths))}\n` +
         `และยอดที่เก็บไว้ ฿${formatCurrency(row.reserved)} จะถูกล้างเป็น 0 ` +
         `เพราะถือว่าใช้ไปกับรอบที่เพิ่งจบแล้ว`,
       'เริ่มรอบใหม่'

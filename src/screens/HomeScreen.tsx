@@ -150,7 +150,6 @@ export default function HomeScreen() {
 
       const totalAmount = dailyTotal;
 
-      if (day === 1) console.log('[calendar] income dates:', allIncomes.slice(0, 3).map(i => i.date));
       const dayIncome = allIncomes
         .filter((i) => {
           const parts = i.date?.split('-');

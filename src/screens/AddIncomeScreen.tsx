@@ -25,7 +25,6 @@ type AddIncomeRouteProp = RouteProp<RootStackParamList, 'AddIncome'>;
 export default function AddIncomeScreen() {
   const navigation = useNavigation<AddIncomeNavProp>();
   const route = useRoute<AddIncomeRouteProp>();
-  console.log(route.params);
   const { income, date: paramDate } = route.params;
 
   const isEditing = !!income;
@@ -84,7 +83,6 @@ export default function AddIncomeScreen() {
       description: description.trim(),
       date: new Date(`${date}T${timeStr}:00`).toISOString(),
     };
-    console.log('Saving income:', entry);
 
     if (isEditing) {
       await updateIncome(entry);
