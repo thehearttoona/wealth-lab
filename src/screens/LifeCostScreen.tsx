@@ -29,6 +29,10 @@ import {
 } from '../services/lifeCostStorage';
 import { summarizeLifeCosts, addMonths, LifeCostStatus } from '../utils/lifeCost';
 import { requiredMonthlyContribution } from '../utils/investmentGoals';
+import { buildExpenseLadder, avgMonthlyBill, OutflowItem } from '../utils/expenseLadder';
+import { INFLATION_RATE } from '../utils/portfolioCoverage';
+import { getRecurringBills } from '../services/storage';
+import { RecurringBill } from '../types';
 import { getPortfolioSummary } from '../services/investmentStorage';
 import { COLORS, RADIUS, TEXT, FONTS, formatCurrency, toChristianYear } from '../utils/constants';
 import { ActionButton } from '../components/ActionButton';
@@ -98,6 +102,7 @@ export default function LifeCostScreen() {
   const [ratePercent, setRatePercent] = useState(7);
   const [years, setYears] = useState(10);
   const [portfolioValue, setPortfolioValue] = useState(0);
+  const [bills, setBills] = useState<RecurringBill[]>([]);
 
   const today = new Date().toISOString().slice(0, 10);
   const todayDate = useMemo(() => new Date(`${today}T00:00:00`), [today]);
@@ -116,6 +121,12 @@ export default function LifeCostScreen() {
     } catch {
       setPortfolioValue(0);
     }
+    // บิลประจำเป็นของที่ต้องจ่ายทุกเดือนเหมือนกัน จึงอยู่บันไดเดียวกับค่าเสื่อม
+    try {
+      setBills(await getRecurringBills());
+    } catch {
+      setBills([]);
+    }
     setLoading(false);
   }, []);
 
@@ -128,19 +139,37 @@ export default function LifeCostScreen() {
   const summary = useMemo(() => summarizeLifeCosts(items, todayDate), [items, todayDate]);
   const mood = moodFor(summary.count, summary.overdueCount, summary.gap);
 
-  // ── ทุนที่ต้องมีเพื่อให้ "ผลตอบแทนของพอร์ต" จ่ายค่าเสื่อมแทนได้ตลอด ──
-  // เงินต้น = ค่าเสื่อมต่อปี ÷ อัตราผลตอบแทน (perpetuity) — ถึงจุดนี้แล้วไม่ต้องควักเงินเดือนอีก
-  const perYear = summary.perYear;
-  const capitalNeeded = ratePercent > 0 ? perYear / (ratePercent / 100) : null;
-  const coveredPercent =
-    capitalNeeded != null && capitalNeeded > 0
-      ? Math.min(100, (portfolioValue / capitalNeeded) * 100)
-      : null;
-  // ลงเพิ่มเดือนละเท่าไหร่ถึงจะไปถึงทุนก้อนนั้นในกี่ปีที่เลือก
-  // (ใช้ requiredMonthlyContribution ที่มีอยู่แล้วใน utils/investmentGoals — เดิมไม่มีใครเรียก)
+  // ── บันได "ให้พอร์ตจ่ายชีวิตแทน" ──
+  // ค่าเสื่อม + บิลประจำ = ของที่ต้องจ่ายทุกเดือนเหมือนกัน อยู่บันไดเดียวกัน
+  // เรียงจากทุนน้อยไปมาก เพื่อให้ปลดอันแรกได้เร็วที่สุด แล้วเงินที่ว่างมาเร่งขั้นถัดไป
+  const outflows: OutflowItem[] = useMemo(() => {
+    const fromCosts: OutflowItem[] = summary.rows.map((r) => ({
+      id: r.item.id,
+      name: r.item.name,
+      monthlyTHB: r.perMonth,
+      kind: 'life_cost' as const,
+    }));
+    const fromBills: OutflowItem[] = bills
+      .map((b) => ({
+        id: b.id,
+        name: b.name,
+        // ใช้ยอดที่กรอกจริงเฉลี่ย ไม่ใช่ช่อง amount ที่เป็นแค่ค่าอ้างอิง (ดู utils/expenseLadder)
+        monthlyTHB: avgMonthlyBill(b.monthlyAmounts),
+        kind: 'bill' as const,
+      }))
+      .filter((b) => b.monthlyTHB > 0);
+    return [...fromCosts, ...fromBills];
+  }, [summary.rows, bills]);
+
+  const ladder = useMemo(
+    () => buildExpenseLadder(outflows, portfolioValue, ratePercent, INFLATION_RATE),
+    [outflows, portfolioValue, ratePercent]
+  );
+  // ลงเพิ่มเดือนละเท่าไหร่ถึงจะปลดครบทุกขั้นในกี่ปีที่เลือก
+  // (requiredMonthlyContribution มีอยู่แล้วใน utils/investmentGoals — เดิมไม่มีใครเรียก)
   const monthlyNeeded =
-    capitalNeeded != null
-      ? requiredMonthlyContribution(portfolioValue, capitalNeeded, ratePercent, years)
+    ladder.totalCapitalTHB > 0
+      ? requiredMonthlyContribution(portfolioValue, ladder.totalCapitalTHB, ratePercent, years)
       : null;
 
   // ── เพิ่ม / แก้ไข ──
@@ -399,35 +428,56 @@ export default function LifeCostScreen() {
           )}
         </View>
 
-        {/* ── ให้พอร์ตจ่ายค่าเสื่อมแทน ──
-            แปลง "ค่าเสื่อมต่อเดือน" ให้เป็น **เป้าลงทุน** ไม่ใช่ **เป้ากำไรรายเดือน** โดยตั้งใจ:
-            เป้ากำไรรายเดือนสร้างแรงกดดันให้ขายตอนสิ้นเดือนเพื่อให้ครบโควตา ซึ่งขัดกับทั้งระบบ
-            (จังหวะขายมาจากรอบถึงเป้า ไม่ใช่จากวันที่) ส่วนเป้าลงเงินไม่มีผลข้างเคียงนั้น
-            ทำมากทำน้อยก็แค่ถึงช้าหรือเร็ว */}
-        {summary.count > 0 && capitalNeeded != null && (
+        {/* ── บันได "ให้พอร์ตจ่ายชีวิตแทน" — ด่านที่ต้องผ่านก่อนเป้าอื่นทั้งหมด ──
+            เป็นเป้า **ลงเงิน** ไม่ใช่เป้า **กำไรรายเดือน** โดยตั้งใจ: โควตากำไรรายเดือน
+            สร้างแรงกดดันให้ขายตอนสิ้นเดือนให้ครบเป้า ซึ่งขัดกับทั้งระบบ
+            (จังหวะขายมาจากรอบถึงเป้า ไม่ใช่ปฏิทิน) */}
+        {ladder.rungs.length > 0 && (
           <View style={styles.investCard}>
             <Text style={styles.investTitle}>
               <Ionicons name="trending-up-outline" size={16} color={COLORS.primary} />{' '}
-              ให้พอร์ตจ่ายค่าเสื่อมแทน
+              ให้พอร์ตจ่ายชีวิตแทน
             </Text>
             <Text style={styles.investLead}>
-              ค่าเสื่อมปีละ ฿{formatCurrency(perYear)} — ถ้าพอร์ตโตพอ ผลตอบแทนจะจ่ายก้อนนี้แทนคุณได้
-              โดยไม่ต้องควักเงินเดือน
+              ต้องจ่ายเองเดือนละ ฿{formatCurrency(ladder.totalMonthlyTHB)} — ปลดทีละอย่าง
+              เงินที่เคยจ่ายอันนั้นจะว่างมาลงทุนต่อ ทำให้อันถัดไปมาเร็วขึ้นเรื่อย ๆ
             </Text>
 
-            <View style={styles.investRow}>
-              <Text style={styles.investLabel}>ต้องมีพอร์ต</Text>
-              <Text style={styles.investValue}>฿{formatCurrency(capitalNeeded)}</Text>
-            </View>
-            <View style={styles.investRow}>
-              <Text style={styles.investLabel}>ตอนนี้มี</Text>
-              <Text style={styles.investSub}>
-                ฿{formatCurrency(portfolioValue)}
-                {coveredPercent != null ? ` · ${coveredPercent.toFixed(0)}%` : ''}
+            {ladder.rungs.map((r) => (
+              <View key={`${r.kind}:${r.id}`} style={styles.rungRow}>
+                <Ionicons
+                  name={r.cleared ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={15}
+                  color={r.cleared ? COLORS.success : COLORS.textSecondary}
+                />
+                <Text style={styles.rungName} numberOfLines={1}>
+                  {r.name}
+                </Text>
+                <Text style={styles.rungMonthly}>฿{formatCurrency(r.monthlyTHB)}/ด</Text>
+                <Text style={[styles.rungState, r.cleared && styles.rungStateDone]}>
+                  {r.cleared ? 'ปลดแล้ว' : `${r.percent.toFixed(0)}%`}
+                </Text>
+              </View>
+            ))}
+
+            {ladder.current && (
+              <Text style={styles.rungNext}>
+                ขั้นถัดไป: {ladder.current.name} — ต้องมีพอร์ตรวม ฿
+                {formatCurrency(ladder.current.cumulativeTHB)} (ตอนนี้ ฿
+                {formatCurrency(portfolioValue)}) · ปลดแล้วได้เงินคืนเดือนละ ฿
+                {formatCurrency(ladder.current.monthlyTHB)}
               </Text>
-            </View>
-            <View style={styles.track}>
-              <View style={[styles.fill, { width: `${coveredPercent ?? 0}%` }]} />
+            )}
+            {ladder.freedMonthlyTHB > 0 && (
+              <Text style={styles.rungFreed}>
+                ปลดไปแล้ว {ladder.clearedCount} อย่าง — ได้เงินคืนเดือนละ ฿
+                {formatCurrency(ladder.freedMonthlyTHB)} เอาไปลงทุนต่อได้
+              </Text>
+            )}
+
+            <View style={styles.investRow}>
+              <Text style={styles.investLabel}>ปลดครบต้องมีพอร์ต</Text>
+              <Text style={styles.investValue}>฿{formatCurrency(ladder.totalCapitalTHB)}</Text>
             </View>
 
             <Text style={styles.investChipLabel}>สมมติผลตอบแทนต่อปี</Text>
@@ -443,7 +493,7 @@ export default function LifeCostScreen() {
               ))}
             </View>
 
-            <Text style={styles.investChipLabel}>อยากถึงภายในกี่ปี</Text>
+            <Text style={styles.investChipLabel}>อยากปลดครบภายในกี่ปี</Text>
             <View style={styles.chipWrap}>
               {HORIZON_STEPS.map((y) => (
                 <TouchableOpacity
@@ -467,13 +517,16 @@ export default function LifeCostScreen() {
               </Text>
             </View>
             <Text style={styles.investNote}>
-              {monthlyNeeded != null && monthlyNeeded <= 0
-                ? `พอร์ตที่มีอยู่โตเองจนพอจ่ายค่าเสื่อมภายใน ${years} ปี ไม่ต้องเติมเพิ่ม`
-                : `เติมเท่านี้ทุกเดือน ${years} ปี แล้วค่าเสื่อมทั้งหมดจะจ่ายด้วยผลตอบแทนของพอร์ต`}
-              {'\n'}ผลตอบแทน {ratePercent}%/ปี เป็นข้อสมมติที่คุณเลือกเอง ไม่ใช่สิ่งที่รับประกันได้ ·
+              ทุนที่ต้องมีคิดจากผลตอบแทนหลังหักเงินเฟ้อ {ladder.realReturnPercent.toFixed(1)}%
+              ({ratePercent}% − เงินเฟ้อ {INFLATION_RATE}%) เพราะค่าใช้จ่ายโตตามเงินเฟ้อไปด้วย
+              {'\n'}ผลตอบแทนเป็นข้อสมมติที่คุณเลือกเอง ไม่ใช่สิ่งที่รับประกันได้ ·
               เลขนี้เป็นเป้า "ลงเงินเพิ่ม" ไม่ใช่เป้า "ต้องทำกำไรให้ได้เท่านี้"
             </Text>
           </View>
+        )}
+
+        {ladder.reason && (
+          <Text style={styles.warnBox}>{ladder.reason}</Text>
         )}
 
         <TouchableOpacity style={styles.addBtn} onPress={openAdd}>
@@ -730,6 +783,14 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLORS.divider,
   },
+  // ── แถวบันได: ไอคอน | ชื่อ | ยอดต่อเดือน | สถานะ ──
+  rungRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 3 },
+  rungName: { flex: 1, minWidth: 0, fontSize: 12.5, fontFamily: FONTS.regular, color: COLORS.text },
+  rungMonthly: { fontSize: 11.5, fontFamily: FONTS.medium, color: COLORS.textSecondary },
+  rungState: { width: 62, textAlign: 'right', fontSize: 11, fontFamily: FONTS.regular, color: COLORS.textSecondary },
+  rungStateDone: { color: COLORS.success, fontFamily: FONTS.semibold },
+  rungNext: { fontSize: 11, fontFamily: FONTS.light, color: COLORS.text, lineHeight: 17, marginTop: 6 },
+  rungFreed: { fontSize: 11, fontFamily: FONTS.light, color: COLORS.success, lineHeight: 17 },
   investResultLabel: { fontSize: 13, fontFamily: FONTS.semibold, color: COLORS.text },
   investResultValue: { fontSize: 22, fontFamily: FONTS.semibold, color: COLORS.success },
   investNote: { fontSize: 10.5, fontFamily: FONTS.light, color: COLORS.textSecondary, lineHeight: 16 },

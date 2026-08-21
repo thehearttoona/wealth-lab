@@ -10,7 +10,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../types';
 import { LifeGoal, LIFE_GOAL_PRESETS } from '../types/lifeGoal';
 import {
   getLifeGoals,
@@ -21,6 +23,14 @@ import {
   isLifeGoalTableMissing,
 } from '../services/lifeGoalStorage';
 import { planLifeGoals, lifeGoalEta, mascotStageForLevels } from '../utils/lifeGoal';
+import { buildExpenseLadder, avgMonthlyBill, OutflowItem } from '../utils/expenseLadder';
+import { summarizeLifeCosts } from '../utils/lifeCost';
+import { INFLATION_RATE } from '../utils/portfolioCoverage';
+import { getLifeCosts } from '../services/lifeCostStorage';
+import { getRecurringBills } from '../services/storage';
+import { LifeCost } from '../types/lifeCost';
+import { RecurringBill } from '../types';
+import { MenuRow, MenuCard } from '../components/MenuRow';
 import { getInvestments, getPortfolioSummary } from '../services/investmentStorage';
 import { getAccounts } from '../services/accountStorage';
 import { getInstallmentPlans } from '../services/installmentStorage';
@@ -54,6 +64,7 @@ const fmtDateTH = (iso: string): string =>
  * และการประทับว่า "ผ่านแล้ว" ต้องให้คนกดเอง — แอปแค่ชวน ไม่ประทับให้เอง
  */
 export default function LifeGoalScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { isDesktop } = useResponsive();
   const [goals, setGoals] = useState<LifeGoal[]>([]);
   const [portfolioValue, setPortfolioValue] = useState(0);
@@ -61,6 +72,9 @@ export default function LifeGoalScreen() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [plans, setPlans] = useState<InstallmentPlan[]>([]);
   const [deployRows, setDeployRows] = useState<DeployRow[]>([]);
+  // ด่านพื้นฐาน (ให้พอร์ตจ่ายชีวิตแทน) ต้องมาก่อนบันไดเป้าหมายที่ตั้งเอง
+  const [lifeCosts, setLifeCosts] = useState<LifeCost[]>([]);
+  const [bills, setBills] = useState<RecurringBill[]>([]);
   const [loading, setLoading] = useState(true);
   const [tableMissing, setTableMissing] = useState(false);
 
@@ -111,6 +125,17 @@ export default function LifeGoalScreen() {
     } catch {
       setPlans([]);
     }
+    // สองก้อนนี้ล้มแยกกันได้ — ยังไม่ได้รัน sql/life_costs.sql ก็แค่ไม่มีด่านพื้นฐานให้โชว์
+    try {
+      setLifeCosts(await getLifeCosts());
+    } catch {
+      setLifeCosts([]);
+    }
+    try {
+      setBills(await getRecurringBills());
+    } catch {
+      setBills([]);
+    }
     setLoading(false);
   }, []);
 
@@ -131,6 +156,27 @@ export default function LifeGoalScreen() {
     [plan.current, flow.avgThbPerWeek, todayDate]
   );
   const stage = mascotStageForLevels(plan.cleared.length);
+
+  // ── ด่านพื้นฐาน: ให้พอร์ตจ่ายค่าใช้จ่ายประจำ + ค่าเสื่อมแทน ──
+  // ตราบใดที่ยังต้องจ่ายจากเงินเดือน เป้าเงินล้านก็ยังไม่มีฐานรองรับ — จึงต้องอยู่เหนือบันไดที่ตั้งเอง
+  // วัดด้วยมูลค่าพอร์ต ไม่ใช่ความมั่งคั่งสุทธิ เพราะคนที่ต้องออกดอกผลมาจ่ายคือพอร์ต ไม่ใช่เงินสด/หนี้
+  const baseLadder = useMemo(() => {
+    const costRows = summarizeLifeCosts(lifeCosts, todayDate).rows.map((r) => ({
+      id: r.item.id,
+      name: r.item.name,
+      monthlyTHB: r.perMonth,
+      kind: 'life_cost' as const,
+    }));
+    const billRows: OutflowItem[] = bills
+      .map((b) => ({
+        id: b.id,
+        name: b.name,
+        monthlyTHB: avgMonthlyBill(b.monthlyAmounts),
+        kind: 'bill' as const,
+      }))
+      .filter((b) => b.monthlyTHB > 0);
+    return buildExpenseLadder([...costRows, ...billRows], portfolioValue, 7, INFLATION_RATE);
+  }, [lifeCosts, bills, portfolioValue, todayDate]);
 
   const openAdd = () => {
     setEditing(null);
@@ -246,6 +292,32 @@ export default function LifeGoalScreen() {
           <Text style={styles.warnBox}>
             ยังใช้ไม่ได้ — เอาไฟล์ `sql/life_goals.sql` ไปรันที่ Supabase SQL editor ก่อน 1 ครั้ง
           </Text>
+        )}
+
+        {/* ── ด่านพื้นฐาน: ต้องผ่านก่อนบันไดที่ตั้งเอง ──
+            วางไว้เหนือการ์ดเลเวลโดยตั้งใจ — เป้าเงินล้านไม่มีความหมายถ้าค่าเน็ตยังต้องจ่ายเอง
+            ตัวเลขคิดที่หน้าค่าเสื่อม (ที่เดียว) ตรงนี้เป็นแค่ทางเข้า ไม่คำนวณซ้ำ */}
+        {baseLadder.rungs.length > 0 && (
+          <MenuCard style={styles.baseCard}>
+            <MenuRow
+              icon="shield-checkmark-outline"
+              title="ด่านพื้นฐาน · ให้พอร์ตจ่ายชีวิตแทน"
+              tone={COLORS.success}
+              value={`${baseLadder.clearedCount}/${baseLadder.rungs.length}`}
+              valueSub="ปลดแล้ว"
+              sub={
+                baseLadder.current
+                  ? `ขั้นถัดไป ${baseLadder.current.name} · ต้องมีพอร์ต ฿${formatCurrency(
+                      baseLadder.current.cumulativeTHB
+                    )}`
+                  : `ปลดครบแล้ว — ค่าใช้จ่าย ฿${formatCurrency(
+                      baseLadder.totalMonthlyTHB
+                    )}/เดือน พอร์ตจ่ายเองได้หมด`
+              }
+              onPress={() => navigation.navigate('LifeCost')}
+              first
+            />
+          </MenuCard>
         )}
 
         {/* ── การ์ดหลัก: อยู่ด่านไหน เหลืออีกเท่าไหร่ ── */}
@@ -459,6 +531,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
+  baseCard: { marginHorizontal: 0, marginBottom: 12 },
   heroCard: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
