@@ -30,14 +30,26 @@ import { getCurrencies } from '../services/currencyStorage';
 import { getRealizedTrades } from '../services/realizedStorage';
 import { summarizeRealized } from '../utils/realizedAnalysis';
 import { planPurchaseGoals, PurchaseGoalProgress } from '../utils/purchaseGoals';
-import { COLORS, TEXT, FONTS, formatCurrency, formatCurrencyWithType, convertToTHB } from '../utils/constants';
+import { COLORS, RADIUS, TEXT, FONTS, formatCurrency, formatCurrencyWithType, convertToTHB } from '../utils/constants';
+import { ActionButton } from '../components/ActionButton';
 import { notify, confirmAsk } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
+import { Mascot, MascotState, MascotEmpty } from '../components/Mascot';
 
 // ความกว้างการ์ดในคิวบนเดสก์ท็อป — หน้านี้ไม่มีเพดานความกว้างแล้ว (ดู utils/responsive.ts)
 // ถ้าเรียงคอลัมน์เดียว การ์ดจะกว้างเท่าจอ แถบ progress สูง 8px จะยืดยาวจนอ่านค่าไม่ได้
 // เลยใช้กริด wrap แบบเดียวกับการ์ดสรุปในหน้าพอร์ต — ลำดับคิวยังอ่านได้จากเลขบนป้ายอันดับ
 const QUEUE_CARD_BASIS = 420;
+
+// อารมณ์ของน้องหมุดบนการ์ดสรุป — สะท้อน "ตอนนี้ปลดล็อกอะไรได้บ้าง" ตัวเดียวกับที่ตัวเลขบอก
+// ไม่ใช่ของประดับ: มองรูปก่อนอ่านเลขก็รู้แล้วว่ามีของให้ไปเอาหรือยัง
+// ยังไม่มีของในคิว = หลับ (ไม่ใช่เศร้า — ไม่มีคิวไม่ใช่ความล้มเหลว)
+const mascotFor = (pendingCount: number, unlockedCount: number, realizedTHB: number): MascotState => {
+  if (pendingCount === 0) return 'sleep';
+  if (unlockedCount > 0) return 'cheer';
+  if (realizedTHB <= 0) return 'sad';
+  return 'happy';
+};
 
 // แปลง input เป็นตัวเลข — ผู้ใช้พิมพ์ comma มาได้ ช่องว่างต้องเป็น 0 ไม่ใช่ NaN
 const num = (s: string): number => {
@@ -136,7 +148,7 @@ export default function PurchaseGoalsScreen() {
   const handleSave = async () => {
     const name = nameInput.trim();
     if (!name) {
-      notify('ใส่ชื่อของที่อยากได้ก่อน');
+      notify('ใส่ชื่อรางวัลก่อน');
       return;
     }
     const price = num(priceInput);
@@ -319,7 +331,7 @@ export default function PurchaseGoalsScreen() {
         <View style={styles.cardBottom}>
           <Text style={styles.progressText}>
             {p.unlocked
-              ? `พร้อมซื้อแล้ว — กันกำไรไว้ครบ ${formatCurrency(p.requiredTHB)}`
+              ? `ปลดล็อกแล้ว — กันกำไรไว้ครบ ${formatCurrency(p.requiredTHB)}`
               : `${formatCurrency(p.allocatedTHB)} / ${formatCurrency(p.requiredTHB)}  (${pct.toFixed(0)}%) · ขาดอีก ${formatCurrency(p.remainingTHB)}`}
           </Text>
         </View>
@@ -339,10 +351,7 @@ export default function PurchaseGoalsScreen() {
               <Text style={styles.buyBtnText}> ซื้อแล้ว</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.linkBtn} onPress={() => openEdit(p.goal)}>
-            <Ionicons name="create-outline" size={14} color={COLORS.primary} />
-            <Text style={styles.linkBtnText}> แก้ไข</Text>
-          </TouchableOpacity>
+          <ActionButton label="แก้ไข" icon="create-outline" size="sm" onPress={() => openEdit(p.goal)} />
         </View>
       </View>
     );
@@ -358,13 +367,23 @@ export default function PurchaseGoalsScreen() {
 
       {/* ── การ์ดสรุป: กองกำไรที่เอามาใช้ปลดล็อกได้ ── */}
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>กำไรที่ขายจริงสะสม</Text>
-        <Text style={[styles.summaryValue, realizedProfit < 0 && { color: COLORS.error }]}>
-          {formatCurrency(plan.realizedProfitTHB)}
-        </Text>
-        <Text style={styles.summarySub}>
-          นับเฉพาะไม้ที่ปิดแล้ว — กำไรลอยตัวไม่นับ เพราะยังเอาไปซื้อของไม่ได้
-        </Text>
+        {/* น้องหมุดอยู่ขวาของยอด ไม่ใช่กลางการ์ด — ตัวเลขยังเป็นพระเอก
+            minWidth: 0 ที่คอลัมน์ซ้ายจำเป็นบนเว็บ ไม่งั้นข้อความยาวดันมาสคอตหลุดขอบ (§1.4) */}
+        <View style={styles.summaryTop}>
+          <View style={styles.summaryTopMain}>
+            <Text style={styles.summaryLabel}>กำไรที่ขายจริงสะสม</Text>
+            <Text style={[styles.summaryValue, realizedProfit < 0 && { color: COLORS.error }]}>
+              {formatCurrency(plan.realizedProfitTHB)}
+            </Text>
+            <Text style={styles.summarySub}>
+              นับเฉพาะไม้ที่ปิดแล้ว — กำไรลอยตัวไม่นับ เพราะยังเอาไปซื้อของไม่ได้
+            </Text>
+          </View>
+          <Mascot
+            state={mascotFor(plan.pending.length, plan.unlockedCount, plan.realizedProfitTHB)}
+            size={72}
+          />
+        </View>
 
         <View style={styles.kpiRow}>
           <View style={styles.kpiCell}>
@@ -387,7 +406,7 @@ export default function PurchaseGoalsScreen() {
             ถ้าไม่บอก จะเห็นแค่ "ทุกชิ้นล็อก 0%" แล้วงงว่าทำไมกำไรมีแต่ปลดล็อกไม่ได้ */}
         {plan.spentTHB > plan.realizedProfitTHB && (
           <Text style={[styles.nextUpText, { color: COLORS.warning }]}>
-            ⚠ ของที่ซื้อแล้วกินโควตา {formatCurrency(plan.spentTHB)} ซึ่งเกินกำไรที่ขายจริงตอนนี้{' '}
+            ของที่ซื้อแล้วกินโควตา {formatCurrency(plan.spentTHB)} ซึ่งเกินกำไรที่ขายจริงตอนนี้{' '}
             {formatCurrency(plan.realizedProfitTHB)} อยู่{' '}
             {formatCurrency(plan.spentTHB - plan.realizedProfitTHB)} — คิวจะยังไม่ขยับจนกำไรไล่ทัน
           </Text>
@@ -400,22 +419,22 @@ export default function PurchaseGoalsScreen() {
         )}
         {!plan.nextUp && plan.pending.length > 0 && (
           <Text style={[styles.nextUpText, { color: COLORS.success }]}>
-            ปลดล็อกครบทุกชิ้นในคิวแล้ว 🎉
+            ปลดล็อกครบทุกชิ้นในคิวแล้ว
           </Text>
         )}
       </View>
 
       <TouchableOpacity style={styles.addBtn} onPress={openAdd}>
         <Ionicons name="add-circle-outline" size={18} color="#ffffff" />
-        <Text style={styles.addBtnText}> เพิ่มของที่อยากได้</Text>
+        <Text style={styles.addBtnText}> เพิ่มรางวัล</Text>
       </TouchableOpacity>
 
       {/* ── คิวของที่ยังไม่ซื้อ ── */}
-      <Text style={styles.sectionTitle}>คิวของที่อยากได้</Text>
+      <Text style={styles.sectionTitle}>คิวรางวัล</Text>
       {plan.pending.length === 0 ? (
-        <Text style={styles.empty}>
-          ยังไม่มีของในคิว{'\n'}ใส่ของที่อยากได้ แล้วระบบจะบอกว่าต้องทำกำไรอีกเท่าไหร่ถึงจะซื้อได้
-        </Text>
+        <MascotEmpty>
+            ยังไม่มีรางวัลในคิว{'\n'}ใส่ของที่อยากได้ แล้วระบบจะบอกว่าต้องทำกำไรอีกเท่าไหร่ถึงจะปลดล็อก
+        </MascotEmpty>
       ) : (
         <View style={isDesktop ? styles.cardGrid : undefined}>
           {plan.pending.map(renderPendingCard)}
@@ -425,16 +444,13 @@ export default function PurchaseGoalsScreen() {
       {/* ── ของที่ซื้อแล้ว (ยุบไว้) ── */}
       {plan.purchased.length > 0 && (
         <>
-          <TouchableOpacity style={styles.toggleRow} onPress={() => setShowPurchased((v) => !v)}>
-            <Ionicons
-              name={showPurchased ? 'chevron-up' : 'chevron-down'}
-              size={14}
-              color={COLORS.primary}
-            />
-            <Text style={styles.toggleText}>
-              {showPurchased ? ' ซ่อนของที่ซื้อแล้ว' : ` ของที่ซื้อแล้ว (${plan.purchased.length})`}
-            </Text>
-          </TouchableOpacity>
+          <ActionButton
+            icon={showPurchased ? 'chevron-up' : 'chevron-down'}
+            label={showPurchased ? 'ซ่อนของที่ซื้อแล้ว' : `ของที่ซื้อแล้ว (${plan.purchased.length})`}
+            size="sm"
+            onPress={() => setShowPurchased((v) => !v)}
+            style={styles.toggleRow}
+          />
 
           {showPurchased &&
             plan.purchased.map((p) => (
@@ -451,14 +467,18 @@ export default function PurchaseGoalsScreen() {
                   </View>
                 </View>
                 <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.linkBtn} onPress={() => handleUnbuy(p.goal)}>
-                    <Ionicons name="arrow-undo-outline" size={14} color={COLORS.primary} />
-                    <Text style={styles.linkBtnText}> เอากลับเข้าคิว</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.linkBtn} onPress={() => openEdit(p.goal)}>
-                    <Ionicons name="create-outline" size={14} color={COLORS.primary} />
-                    <Text style={styles.linkBtnText}> แก้ไข</Text>
-                  </TouchableOpacity>
+                  <ActionButton
+                    label="เอากลับเข้าคิว"
+                    icon="arrow-undo-outline"
+                    size="sm"
+                    onPress={() => handleUnbuy(p.goal)}
+                  />
+                  <ActionButton
+                    label="แก้ไข"
+                    icon="create-outline"
+                    size="sm"
+                    onPress={() => openEdit(p.goal)}
+                  />
                 </View>
               </View>
             ))}
@@ -466,7 +486,7 @@ export default function PurchaseGoalsScreen() {
       )}
 
       <Text style={styles.ruleNote}>
-        กฎ: ของราคา X ต้องทำกำไรที่ขายจริงให้ได้ {DEFAULT_PURCHASE_MULTIPLIER}×X ก่อนจึงซื้อได้ ·
+        กฎ: รางวัลราคา X ต้องทำกำไรที่ขายจริงให้ได้ {DEFAULT_PURCHASE_MULTIPLIER}×X ก่อนจึงปลดล็อก ·
         กำไรก้อนเดียวไม่ถูกนับซ้ำ — ชิ้นบนคิวกินโควตาก่อน ที่เหลือจึงไหลลงชิ้นถัดไป
       </Text>
 
@@ -485,10 +505,10 @@ export default function PurchaseGoalsScreen() {
             showsVerticalScrollIndicator={false}
           >
             <Text style={styles.modalTitle}>
-              {editing ? 'แก้ไขเป้าหมาย' : 'เพิ่มของที่อยากได้'}
+              {editing ? 'แก้ไขรางวัล' : 'เพิ่มรางวัล'}
             </Text>
 
-            <Text style={styles.modalLabel}>ชื่อของ</Text>
+            <Text style={styles.modalLabel}>ชื่อรางวัล</Text>
             <TextInput
               style={styles.modalInput}
               value={nameInput}
@@ -497,7 +517,7 @@ export default function PurchaseGoalsScreen() {
               placeholderTextColor={COLORS.textSecondary}
             />
 
-            <Text style={styles.modalLabel}>ราคาของ</Text>
+            <Text style={styles.modalLabel}>ราคารางวัล</Text>
             <TextInput
               style={styles.modalInput}
               value={priceInput}
@@ -580,13 +600,19 @@ export default function PurchaseGoalsScreen() {
 
             <View style={styles.modalBottomRow}>
               {editing && (
-                <TouchableOpacity onPress={() => handleDelete(editing)}>
-                  <Text style={styles.modalDeleteText}>ลบเป้าหมายนี้</Text>
-                </TouchableOpacity>
+                <ActionButton
+                  label="ลบเป้าหมายนี้"
+                  icon="trash-outline"
+                  variant="danger"
+                  onPress={() => handleDelete(editing)}
+                />
               )}
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Text style={styles.modalCancelText}>ยกเลิก</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label="ยกเลิก"
+                variant="quiet"
+                onPress={() => setModalVisible(false)}
+                style={styles.modalCancelBtn}
+              />
             </View>
           </ScrollView>
         </View>
@@ -622,6 +648,9 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
   },
+  // แถวบนของการ์ดสรุป: ข้อความซ้าย มาสคอตขวา
+  summaryTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  summaryTopMain: { flex: 1, minWidth: 0 },
   summaryLabel: { ...TEXT.caption, color: COLORS.textSecondary },
   summaryValue: { ...TEXT.amount, color: COLORS.text, marginTop: 2 },
   summarySub: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 4 },
@@ -632,6 +661,7 @@ const styles = StyleSheet.create({
   nextUpText: { ...TEXT.caption, color: COLORS.text, marginTop: 12 },
 
   addBtn: {
+    borderRadius: RADIUS.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -685,6 +715,7 @@ const styles = StyleSheet.create({
   cardPrice: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 2 },
   moveCol: { gap: 4 },
   moveBtn: {
+    borderRadius: RADIUS.sm,
     width: 26,
     height: 22,
     alignItems: 'center',
@@ -706,15 +737,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.success,
+    borderRadius: RADIUS.sm,
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
   buyBtnText: { color: '#ffffff', fontSize: 13, fontFamily: FONTS.semibold },
-  linkBtn: { flexDirection: 'row', alignItems: 'center' },
-  linkBtnText: { color: COLORS.primary, fontSize: 13, fontFamily: FONTS.medium },
 
-  toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
-  toggleText: { color: COLORS.primary, fontSize: 13, fontFamily: FONTS.medium },
+  toggleRow: { alignSelf: 'flex-start', marginVertical: 8 },
 
   ruleNote: {
     ...TEXT.hint,
@@ -761,6 +790,7 @@ const styles = StyleSheet.create({
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
+    borderRadius: RADIUS.sm,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
@@ -781,12 +811,12 @@ const styles = StyleSheet.create({
   previewStrong: { fontFamily: FONTS.semibold, color: COLORS.text },
   modalSaveBtn: {
     backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.md,
     paddingVertical: 13,
     alignItems: 'center',
     marginTop: 20,
   },
   modalSaveBtnText: { color: '#ffffff', fontSize: 15, fontFamily: FONTS.semibold },
-  modalBottomRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 },
-  modalDeleteText: { color: COLORS.error, fontSize: 13, fontFamily: FONTS.medium },
-  modalCancelText: { color: COLORS.textSecondary, fontSize: 13, fontFamily: FONTS.medium, marginLeft: 'auto' },
+  modalBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 },
+  modalCancelBtn: { marginLeft: 'auto' },
 });

@@ -34,7 +34,8 @@ import { getInvestments } from '../services/investmentStorage';
 import { getRealizedTrades } from '../services/realizedStorage';
 import { getAccounts } from '../services/accountStorage';
 import { getRateToTHB } from '../services/priceApi';
-import { COLORS } from '../utils/constants';
+import { COLORS, RADIUS } from '../utils/constants';
+import { ActionButton } from '../components/ActionButton';
 import { notify, confirmAsk } from '../utils/dialog';
 
 type Tab = 'currency' | 'platform';
@@ -47,12 +48,26 @@ interface Usage {
 
 const EMPTY_USAGE: Usage = { currency: {}, platform: {} };
 
+/** ช่องว่าง = "ยังไม่ตั้ง" (undefined) ซึ่งต่างจาก 0 ที่แปลว่า "ฟรีจริง ๆ" */
+const numOrUndef = (raw: string): number | undefined => {
+  const v = parseFloat(raw.replace(/,/g, ''));
+  return raw.trim() !== '' && Number.isFinite(v) && v >= 0 ? v : undefined;
+};
+
 /** บรรทัดสรุปค่าธรรมเนียมใต้ชื่อแพลตฟอร์มในลิสต์ — "ยังไม่ตั้ง" ต้องต่างจาก "ฟรี" */
 const platformFeeLabel = (p: UserPlatform): string => {
   const parts: string[] = [];
   if (p.feePercent != null) parts.push(`${p.feePercent}% ต่อคำสั่ง`);
-  if (p.feeMinTHB != null) parts.push(`ขั้นต่ำ ${p.feeMinTHB} บาท`);
-  return parts.length > 0 ? parts.join(' · ') : 'ยังไม่ได้ตั้งค่าธรรมเนียม';
+  if (p.feeMinTHB != null) parts.push(`ขั้นต่ำ ${p.feeMinTHB} ${p.feeMinCurrency || 'บาท'}`);
+  return parts.length > 0 ? parts.join(' · ') : 'ใช้ค่าธรรมเนียมของสกุลเงิน (ถ้าตั้งไว้)';
+};
+
+/** บรรทัดสรุปใต้สกุลเงิน — ค่าธรรมเนียมมาตรฐานของตลาดที่ซื้อขายด้วยสกุลนี้ */
+const currencyFeeLabel = (c: UserCurrency): string => {
+  const parts: string[] = [];
+  if (c.feePercent != null) parts.push(`${c.feePercent}% ต่อคำสั่ง`);
+  if (c.feeMin != null) parts.push(`ขั้นต่ำ ${c.feeMin} ${c.code}`);
+  return parts.length > 0 ? `ค่าธรรมเนียมมาตรฐาน ${parts.join(' · ')}` : '';
 };
 
 export default function ManageCatalogScreen() {
@@ -74,6 +89,11 @@ export default function ManageCatalogScreen() {
   // ค่าธรรมเนียมของแพลตฟอร์ม — เก็บเป็น string ระหว่างพิมพ์ ว่าง = "ยังไม่ตั้ง" (ต่างจาก 0)
   const [feePercentInput, setFeePercentInput] = useState('');
   const [feeMinInput, setFeeMinInput] = useState('');
+  // สกุลของค่าธรรมเนียมขั้นต่ำฝั่งแพลตฟอร์ม (IBKR คิด $1 ไม่ใช่ 1 บาท)
+  const [feeMinCurInput, setFeeMinCurInput] = useState('THB');
+  // ค่าธรรมเนียมมาตรฐานของสกุลเงิน — ใช้เป็นค่าตั้งต้นให้ทุกแพลตฟอร์มที่ยังไม่ได้ตั้งเอง
+  const [curFeePercentInput, setCurFeePercentInput] = useState('');
+  const [curFeeMinInput, setCurFeeMinInput] = useState('');
   const [fetchingRate, setFetchingRate] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -161,6 +181,9 @@ export default function ManageCatalogScreen() {
     setNameInput('');
     setFeePercentInput('');
     setFeeMinInput('');
+    setFeeMinCurInput('THB');
+    setCurFeePercentInput('');
+    setCurFeeMinInput('');
     setModalVisible(true);
   };
 
@@ -170,6 +193,8 @@ export default function ManageCatalogScreen() {
     setCodeInput(c.code);
     setSymbolInput(c.symbol || '');
     setRateInput(c.rateToTHB != null ? c.rateToTHB.toString() : '');
+    setCurFeePercentInput(c.feePercent != null ? String(c.feePercent) : '');
+    setCurFeeMinInput(c.feeMin != null ? String(c.feeMin) : '');
     setModalVisible(true);
   };
 
@@ -179,6 +204,7 @@ export default function ManageCatalogScreen() {
     setNameInput(p.name);
     setFeePercentInput(p.feePercent != null ? String(p.feePercent) : '');
     setFeeMinInput(p.feeMinTHB != null ? String(p.feeMinTHB) : '');
+    setFeeMinCurInput(p.feeMinCurrency || 'THB');
     setModalVisible(true);
   };
 
@@ -211,6 +237,8 @@ export default function ManageCatalogScreen() {
       code,
       symbol: symbolInput.trim() || undefined,
       rateToTHB: Number.isFinite(rate) && rate > 0 ? rate : undefined,
+      feePercent: numOrUndef(curFeePercentInput),
+      feeMin: numOrUndef(curFeeMinInput),
       createdAt: editingCurrency?.createdAt ?? new Date().toISOString(),
     };
     const oldCode = editingCurrency?.code;
@@ -250,15 +278,12 @@ export default function ManageCatalogScreen() {
     const dup = platforms.find((p) => p.name.toLowerCase() === name.toLowerCase() && p.id !== editingPlatform?.id);
     if (dup) { notify(`มีแพลตฟอร์ม "${name}" อยู่แล้ว`); return; }
     // ว่าง = ยังไม่ตั้ง (undefined) ไม่ใช่ 0 — 0 แปลว่า "ฟรีจริง ๆ" คนละความหมายกัน
-    const numOrUndef = (raw: string): number | undefined => {
-      const v = parseFloat(raw.replace(/,/g, ''));
-      return raw.trim() !== '' && Number.isFinite(v) && v >= 0 ? v : undefined;
-    };
     const item: UserPlatform = {
       id: editingPlatform?.id ?? Date.now().toString(),
       name,
       feePercent: numOrUndef(feePercentInput),
       feeMinTHB: numOrUndef(feeMinInput),
+      feeMinCurrency: numOrUndef(feeMinInput) != null ? feeMinCurInput : undefined,
       createdAt: editingPlatform?.createdAt ?? new Date().toISOString(),
     };
     const oldName = editingPlatform?.name;
@@ -387,6 +412,10 @@ export default function ManageCatalogScreen() {
                         : '⚠ ยังไม่ตั้งเรต — ถูกคิดเป็น 1:1 กับบาท'
                     : platformFeeLabel(item as UserPlatform)}
                 </Text>
+                {/* ค่าธรรมเนียมมาตรฐานของสกุลนี้ — โชว์เฉพาะตอนตั้งไว้แล้ว ไม่งั้นเป็นบรรทัดว่าง */}
+                {cur && currencyFeeLabel(cur) ? (
+                  <Text style={styles.cardSub}>{currencyFeeLabel(cur)}</Text>
+                ) : null}
               </View>
               <View style={styles.cardRight}>
                 <Text style={[styles.usageText, locked && styles.usageTextActive]}>
@@ -466,6 +495,35 @@ export default function ManageCatalogScreen() {
                   เรตสดมาจาก open.er-api.com (แคช 1 ชม.) — ดึงมาแล้วแก้เองได้ ระบบจะใช้ค่าที่บันทึกไว้เสมอ
                 </Text>
 
+                {/* ค่าธรรมเนียมชั้นสกุลเงิน — ตั้งครั้งเดียวใช้ได้ทุกโบรกที่เทรดตลาดนี้
+                    แพลตฟอร์มที่ตั้งของตัวเองไว้จะชนะเสมอ (ดู utils/tradeFee.ts) */}
+                <Text style={styles.modalLabel}>ค่าธรรมเนียมมาตรฐานของตลาดนี้ (% ต่อคำสั่ง)</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={curFeePercentInput}
+                  onChangeText={setCurFeePercentInput}
+                  keyboardType="numeric"
+                  placeholder="เช่น 0.157 — เว้นว่างถ้ายังไม่รู้"
+                  placeholderTextColor={COLORS.textSecondary}
+                />
+
+                <Text style={styles.modalLabel}>
+                  ขั้นต่ำต่อคำสั่ง (หน่วยเป็น {codeInput.trim().toUpperCase() || 'สกุลนี้'})
+                </Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={curFeeMinInput}
+                  onChangeText={setCurFeeMinInput}
+                  keyboardType="numeric"
+                  placeholder="เช่น 50 — เว้นว่างถ้าไม่มีขั้นต่ำ"
+                  placeholderTextColor={COLORS.textSecondary}
+                />
+                <Text style={styles.modalHint}>
+                  ตั้งที่นี่ครั้งเดียว แล้วทุกแพลตฟอร์มที่ยังไม่ได้ตั้งของตัวเองจะใช้ตัวนี้
+                  {'\n'}แพลตฟอร์มที่ตั้งค่าธรรมเนียมไว้เอง จะใช้ของตัวเองเสมอ
+                  {'\n'}ต้องรัน `sql/catalog_fee_by_currency.sql` ก่อน ค่าถึงจะถูกเก็บ
+                </Text>
+
                 <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSaveCurrency} disabled={saving}>
                   <Text style={styles.modalSaveBtnText}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</Text>
                 </TouchableOpacity>
@@ -499,19 +557,39 @@ export default function ManageCatalogScreen() {
                   placeholderTextColor={COLORS.textSecondary}
                 />
 
-                <Text style={styles.modalLabel}>ขั้นต่ำต่อคำสั่ง (บาท)</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  value={feeMinInput}
-                  onChangeText={setFeeMinInput}
-                  keyboardType="numeric"
-                  placeholder="เช่น 50 — เว้นว่างถ้าไม่มีขั้นต่ำ"
-                  placeholderTextColor={COLORS.textSecondary}
-                />
+                <Text style={styles.modalLabel}>ขั้นต่ำต่อคำสั่ง</Text>
+                <View style={styles.rateRow}>
+                  <TextInput
+                    style={[styles.modalInput, styles.rateInput]}
+                    value={feeMinInput}
+                    onChangeText={setFeeMinInput}
+                    keyboardType="numeric"
+                    placeholder="เช่น 50 — เว้นว่างถ้าไม่มีขั้นต่ำ"
+                    placeholderTextColor={COLORS.textSecondary}
+                  />
+                </View>
+                {/* โบรกต่างประเทศคิดขั้นต่ำเป็นดอลลาร์ (IBKR $1) — บังคับกรอกเป็นบาท
+                    แปลว่าต้องแปลงเองทุกครั้งที่เรตขยับ ซึ่งไม่มีใครทำจริง */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.feeCurRow}>
+                  {[...new Set(['THB', ...currencies.map((c) => c.code)])].map((code) => (
+                    <TouchableOpacity
+                      key={code}
+                      style={[styles.feeCurChip, feeMinCurInput === code && styles.feeCurChipOn]}
+                      onPress={() => setFeeMinCurInput(code)}
+                    >
+                      <Text
+                        style={[styles.feeCurChipText, feeMinCurInput === code && styles.feeCurChipTextOn]}
+                      >
+                        {code}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
                 <Text style={styles.modalHint}>
                   คิดเป็น "% ของมูลค่า แต่ไม่ต่ำกว่าขั้นต่ำ" ตามที่โบรกส่วนใหญ่คิดจริง
-                  {'\n'}เว้นว่างทั้งสองช่อง = ยังไม่ได้ตั้ง (ต่างจากกรอก 0 ซึ่งแปลว่าฟรี)
-                  {'\n'}ยังใช้ไม่ได้ถ้ายังไม่ได้รัน `sql/user_platforms_fee.sql` — บันทึกได้แต่ค่าธรรมเนียมจะไม่ถูกเก็บ
+                  {'\n'}เว้นว่างทั้งสองช่อง = ใช้ค่าธรรมเนียมของสกุลเงินแทน (ตั้งได้ที่แท็บสกุลเงิน)
+                  {'\n'}กรอก 0 = ฟรีจริง ๆ ซึ่งต่างจากเว้นว่าง
+                  {'\n'}ต้องรัน `sql/user_platforms_fee.sql` + `sql/catalog_fee_by_currency.sql` ก่อน ค่าธรรมเนียมถึงจะถูกเก็บ
                 </Text>
 
                 <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePlatform} disabled={saving}>
@@ -521,23 +599,26 @@ export default function ManageCatalogScreen() {
             )}
 
             <View style={styles.modalBottomRow}>
+              {/* ยังกดได้แม้ลบไม่ได้ — handleDelete เป็นตัวบอกว่ามีกี่รายการใช้อยู่
+                  ปุ่มที่กดไม่ได้เลยจะไม่มีทางบอกเหตุผล (เหตุผลเดียวกับ canAddLeg ใน utils/cycles.ts) */}
               {(editingCurrency || editingPlatform) && (
-                <TouchableOpacity onPress={handleDelete}>
-                  <Text
-                    style={[
-                      styles.modalDeleteText,
-                      usedCount((editingCurrency ?? editingPlatform)!) > 0 && styles.modalDeleteTextLocked,
-                    ]}
-                  >
-                    {usedCount((editingCurrency ?? editingPlatform)!) > 0
+                <ActionButton
+                  label={
+                    usedCount((editingCurrency ?? editingPlatform)!) > 0
                       ? `ลบไม่ได้ (ใช้อยู่ ${usedCount((editingCurrency ?? editingPlatform)!)})`
-                      : 'ลบ'}
-                  </Text>
-                </TouchableOpacity>
+                      : 'ลบ'
+                  }
+                  icon="trash-outline"
+                  variant={usedCount((editingCurrency ?? editingPlatform)!) > 0 ? 'secondary' : 'danger'}
+                  onPress={handleDelete}
+                />
               )}
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Text style={styles.modalCancelText}>ปิด</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label="ปิด"
+                variant="quiet"
+                onPress={() => setModalVisible(false)}
+                style={styles.modalCancelBtn}
+              />
             </View>
           </ScrollView>
         </View>
@@ -590,6 +671,7 @@ const styles = StyleSheet.create({
   usageText: { fontSize: 11, fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary },
   usageTextActive: { color: COLORS.primary, fontFamily: 'NotoSansThai_600SemiBold' },
   addBtn: {
+    borderRadius: RADIUS.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -630,9 +712,23 @@ const styles = StyleSheet.create({
   },
   modalHint: { fontSize: 11, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary, marginTop: 6, lineHeight: 16 },
   rateRow: { flexDirection: 'row', gap: 8, alignItems: 'stretch' },
+  // ชิปเลือกสกุลของค่าธรรมเนียมขั้นต่ำ — แถวเลื่อนแนวนอนเพราะสกุลเงินเพิ่มได้ไม่จำกัด
+  feeCurRow: { marginTop: 8 },
+  feeCurChip: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  feeCurChipOn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  feeCurChipText: { fontSize: 12, fontFamily: 'NotoSansThai_400Regular', color: COLORS.text },
+  feeCurChipTextOn: { color: '#ffffff' },
   // minWidth:0 ไม่งั้น <input> ย่อไม่ลง แล้วปุ่ม "ดึงเรต" จะถูกดันล้นการ์ด modal บนมือถือ
   rateInput: { flex: 1, minWidth: 0 },
   rateBtn: {
+    borderRadius: RADIUS.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -643,10 +739,8 @@ const styles = StyleSheet.create({
     minWidth: 110,
   },
   rateBtnText: { fontSize: 12, fontFamily: 'NotoSansThai_500Medium', color: COLORS.primary },
-  modalSaveBtn: { backgroundColor: COLORS.primary, paddingVertical: 13, alignItems: 'center', marginTop: 20 },
+  modalSaveBtn: { backgroundColor: COLORS.primary, borderRadius: RADIUS.md, paddingVertical: 13, alignItems: 'center', marginTop: 20 },
   modalSaveBtnText: { color: '#ffffff', fontSize: 15, fontFamily: 'NotoSansThai_600SemiBold' },
-  modalBottomRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 },
-  modalDeleteText: { color: COLORS.error, fontSize: 13, fontFamily: 'NotoSansThai_500Medium' },
-  modalDeleteTextLocked: { color: COLORS.textSecondary },
-  modalCancelText: { color: COLORS.textSecondary, fontSize: 13, fontFamily: 'NotoSansThai_500Medium', marginLeft: 'auto' },
+  modalBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 },
+  modalCancelBtn: { marginLeft: 'auto' },
 });

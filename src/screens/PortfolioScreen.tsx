@@ -54,6 +54,9 @@ import {
   assetTint,
 } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
+import { ActionButton } from '../components/ActionButton';
+import { MenuRow, MenuCard } from '../components/MenuRow';
+import { Mascot, MascotState, MascotEmpty } from '../components/Mascot';
 import { fetchPricesForItems, isPriceRefreshable, getTwoRedDays } from '../services/priceApi';
 import { analyzePortfolioGoal, PortfolioGoal, PortfolioGoalAnalysis } from '../utils/investmentGoals';
 import { getPortfolioGoal, savePortfolioGoal, deletePortfolioGoal } from '../services/portfolioGoalStorage';
@@ -78,6 +81,13 @@ import { InvestmentCycle, basketLabel } from '../types/cycle';
 import { getOpenCycles } from '../services/cycleStorage';
 import { legsOfCycle, summarizeCycle, canAddLeg } from '../utils/cycles';
 import { powderStatus, countSymbols } from '../utils/dryPowder';
+import { RedSignal } from '../types/redSignal';
+import {
+  getRedSignals,
+  recordRedSignals,
+  setRedSignalOutcomeByKey,
+} from '../services/redSignalStorage';
+import { buildRedSignalKey, roundNoOf, summarizeRedSignals } from '../utils/redSignalLog';
 
 type PortfolioScreenNavigationProp = NativeStackNavigationProp<
   RootStackParamList,
@@ -232,46 +242,6 @@ const baht = (n: number, showPlus = false): string => {
  */
 const usd = (thb: number): string => formatCurrencyWithType(convertFromTHB(thb, 'USD'), 'USD');
 
-/**
- * บรรทัดเมนูของพอร์ต: ชื่อเรื่อง + ตัวเลขล่าสุด + บรรทัดขยายความ แล้วกดเข้าไปหน้าเต็ม
- *
- * ⚠️ ต้องอยู่นอก PortfolioScreen — คอมโพเนนต์ที่ประกาศในตัว render จะเป็น "ชนิดใหม่"
- * ทุกครั้งที่ state ขยับ React จึง unmount/mount ทั้งซับทรี (ดู CLAUDE.md §1.13)
- */
-const MenuRow: React.FC<{
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  value: string;
-  sub: string;
-  valueNegative?: boolean;
-  /** สีประจำเรื่องของแถวนี้ — วงไอคอนใช้สีนี้ ไล่ดูเมนูแล้วแยกออกก่อนอ่านตัวหนังสือ */
-  tone?: string;
-  /** แถวบนสุดของการ์ด — เส้นคั่นเป็น "ขอบบน" ของทุกแถวยกเว้นแถวแรก
-   *  (ใช้ขอบล่างไม่ได้ เพราะแถวสุดท้ายเป็นแถวที่ซ่อนได้ตามเงื่อนไข แล้วจะเหลือเส้นซ้อนขอบการ์ด) */
-  first?: boolean;
-  onPress: () => void;
-}> = ({ icon, title, value, sub, valueNegative, tone, first, onPress }) => {
-  const color = tone || COLORS.primary;
-  return (
-    <TouchableOpacity
-      style={[styles.menuRow, first && styles.menuRowFirst]}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${title} ${value}`}
-    >
-      <View style={[styles.menuRowIcon, { backgroundColor: `${color}16` }]}>
-        <Ionicons name={icon} size={18} color={color} />
-      </View>
-      <View style={styles.menuRowMain}>
-        <Text style={styles.menuRowTitle}>{title}</Text>
-        <Text style={styles.menuRowSub} numberOfLines={2}>{sub}</Text>
-      </View>
-      <Text style={[styles.menuRowValue, valueNegative && styles.menuRowValueNeg]}>{value}</Text>
-      <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
-    </TouchableOpacity>
-  );
-};
-
 export default function PortfolioScreen() {
   const navigation = useNavigation<PortfolioScreenNavigationProp>();
   const { isDesktop, width: windowWidth, sidebarWidth } = useResponsive();
@@ -373,6 +343,10 @@ export default function PortfolioScreen() {
   // หน้านี้อ่านรอบที่เปิดอยู่อย่างเดียว เพื่อบอกบริบท "ลงเพิ่มได้อีกไหม" ตรงการ์ดถึงคิวลงไม้
   // การเปิด/ปิด/ตั้งค่ารอบทั้งหมดย้ายไปหน้า "รอบลงทุน" แล้ว
   const [cycles, setCycles] = useState<InvestmentCycle[]>([]);           // รอบที่เปิดอยู่ (ตะกร้าละ 1)
+  // ── ประวัติสัญญาณ "ถึงคิวลงไม้" (ดู types/redSignal) ──
+  // หน้านี้อ่านเพื่อ (1) รู้ว่าสัญญาณไหนบันทึกไปแล้ว จะได้ไม่เขียนซ้ำ (2) เลขบนแถวเมนู
+  // การดู/แก้ผลย้อนหลังอยู่ที่หน้า "บันทึกสัญญาณ"
+  const [redSignals, setRedSignals] = useState<RedSignal[]>([]);
   // ── ตัวกรองรายการลงทุน — ยุบไว้เป็นค่าเริ่มต้น กดกางเมื่อพอร์ตเริ่มเยอะ ──
   const [showFilter, setShowFilter] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -391,8 +365,12 @@ export default function PortfolioScreen() {
     } catch {
       // ยังไม่มีตาราง/ยังไม่ตั้งเป้า — ปล่อยเป็น null
     }
+    // เก็บไว้เป็นตัวแปรท้องถิ่นด้วย ไม่ใช่แค่ setState — ตอนบันทึกประวัติสัญญาณด้านล่าง
+    // ต้องใช้ค่าล่าสุดจริง ๆ ส่วน state ของรอบนี้ยังไม่ทันเข้า closure
+    let planNow: InvestmentPlan | null = null;
     try {
-      setPlan(await getInvestmentPlan());
+      planNow = await getInvestmentPlan();
+      setPlan(planNow);
     } catch {
       // ยังไม่มีตาราง/ยังไม่ตั้งแผน — ปล่อยเป็น null
     }
@@ -423,11 +401,23 @@ export default function PortfolioScreen() {
     } catch {
       setPerson(null);
     }
+    let openCycles: InvestmentCycle[] = [];
     try {
       // รอบที่เปิดอยู่ — ยังไม่ได้รัน sql/investment_cycles.sql ก็คืน [] เอง แค่ไม่มีบริบทรอบให้อ่าน
-      setCycles(await getOpenCycles());
+      openCycles = await getOpenCycles();
+      setCycles(openCycles);
     } catch {
+      openCycles = [];
       setCycles([]);
+    }
+    // ประวัติสัญญาณที่บันทึกไว้แล้ว — ต้องอ่านก่อนเช็คแท่งเทียน เพราะใช้เป็นตัวกันเขียนซ้ำ
+    let signalsNow: RedSignal[] = [];
+    try {
+      signalsNow = await getRedSignals();
+      setRedSignals(signalsNow);
+    } catch {
+      // ยังไม่ได้รัน sql/red_signals.sql — พอร์ตทำงานปกติ แค่ไม่มีประวัติให้อ่าน
+      setRedSignals([]);
     }
     // (เลิกดึงรายรับ/รายจ่ายมาที่หน้านี้แล้ว — งบรายเดือนดูที่หน้าหลัก)
 
@@ -494,6 +484,96 @@ export default function PortfolioScreen() {
             // เรียงจากลบเยอะสุด → น้อยสุด (dropPercent เป็นค่าลบ)
             .sort((a, b) => a.dropPercent - b.dropPercent)
         );
+
+        // ── บันทึกสัญญาณลงประวัติ (ตาราง red_signals) ──
+        // เก็บเฉพาะตัวที่ "ครบรอบจริง" (met) เพราะนั่นคือครั้งที่กฎบอกให้ลงมือ
+        // ที่ต้องเก็บคือ "บริบทของตอนนั้น" ซึ่งย้อนกลับไปคิดใหม่ไม่ได้เลย:
+        // เงินต่อไม้ตามแผนวันนั้น, รอบที่เปิดอยู่, และเข้าได้/เข้าไม่ได้เพราะอะไร
+        // (แท่งเทียนย้อนหลังยังดึงได้ แต่แผนกับเพดานของวันนั้นดึงไม่ได้)
+        //
+        // best-effort ทั้งก้อน: ยังไม่ได้รัน SQL หรือเขียนไม่ติด ก็ต้องไม่กระทบการ์ดสัญญาณ
+        try {
+          const seenAtISO = new Date().toISOString();
+          // เงินต่อไม้ ณ ตอนนี้ — ทางเดียวกับที่การ์ด/หน้าเงินรอลงทุนใช้ (utils/dryPowder)
+          const legNow = powderStatus(planNow, countSymbols(allInvestments)).nextLegTHB;
+          const perRoundNow = legNow != null && legNow > 0 ? legNow : null;
+          const cycleById = new Map(
+            openCycles.map((c) => [
+              c.id,
+              {
+                cycle: c,
+                status: summarizeCycle(c, legsOfCycle(c, allInvestments), {
+                  perRoundTHB: perRoundNow,
+                }),
+              },
+            ])
+          );
+          const known = new Set(signalsNow.map((x) => x.signalKey));
+          const rows: Omit<RedSignal, 'id'>[] = [];
+          usable
+            .filter((r) => r.alert!.met)
+            .forEach((r) => {
+              const interval = (r.inv.redInterval || DEFAULT_RED_INTERVAL) as RedInterval;
+              const key = buildRedSignalKey({
+                type: r.inv.type,
+                symbol: r.inv.symbol,
+                name: r.inv.name,
+                interval,
+                every: r.alert!.every,
+                count: r.alert!.count,
+                streakStartAt: r.alert!.streakStartAt,
+                seenAtISO,
+              });
+              // ตัวเดียวกันคนละโบรก = หลายไม้ แต่เป็นแท่งเทียนชุดเดียวกัน → สัญญาณเดียว 1 แถว
+              // (กันซ้ำในชุดนี้ด้วย ไม่ใช่พึ่ง unique index ฝั่ง DB อย่างเดียว)
+              if (known.has(key)) return;
+              known.add(key);
+              const cv = r.inv.cycleId ? cycleById.get(r.inv.cycleId) : undefined;
+              const chk = cv
+                ? canAddLeg(cv.cycle, cv.status, r.inv.symbol || r.inv.name, perRoundNow)
+                : null;
+              // กด "ซื้อเพิ่มแล้ว" ไว้ก่อนหน้าแล้ว = ลงไม้ของสัญญาณนี้ไปแล้วจริง
+              const acked = isRedAckActive(r.inv, r.alert!);
+              rows.push({
+                signalKey: key,
+                investmentId: r.inv.id,
+                type: r.inv.type,
+                symbol: r.inv.symbol,
+                name: r.inv.name,
+                interval,
+                every: r.alert!.every,
+                count: r.alert!.count,
+                roundNo: roundNoOf(r.alert!.count, r.alert!.every),
+                dropPercent: r.alert!.dropPercent,
+                lowPrice: r.alert!.lowest ?? undefined,
+                lowCurrency: r.alert!.lowCurrency ?? undefined,
+                currency: r.inv.currency || 'THB',
+                streakStartAt:
+                  r.alert!.streakStartAt != null
+                    ? new Date(r.alert!.streakStartAt).toISOString()
+                    : undefined,
+                firedAt: seenAtISO,
+                // ไม้ที่ไม่อยู่ในรอบ = ไม่มีกฎของรอบมากั้น → undefined ไม่ใช่ true/false
+                enterable: chk ? chk.ok : undefined,
+                blockedReason: chk && !chk.ok ? chk.reason : undefined,
+                cycleId: cv?.cycle.id,
+                cycleNo: cv?.cycle.cycleNo,
+                planLegTHB: perRoundNow ?? undefined,
+                outcome: acked ? 'taken' : 'pending',
+                actedAt: acked ? seenAtISO : undefined,
+              });
+            });
+          if (rows.length > 0) {
+            recordRedSignals(rows)
+              .then((added) => {
+                // โหลดใหม่เฉพาะตอนที่มีแถวเพิ่มจริง — ไม่งั้นจะยิง select ทุกครั้งที่รีเฟรชราคา
+                if (added > 0) getRedSignals().then(setRedSignals).catch(() => {});
+              })
+              .catch(() => {});
+          }
+        } catch {
+          // ประวัติเป็นของเสริม — พังที่นี่ห้ามลาก "ถึงคิวลงไม้" ลงไปด้วย
+        }
       })
       .catch(() => setRedAlerts([]))
       .finally(() => setRedChecking(false));
@@ -505,7 +585,18 @@ export default function PortfolioScreen() {
   // ids เป็น array เพราะหนึ่งบรรทัดในการ์ดอาจมาจากหลายไม้ (ตัวเดียวกันคนละโบรก) —
   // แท่งเทียนเป็นชุดเดียวกัน กด "ซื้อเพิ่มแล้ว" ทีเดียวต้องปิดให้ครบทุกไม้ของตัวนั้น
   const toggleRedAck = async (
-    a: { ids: string[]; count: number; streakStartAt: number | null },
+    a: {
+      ids: string[];
+      count: number;
+      streakStartAt: number | null;
+      // ฟิลด์ชุดนี้มีไว้ประกอบ signalKey ของประวัติ — ต้องเป็นสูตรเดียวกับตอนบันทึก
+      // ไม่งั้นกด "ลงไม้แล้ว" จะไปอัปเดตแถวที่ไม่มีอยู่ แล้วประวัติค้างเป็น "ยังไม่บันทึกผล"
+      type: InvestmentType;
+      symbol: string;
+      name: string;
+      interval: RedInterval;
+      every: number;
+    },
     next: boolean
   ) => {
     const before = redAlerts;
@@ -529,6 +620,48 @@ export default function PortfolioScreen() {
                     : undefined,
               }
             : inv
+        )
+      );
+      // ── ผลลง/ไม่ลงของสัญญาณนี้ในประวัติ ──
+      // ปุ่มนี้คือที่เดียวที่ผู้ใช้บอกว่า "ลงไม้แล้ว" จริง ๆ ถ้าไม่เขียนต่อไปที่ประวัติ
+      // ตัวเลข "ทำตามสัญญาณกี่ %" จะเป็น 0 ตลอดทั้งที่ลงทุกครั้ง
+      // ยิงด้วย signalKey (ยังไม่รู้ id ของแถว) และกลืน error — ปุ่มหลักต้องไม่ล้มเพราะของเสริม
+      const exactKey = buildRedSignalKey({
+        type: a.type,
+        symbol: a.symbol,
+        name: a.name,
+        interval: a.interval,
+        every: a.every,
+        count: a.count,
+        streakStartAt: a.streakStartAt,
+        seenAtISO: new Date().toISOString(),
+      });
+      // สตรีคที่ API ไม่ให้เวลาแท่งมา (streakStartAt = null) คีย์จะอิงวันที่ที่เห็นสัญญาณ —
+      // ถ้ามากดปุ่มวันถัดไป คีย์ที่คิดสด ๆ จะไม่ตรงกับแถวที่บันทึกไว้เมื่อวาน
+      // จึงถอยไปหาแถว "สัญญาณครั้งเดียวกัน ของตัวเดียวกัน กฎเดียวกัน" ที่ใหม่สุดแทน
+      const wantRound = roundNoOf(a.count, a.every);
+      const fallback = redSignals.find(
+        (x) =>
+          x.signalKey !== exactKey &&
+          x.type === a.type &&
+          (x.symbol || x.name) === (a.symbol || a.name) &&
+          x.interval === a.interval &&
+          x.every === a.every &&
+          x.roundNo === wantRound
+      );
+      const signalKey = redSignals.some((x) => x.signalKey === exactKey)
+        ? exactKey
+        : fallback?.signalKey ?? exactKey;
+      setRedSignalOutcomeByKey(signalKey, next ? 'taken' : 'pending');
+      setRedSignals((list) =>
+        list.map((x) =>
+          x.signalKey === signalKey
+            ? {
+                ...x,
+                outcome: next ? 'taken' : 'pending',
+                actedAt: next ? new Date().toISOString() : undefined,
+              }
+            : x
         )
       );
     } catch (e: any) {
@@ -989,10 +1122,11 @@ export default function PortfolioScreen() {
             {redAlert?.acked && (
               <View style={[styles.redBadge, styles.redBadgeAcked]}>
                 <Ionicons name="checkmark-circle-outline" size={12} color={COLORS.textSecondary} />
+                {/* ป้ายนี้ไม่ใช่ของที่ต้องลงมือ — เหลือแค่ "ลงแล้ว" กับ "เตือนอีกทีเมื่อไหร่" พอ
+                    จำนวนแท่งตอนที่ลง กับราคาต่ำสุด ย้ายไปอ่านที่หน้าประวัติสัญญาณแทน */}
                 <Text style={[styles.redBadgeText, styles.redBadgeTextAcked]}>
-                  {' '}ซื้อเพิ่มแล้วตอนแดง {redAlert.count} {redUnit(redAlert.interval)}
-                  {redLowValue(redAlert) ? ` · ${redLowValue(redAlert)}` : ''} · เตือนอีกครั้งที่{' '}
-                  {redAlert.count + redAlert.every} {redUnit(redAlert.interval)}
+                  {' '}ลงไม้แล้ว · เตือนอีกทีที่ {redAlert.count + redAlert.every}{' '}
+                  {redUnit(redAlert.interval)}
                 </Text>
               </View>
             )}
@@ -1146,7 +1280,7 @@ export default function PortfolioScreen() {
 
   const realized = summarizeRealized(realizedTrades);
 
-  // คิวของที่อยากได้ — ใช้กำไร realized ก้อนเดียวกับการ์ด "ผลงานจริง" ด้านบน
+  // คิวรางวัล — ใช้กำไร realized ก้อนเดียวกับการ์ด "ผลงานจริง" ด้านบน
   // ไม่ห่อ useMemo เพราะ realized เองก็คิดใหม่ทุก render อยู่แล้ว ห่อไปก็ไม่ได้ประหยัดอะไร
   const purchasePlan = planPurchaseGoals(purchaseGoals, realized.totalPnlTHB);
 
@@ -1199,6 +1333,9 @@ export default function PortfolioScreen() {
   const dryPowder = plan?.dryPowder && plan.dryPowder > 0 ? plan.dryPowder : 0;
   const powderStat = powderStatus(plan, countSymbols(investments));
   const powderPerRound = powderStat.nextLegTHB != null && powderStat.nextLegTHB > 0 ? powderStat.nextLegTHB : null;
+
+  // ประวัติสัญญาณสะสม — เลขบนแถวเมนู/ท้ายการ์ด คิดที่ utils/redSignalLog ที่เดียวกับหน้าประวัติ
+  const signalStats = summarizeRedSignals(redSignals);
 
   // สถานะของรอบที่เปิดอยู่ — ใช้เฉพาะเป็นบริบทของการ์ด "ถึงคิวลงไม้" และบรรทัดสรุปในเมนู
   const cycleViews = cycles.map((cycle) => ({
@@ -1276,6 +1413,17 @@ export default function PortfolioScreen() {
     { value: 'date', label: 'ซื้อล่าสุด' },
   ];
 
+  // อารมณ์ของน้องหมุดบนหัวพอร์ต = ตัวเลขกำไร/ขาดทุนก้อนเดียวกับที่พิมพ์อยู่ข้าง ๆ
+  // ยังไม่มีของถืออยู่ = หลับ (ไม่ใช่เศร้า — พอร์ตว่างไม่ใช่การขาดทุน)
+  const portfolioMood: MascotState =
+    investments.length === 0
+      ? 'sleep'
+      : summary.totalProfit > 0
+        ? 'cheer'
+        : summary.totalProfit < 0
+          ? 'sad'
+          : 'happy';
+
   const listHeaderElement = (
       <View>
         <View style={[
@@ -1299,21 +1447,28 @@ export default function PortfolioScreen() {
             />
           </View>
           <View style={styles.summaryContainer}>
-            <Text style={styles.summaryLabel}>มูลค่ารวม</Text>
-            <Text style={styles.summaryValue}>{formatCurrency(summary.totalValue)}</Text>
-            <View style={styles.profitContainer}>
-              <Text style={[styles.summaryProfit, isProfit ? styles.profitPositive : styles.profitNegative]}>
-                {isProfit ? '+' : ''}{formatCurrency(summary.totalProfit)}
-              </Text>
-              <Text style={[styles.summaryPercent, isProfit ? styles.profitPositive : styles.profitNegative]}>
-                ({isProfit ? '+' : ''}{summary.totalProfitPercent.toFixed(2)}%)
-              </Text>
+            {/* น้องหมุดอยู่ขวาของยอดรวม อารมณ์ = กำไร/ขาดทุนของพอร์ต (ยังไม่มีของ = หลับ)
+                บนพื้นน้ำเงินต้องส่ง tone เป็นสีทอง — สีตัวปกติ (COLORS.primary) จมพื้นหายไปเลย */}
+            <View style={styles.summaryTopRow}>
+              <View style={styles.summaryTopMain}>
+                <Text style={styles.summaryLabel}>มูลค่ารวม</Text>
+                <Text style={styles.summaryValue}>{formatCurrency(summary.totalValue)}</Text>
+                <View style={styles.profitContainer}>
+                  <Text style={[styles.summaryProfit, isProfit ? styles.profitPositive : styles.profitNegative]}>
+                    {isProfit ? '+' : ''}{formatCurrency(summary.totalProfit)}
+                  </Text>
+                  <Text style={[styles.summaryPercent, isProfit ? styles.profitPositive : styles.profitNegative]}>
+                    ({isProfit ? '+' : ''}{summary.totalProfitPercent.toFixed(2)}%)
+                  </Text>
+                </View>
+                {/* ต้นทุนโชว์บรรทัดนี้เฉพาะตอนยังไม่ตั้งเป้า — ตั้งเป้าแล้วส่วนเป้าหมายด้านล่าง
+                    มี "ต้นทุนที่ลงไปแล้ว" ยอดเดียวกัน (summary.totalCost ตัวเดียวกัน) อยู่แล้ว */}
+                {!goalAnalysis && (
+                  <Text style={styles.summaryCost}>ลงทุนไปแล้ว {formatCurrency(summary.totalCost)}</Text>
+                )}
+              </View>
+              <Mascot state={portfolioMood} tone={COLORS.accent} size={80} />
             </View>
-            {/* ต้นทุนโชว์บรรทัดนี้เฉพาะตอนยังไม่ตั้งเป้า — ตั้งเป้าแล้วส่วนเป้าหมายด้านล่าง
-                มี "ต้นทุนที่ลงไปแล้ว" ยอดเดียวกัน (summary.totalCost ตัวเดียวกัน) อยู่แล้ว */}
-            {!goalAnalysis && (
-              <Text style={styles.summaryCost}>ลงทุนไปแล้ว {formatCurrency(summary.totalCost)}</Text>
-            )}
 
             {/* ── เป้าหมายพอร์ตรวม: ย้ายขึ้นมาอยู่ในหัวพอร์ต (ไม่มีการ์ดแยกอีกแล้ว) ──
                 "ตอนนี้เท่าไหร่" กับ "เทียบเป้าแล้วอยู่ไหน" อ่านต่อกันในกล่องเดียว
@@ -1323,9 +1478,13 @@ export default function PortfolioScreen() {
               <Text style={styles.headerGoalTitle}>
                 <Ionicons name="disc-outline" size={16} color="#ffffff" /> เป้าหมายพอร์ตรวม
               </Text>
-              <TouchableOpacity onPress={openGoalModal}>
-                <Text style={styles.headerGoalEdit}>{goal ? 'แก้ไข' : 'ตั้งเป้า'}</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label={goal ? 'แก้ไข' : 'ตั้งเป้า'}
+                icon={goal ? 'create-outline' : 'add-circle-outline'}
+                variant="onDark"
+                size="sm"
+                onPress={openGoalModal}
+              />
             </View>
 
             {!goalAnalysis ? (
@@ -1389,7 +1548,7 @@ export default function PortfolioScreen() {
           isDesktop && styles.actionButtonsDesktop,
         ]}>
           {/* ถอดออกแล้ว 3 ปุ่ม (ข้อ 2.4.1): รีเฟรชราคา → ย้ายไปอยู่ติดกับเวลานับถอยหลังบนหัวพอร์ต
-              · บัญชี → เข้าได้จาก โปรไฟล์ → บัญชี  · ของที่อยากได้ → มีแถวเมนูของตัวเองอยู่แล้ว
+              · บัญชี → เข้าได้จาก โปรไฟล์ → บัญชี  · ปลดล็อกรางวัล → มีแถวเมนูของตัวเองอยู่แล้ว
               แถวนี้เหลือเฉพาะสิ่งที่ทำกับ "รายการลงทุน" ตรง ๆ: เพิ่ม / จัดกลุ่มตามแพลตฟอร์ม / แก้รายการตัวเลือก */}
           {/* ⚠️ ทั้งสามปุ่มเคยเป็น <Text></Text> ว่างเปล่า = ไอคอนลอย ๆ ที่เดาไม่ออกว่าอันไหนคืออะไร
               โดยเฉพาะสองปุ่มขวาที่หน้าตาเหมือนกันเป๊ะ ต่างแค่รูปไอคอน
@@ -1415,66 +1574,81 @@ export default function PortfolioScreen() {
             จอที่แคบกว่านั้น (และแท็บเล็ต 768–1023) กริดจะ wrap กลับเป็นซ้อนบนล่างเอง */}
         <View style={isDesktop ? styles.cardGrid : undefined}>
         {/* ── เมนูของพอร์ต ──
-            เดิมทุกเรื่อง (ผลงานที่ขายแล้ว / รอบลงทุน / เงินรอลงทุน / ภาษี / ของที่อยากได้)
+            เดิมทุกเรื่อง (ผลงานที่ขายแล้ว / รอบลงทุน / เงินรอลงทุน / ภาษี / ปลดล็อกรางวัล)
             เป็นการ์ดเต็มใบเรียงต่อกันอยู่หน้านี้ ต้องเลื่อนผ่านทั้งหมดกว่าจะถึงรายการลงทุน
             ตอนนี้แต่ละเรื่องเป็นหน้าของตัวเอง เหลือไว้ที่นี่บรรทัดเดียว = "ตัวเลขล่าสุด + ทางเข้า"
-            ไม่มีฟีเจอร์ไหนถูกตัด ทุกอันกดเข้าไปได้ครบเหมือนเดิม */}
-        <View style={[styles.menuCard, isDesktop && styles.menuCardDesktop]}>
-          <MenuRow
-            icon="ribbon-outline"
-            title="ผลงานที่ขายแล้ว"
-            tone={COLORS.success}
-            value={realized.tradeCount > 0 ? baht(realized.totalPnlTHB, true) : '—'}
-            valueNegative={realized.totalPnlTHB < 0}
-            sub={
-              realized.tradeCount > 0
-                ? `ชนะ ${realized.winCount}/${realized.tradeCount} ดีล · ย้อนคืนการขายได้ที่นี่`
-                : 'ยังไม่มีการขายที่บันทึกไว้'
-            }
-            onPress={() => navigation.navigate('Realized')}
-            first
-          />
-          <MenuRow
-            icon="repeat-outline"
-            title="รอบลงทุน"
-            tone={assetColor('fund')}
-            value={cycleViews.length > 0 ? `${cycleViews.length} รอบ` : '—'}
-            sub={
-              cycleViews.length > 0
-                ? cycleViews
-                    .map(({ cycle, status }) => {
-                      // ยังไม่มีต้นทุนในรอบ = คิด % ไม่ได้ ต้องเป็นขีด ไม่ใช่ 0.0%
-                      const pct =
-                        status.profitPercent != null
-                          ? `${status.profitPercent >= 0 ? '+' : ''}${status.profitPercent.toFixed(1)}%`
-                          : 'ยังไม่มีไม้';
-                      return (
-                        `รอบ ${cycle.cycleNo} ${pct}` +
-                        (status.roundsLeft != null ? ` · เหลือ ${status.roundsLeft} ไม้` : '')
-                      );
-                    })
-                    .join('  ·  ')
-                : 'ยังไม่ได้เปิดรอบ — กดเข้าไปเปิดได้'
-            }
-            onPress={() => navigation.navigate('Cycles')}
-          />
+            ไม่มีฟีเจอร์ไหนถูกตัด ทุกอันกดเข้าไปได้ครบเหมือนเดิม
+
+            ลำดับ = ลำดับที่ลงมือจริง: มีกระสุนเท่าไร → รอบที่เปิดอยู่เป็นยังไง →
+            ที่ผ่านมาทำตามสัญญาณแค่ไหน → กำไรปลดล็อกของอะไรได้แล้ว → ค่อยเป็นเรื่องภาษี
+            "ผลงานที่ขายแล้ว" ย้ายเข้าไปเป็นทางเข้าในหน้ารอบลงทุนแล้ว (2026-08-20) —
+            มันคือ "ผลของรอบที่ปิดไปแล้ว" อ่านคู่กับรอบที่เปิดอยู่ในหน้าเดียวกันตรงกว่า
+            แถวรอบลงทุนจึงต้องโชว์ยอดกำไรที่ขายแล้วไว้ด้วย ไม่งั้นทางเข้าจะหายไปจากพอร์ตเงียบ ๆ */}
+        <MenuCard style={isDesktop && styles.menuCardDesktop}>
           <MenuRow
             icon="cash-outline"
             title="เงินรอลงทุน"
             tone={COLORS.accentText}
             value={
-              powderPerRound != null
-                ? `${baht(powderPerRound)} (${usd(powderPerRound)})\n${powderStat.legsPlanned} ครั้ง`
-                : '—'
+              powderPerRound != null ? `${baht(powderPerRound)} (${usd(powderPerRound)})` : '—'
             }
+            valueSub={powderPerRound != null ? `${powderStat.legsPlanned} ครั้ง` : undefined}
             sub={
               dryPowder > 0
                 ? `${baht(dryPowder)} (${usd(dryPowder)})`
                 : powderStat.reason ?? 'ยังไม่ได้จดยอด'
             }
             onPress={() => navigation.navigate('DryPowder')}
+            first
           />
-          {/* ภาษี/ของที่อยากได้ โผล่เมื่อมีของจริงเท่านั้น — ไม่งั้นเป็นบรรทัดว่างกวนสายตา */}
+          <MenuRow
+            icon="repeat-outline"
+            title="รอบลงทุน"
+            tone={assetColor('fund')}
+            // %/ไม้ที่เหลือของแต่ละรอบอ่านเต็ม ๆ ได้ที่หน้ารอบลงทุน แถวนี้เอาแค่ "มีกี่รอบ"
+            // ส่วนบรรทัดล่างคือกำไรที่ปิดไปแล้ว — เป็นทางเข้าเดียวของ "ผลงานที่ขายแล้ว" จากหน้านี้
+            value={cycleViews.length > 0 ? `${cycleViews.length} รอบ` : 'ยังไม่เปิด'}
+            sub={
+              realized.tradeCount > 0
+                ? `ผลงานที่ขายแล้ว ${baht(realized.totalPnlTHB, true)} · ชนะ ${realized.winCount}/${realized.tradeCount} ดีล`
+                : 'ผลงานที่ขายแล้ว + ย้อนคืนการขาย อยู่ในหน้านี้'
+            }
+            onPress={() => navigation.navigate('Cycles')}
+          />
+          {/* ประวัติสัญญาณ: การ์ด "ถึงคิวลงไม้" ด้านขวาเป็นภาพของวันนี้เท่านั้น
+              สตรีคขาดแล้วสัญญาณหายไปพร้อมกัน — แถวนี้คือทางเข้าไปดูของสะสมทั้งหมด
+              โชว์เมื่อมีของให้เช็ค (คริปโต/หุ้น) หรือมีประวัติแล้ว */}
+          {(redCheckedCount > 0 || redSignals.length > 0) && (
+            <MenuRow
+              icon="time-outline"
+              title="บันทึกสัญญาณ"
+              tone={COLORS.error}
+              value={signalStats.total > 0 ? `${signalStats.total} ครั้ง` : '—'}
+              sub={
+                signalStats.total === 0
+                  ? 'ยังไม่มีสัญญาณที่บันทึกไว้ — บันทึกอัตโนมัติเมื่อแดงครบรอบ'
+                  : `ลงจริง ${signalStats.taken} · ปล่อยผ่าน ${signalStats.skipped} · ` +
+                    `ยังไม่บันทึกผล ${signalStats.pending}` +
+                    (signalStats.blocked > 0 ? ` · เข้าไม่ได้ ${signalStats.blocked}` : '')
+              }
+              onPress={() => navigation.navigate('RedSignals')}
+            />
+          )}
+          {/* ปลดล็อกรางวัล/ภาษี โผล่เมื่อมีของจริงเท่านั้น — ไม่งั้นเป็นบรรทัดว่างกวนสายตา */}
+          {purchasePlan.pending.length > 0 && (
+            <MenuRow
+              icon="gift-outline"
+              title="ปลดล็อกรางวัล"
+              tone={assetColor('crypto')}
+              value={`${purchasePlan.unlockedCount}/${purchasePlan.pending.length}`}
+              sub={
+                purchasePlan.nextUp
+                  ? `คิวถัดไป ${purchasePlan.nextUp.goal.name} · ขาดอีก ${baht(purchasePlan.nextUp.remainingTHB)}`
+                  : 'ปลดล็อกครบทุกชิ้นในคิวแล้ว'
+              }
+              onPress={() => navigation.navigate('PurchaseGoals')}
+            />
+          )}
           {taxThisYear && (
             <MenuRow
               icon="receipt-outline"
@@ -1489,21 +1663,7 @@ export default function PortfolioScreen() {
               onPress={() => navigation.navigate('Tax')}
             />
           )}
-          {purchasePlan.pending.length > 0 && (
-            <MenuRow
-              icon="gift-outline"
-              title="ของที่อยากได้"
-              tone={assetColor('crypto')}
-              value={`${purchasePlan.unlockedCount}/${purchasePlan.pending.length}`}
-              sub={
-                purchasePlan.nextUp
-                  ? `คิวถัดไป ${purchasePlan.nextUp.goal.name} · ขาดอีก ${baht(purchasePlan.nextUp.remainingTHB)}`
-                  : 'ปลดล็อกครบทุกชิ้นในคิวแล้ว'
-              }
-              onPress={() => navigation.navigate('PurchaseGoals')}
-            />
-          )}
-        </View>
+        </MenuCard>
 
         {/* การ์ดที่ยังอยู่หน้านี้เหลือใบเดียว: "ถึงคิวลงไม้" — เป็นรายการที่ต้องลงมือวันนี้
             ย้ายไปหน้าอื่นแล้วจะกลายเป็นแจ้งเตือนที่ไม่มีใครเห็น
@@ -1520,11 +1680,16 @@ export default function PortfolioScreen() {
             {redChecking ? (
               <Text style={styles.tpSubText}>กำลังเช็คแท่งเทียนของ {redCheckedCount} ตัว…</Text>
             ) : redAlertsMet.length === 0 ? (
-              <Text style={styles.tpSubText}>
-                เช็ค {redCheckedCount} ตัวแล้ว — ยังไม่มีตัวไหนที่ต้องลงไม้ตอนนี้ (นับเฉพาะแท่งที่ปิดแล้ว){'\n'}
-                สถานะรายตัวดูได้ที่การ์ดของแต่ละรายการด้านล่าง · ตั้งกรอบเวลา (วัน/สัปดาห์/เดือน)
-                และจำนวนแท่งแยกรายตัวได้ที่หน้าแก้ไขการลงทุน
-              </Text>
+              /* เช็คแล้วไม่เจอสัญญาณ = ข่าวดี ไม่ใช่จอว่าง — น้องหมุดหลับข้างข้อความ
+                 ทำให้ "ระบบเช็คให้อยู่" อ่านออกตั้งแต่ยังไม่ทันอ่านตัวหนังสือ */
+              <View style={styles.redCalmRow}>
+                <Mascot state="sleep" size={52} />
+                <Text style={[styles.tpSubText, styles.redCalmText]}>
+                  เช็ค {redCheckedCount} ตัวแล้ว — ยังไม่มีตัวไหนที่ต้องลงไม้ตอนนี้ (นับเฉพาะแท่งที่ปิดแล้ว){'\n'}
+                  สถานะรายตัวดูได้ที่การ์ดของแต่ละรายการด้านล่าง · ตั้งกรอบเวลา (วัน/สัปดาห์/เดือน)
+                  และจำนวนแท่งแยกรายตัวได้ที่หน้าแก้ไขการลงทุน
+                </Text>
+              </View>
             ) : null}
             {redAlertsMet.map((a) => (
               <View key={a.key} style={styles.redAlertRow}>
@@ -1576,10 +1741,13 @@ export default function PortfolioScreen() {
                 })()}
                 {/* ปิดแจ้งเตือนรอบนี้ — ไม่ได้ไปแก้จำนวน/ต้นทุนให้ ต้องเข้าไปแก้ที่การ์ดของไม้เอง
                     (ลงไปกี่หน่วย ราคาเท่าไหร่ มีแต่ผู้ใช้ที่รู้ เดาให้แล้วต้นทุนเฉลี่ยจะเพี้ยนเงียบ ๆ) */}
-                <TouchableOpacity style={styles.redAckButton} onPress={() => toggleRedAck(a, true)}>
-                  <Ionicons name="checkmark-circle-outline" size={14} color={COLORS.primary} />
-                  <Text style={styles.redAckButtonText}> ลงไม้แล้ว · ปิดเตือนจนกว่าจะครบรอบใหม่</Text>
-                </TouchableOpacity>
+                <ActionButton
+                  label="ลงไม้แล้ว · ปิดเตือนจนกว่าจะครบรอบใหม่"
+                  icon="checkmark-circle-outline"
+                  size="sm"
+                  onPress={() => toggleRedAck(a, true)}
+                  style={styles.redAckButton}
+                />
               </View>
             ))}
 
@@ -1612,17 +1780,20 @@ export default function PortfolioScreen() {
                           </Text>
                         </Text>
                       </View>
-                      <TouchableOpacity
-                        style={styles.redAckButton}
+                      <ActionButton
+                        label="เปิดแจ้งเตือนอีกครั้ง"
+                        icon="notifications-outline"
+                        size="sm"
                         onPress={() => toggleRedAck(a, false)}
-                      >
-                        <Ionicons name="notifications-outline" size={14} color={COLORS.primary} />
-                        <Text style={styles.redAckButtonText}> เปิดแจ้งเตือนอีกครั้ง</Text>
-                      </TouchableOpacity>
+                        style={styles.redAckButton}
+                      />
                     </View>
                   ))}
               </>
             )}
+            {/* ทางเข้าประวัติสัญญาณเคยอยู่ตรงนี้ — เอาออกแล้ว เพราะมีแถวเมนู "บันทึกสัญญาณ"
+                อยู่ในการ์ดเมนูฝั่งซ้ายของแถวเดียวกันนี้ ทางเข้าสองทางในจอเดียวคือของซ้ำ
+                การ์ดนี้เหลือหน้าที่เดียว: สิ่งที่ต้องลงมือวันนี้ */}
           </View>
         )}
         </View>
@@ -1786,7 +1957,9 @@ export default function PortfolioScreen() {
           </TouchableOpacity>
         </>
       ) : (
-        <Text style={styles.emptyText}>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</Text>
+        /* พอร์ตว่างทั้งพอร์ต = จอแรกของคนเพิ่งเริ่มใช้ ไม่ใช่เศษที่เหลือของหน้า
+           ส่วน "ไม่พบรายการที่ตรงกับตัวกรอง" ด้านบนไม่ใส่มาสคอต — มันโผล่บ่อยจนกลายเป็นสัญญาณรบกวน */
+        <MascotEmpty>ยังไม่มีการลงทุน{'\n'}เริ่มเพิ่มการลงทุนของคุณเลย!</MascotEmpty>
       )}
     </View>
   );
@@ -2002,9 +2175,12 @@ export default function PortfolioScreen() {
               <Text style={styles.modalSaveBtnText}>บันทึกการขาย</Text>
             </TouchableOpacity>
             <View style={styles.modalBottomRow}>
-              <TouchableOpacity onPress={() => setSellTarget(null)}>
-                <Text style={styles.modalCancelText}>ยกเลิก</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label="ยกเลิก"
+                variant="quiet"
+                onPress={() => setSellTarget(null)}
+                style={styles.modalCancelBtn}
+              />
             </View>
           </ScrollView>
         </View>
@@ -2049,13 +2225,19 @@ export default function PortfolioScreen() {
             </TouchableOpacity>
             <View style={styles.modalBottomRow}>
               {goal && (
-                <TouchableOpacity onPress={handleDeleteGoal}>
-                  <Text style={styles.modalDeleteText}>ลบเป้าหมาย</Text>
-                </TouchableOpacity>
+                <ActionButton
+                  label="ลบเป้าหมาย"
+                  icon="trash-outline"
+                  variant="danger"
+                  onPress={handleDeleteGoal}
+                />
               )}
-              <TouchableOpacity onPress={() => setGoalModalVisible(false)}>
-                <Text style={styles.modalCancelText}>ยกเลิก</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label="ยกเลิก"
+                variant="quiet"
+                onPress={() => setGoalModalVisible(false)}
+                style={styles.modalCancelBtn}
+              />
             </View>
           </ScrollView>
         </View>
@@ -2082,14 +2264,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 16,
   },
-  // ── เมนูของพอร์ต (แทนการ์ดเต็มใบที่ย้ายไปเป็นหน้าของตัวเอง) ──
-  menuCard: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginHorizontal: 16,
-    marginBottom: 16,
-  },
   // เดสก์ท็อป: เมนูเป็นช่องซ้ายของกริดสรุป — ครึ่งหนึ่งของแถว
   // flexGrow: 0 เพราะถ้าไม่มีการ์ด "ถึงคิวลงไม้" (ไม่มีคริปโต/หุ้นให้เช็ค) เมนูจะยืดเป็นแถบขวางจอ
   // flexShrink: 1 ต้องมีทั้งสองใบ — 50% + 50% + gap 16 เกินแถวไป 16px ทั้งคู่จึงหดใบละ 8px
@@ -2104,52 +2278,6 @@ const styles = StyleSheet.create({
     // ระยะห่างมาจาก gap/margin ของ cardGrid แทน margin ของการ์ดเอง
     marginHorizontal: 0,
     marginBottom: 0,
-  },
-  menuRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  menuRowFirst: {
-    borderTopWidth: 0,
-  },
-  // วงไอคอนสีประจำเรื่อง — สีพื้นถูกส่งมาจาก MenuRow (tone) จึงไม่ตั้งไว้ตรงนี้
-  menuRowIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: RADIUS.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // minWidth: 0 เพื่อให้บรรทัดขยายความยาว ๆ ตัดคำแทนที่จะดันตัวเลขทางขวาหลุดขอบ
-  menuRowMain: {
-    flex: 1,
-    minWidth: 0,
-  },
-  menuRowTitle: {
-    fontSize: 14,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.text,
-  },
-  menuRowSub: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_300Light',
-    color: COLORS.textSecondary,
-    marginTop: 2,
-    lineHeight: 16,
-  },
-  menuRowValue: {
-    fontSize: 14,
-    fontFamily: 'NotoSansThai_600SemiBold',
-    color: COLORS.primary,
-    textAlign: 'right',
-  },
-  menuRowValueNeg: {
-    color: COLORS.error,
   },
   cardGridItem: {
     // ครึ่งขวาของแถวสรุป — คู่กับ menuCardDesktop (ดูคำอธิบายการหด 8px ที่นั่น)
@@ -2198,6 +2326,9 @@ const styles = StyleSheet.create({
     borderRadius: 0,
     padding: 16,
   },
+  // ยอดรวมซ้าย มาสคอตขวา — minWidth: 0 กันตัวเลขยาวดันมาสคอตหลุดขอบบนเว็บ (§1.4)
+  summaryTopRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  summaryTopMain: { flex: 1, minWidth: 0 },
   summaryLabel: {
     fontSize: 14,
     fontFamily: 'NotoSansThai_400Regular',
@@ -2267,12 +2398,7 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_600SemiBold',
     color: '#ffffff',
   },
-  headerGoalEdit: {
-    fontSize: 12,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: '#ffffff',
-    opacity: 0.85,
-  },
+
   headerGoalSub: {
     fontSize: 12,
     fontFamily: 'NotoSansThai_400Regular',
@@ -2388,6 +2514,9 @@ const styles = StyleSheet.create({
   },
   // แถวหนึ่งตัวในการ์ด "ถึงคิวลงไม้" = บรรทัดข้อมูล + ปุ่มปิดแจ้งเตือน
   // มีเส้นคั่นเพราะแต่ละตัวกินสองบรรทัด ถ้าไม่คั่นจะอ่านไม่ออกว่าปุ่มเป็นของตัวไหน
+  // แถว "ยังไม่มีสัญญาณ": มาสคอตซ้าย ข้อความขวา — minWidth: 0 ให้ข้อความตัดคำแทนดันมาสคอตหลุด
+  redCalmRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+  redCalmText: { flex: 1, minWidth: 0 },
   redAlertRow: {
     paddingTop: 6,
     marginTop: 6,
@@ -2433,17 +2562,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   // ปุ่มรอง — จงใจให้จืดกว่าตัวเลข % ที่เป็นพระเอกของแถว
-  redAckButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    paddingVertical: 4,
-  },
-  redAckButtonText: {
-    fontSize: 11,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.primary,
-  },
+  redAckButton: { alignSelf: 'flex-start', marginTop: 6 },
   // ตัวที่ปิดแจ้งเตือนไว้แล้ว — จางลงเพื่อบอกว่า "ไม่ต้องทำอะไรกับอันนี้แล้ว"
   redAckedName: {
     color: COLORS.textSecondary,
@@ -2518,6 +2637,7 @@ const styles = StyleSheet.create({
   },
   modalSaveBtn: {
     backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.md,
     padding: 16,
     alignItems: 'center',
     marginTop: 24,
@@ -2535,17 +2655,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 16,
   },
-  modalDeleteText: {
-    color: COLORS.error,
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_400Regular',
-  },
-  modalCancelText: {
-    color: COLORS.textSecondary,
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_400Regular',
-    marginLeft: 'auto',
-  },
+  modalCancelBtn: { marginLeft: 'auto' },
   actionButtons: {
     flexDirection: 'row',
     marginVertical: 16,
@@ -2567,6 +2677,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
   },
   updateButton: {
+    borderRadius: RADIUS.sm,
     backgroundColor: COLORS.surface,
     borderColor: COLORS.primary,
   },
@@ -2599,6 +2710,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   filterToggle: {
+    borderRadius: RADIUS.sm,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,
@@ -2656,6 +2768,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   filterChip: {
+    borderRadius: RADIUS.sm,
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderWidth: 1,
@@ -2675,6 +2788,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   clearFilterButton: {
+    borderRadius: RADIUS.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2697,6 +2811,7 @@ const styles = StyleSheet.create({
   },
   // ── รายดีลที่ขายแล้ว + ปุ่มย้อนคืน ──
   detailToggleInline: {
+    borderRadius: RADIUS.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2949,6 +3064,7 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.border,
   },
   sellButton: {
+    borderRadius: RADIUS.sm,
     flex: 1,
     padding: 12,
     backgroundColor: `${COLORS.primary}0D`,
@@ -2964,6 +3080,7 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
   },
   deleteButton: {
+    borderRadius: RADIUS.sm,
     flex: 1,
     padding: 12,
     paddingHorizontal: 16,

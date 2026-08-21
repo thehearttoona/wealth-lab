@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, TextInput } from 'react-native';
-import { COLORS, FONTS, TEXT } from '../utils/constants';
+import { COLORS, FONTS, TEXT, RADIUS } from '../utils/constants';
 
 /**
  * ชิ้นส่วนที่หน้าภาษีทั้งสามหน้าใช้ร่วมกัน (สรุปภาษี / เงินได้รายเดือน / ค่าลดหย่อน)
@@ -93,6 +93,93 @@ export const taxStyles = StyleSheet.create({
   },
   fillBtnText: { ...TEXT.caption, color: COLORS.primary, fontFamily: FONTS.medium },
 
+  // ── การ์ด "สูตรลดหย่อนให้ภาษีเป็น 0" (หน้าค่าลดหย่อน) ──
+  // เป็นการ์ดจำลองอย่างเดียว ไม่ได้เขียนยอดลงช่องกรอก จึงต้องดูต่างจากการ์ดที่กรอกได้ชัดเจน
+  // (พื้นเทาอ่อน + เส้นขอบสีหลัก) ไม่งั้นผู้ใช้จะนึกว่ายอดในแผนถูกบันทึกไปแล้ว
+  planCard: {
+    borderWidth: 1,
+    borderColor: `${COLORS.primary}40`,
+    backgroundColor: `${COLORS.primary}08`,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  planHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  planHeadInfo: { flex: 1, minWidth: 0 },
+  planTitle: { ...TEXT.subtitle, color: COLORS.primary },
+  planBig: { ...TEXT.title, color: COLORS.text, marginTop: 4 },
+  planSub: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 3, lineHeight: 17 },
+  planBody: { marginTop: 12, borderTopWidth: 1, borderTopColor: `${COLORS.primary}25`, paddingTop: 10 },
+  planKindTitle: { ...TEXT.label, color: COLORS.text, marginTop: 12 },
+  planKindNote: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 1 },
+  planStepRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 8 },
+  planStepIdx: {
+    ...TEXT.hint,
+    color: '#ffffff',
+    backgroundColor: COLORS.primary,
+    borderRadius: 999,
+    width: 18,
+    height: 18,
+    lineHeight: 18,
+    textAlign: 'center',
+    overflow: 'hidden',
+  },
+  // flex + minWidth:0 คู่กันบังคับ — เหตุผลยาว ๆ จะดันคอลัมน์ยอดล้นการ์ดบนเว็บ
+  planStepMain: { flex: 1, minWidth: 0 },
+  planStepLabel: { ...TEXT.body, color: COLORS.text },
+  planStepReason: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 2, lineHeight: 16 },
+  planStepRight: { alignItems: 'flex-end', width: 116 },
+  planStepAmount: { ...TEXT.label, color: COLORS.text },
+  planStepSaved: { ...TEXT.hint, color: COLORS.success, marginTop: 2, textAlign: 'right', lineHeight: 15 },
+  planMilestone: {
+    ...TEXT.hint,
+    color: COLORS.primary,
+    backgroundColor: `${COLORS.primary}12`,
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 10,
+    lineHeight: 17,
+  },
+  // ── กล่อง "จุดคุ้มสุด" แบบสองแถวเทียบกัน ──
+  // เดิมเป็นประโยคเดียวยาว ๆ ที่มีตัวเลข 5 ตัวปนกัน จนอ่านไม่ออกว่ากำลังเทียบอะไรกับอะไร
+  // สองแถวหน้าตาเหมือนกัน + % ชิดขวาตรงกัน ทำให้ "คุ้ม 20% vs คุ้ม 5%" อ่านออกในแวบเดียว
+  planMilestoneBox: {
+    backgroundColor: `${COLORS.primary}12`,
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+  },
+  planMilestoneTitle: { ...TEXT.label, color: COLORS.primary },
+  planMilestoneRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 6,
+  },
+  // flex + minWidth:0 คู่กันบังคับ — ข้อความยาวจะดัน % หลุดขอบกล่องบนเว็บ
+  planMilestoneLabel: { ...TEXT.hint, color: COLORS.text, flex: 1, minWidth: 0, lineHeight: 17 },
+  planMilestoneRate: { ...TEXT.hint, fontFamily: FONTS.semibold, color: COLORS.success },
+  // ขั้นท้ายที่ลากลงมาถึง 0 คุ้มน้อยสุด — ต้องเห็นด้วยสีว่ามันไม่เหมือนแถวบน
+  planMilestoneRateWeak: { ...TEXT.hint, fontFamily: FONTS.semibold, color: COLORS.warning },
+  planNote: { ...TEXT.hint, color: COLORS.warning, marginTop: 8, lineHeight: 17 },
+  planFoot: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 12, lineHeight: 17 },
+  planChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  planChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+  },
+  planChipOff: { backgroundColor: COLORS.divider, borderColor: COLORS.border },
+  planChipText: { ...TEXT.hint, color: COLORS.text },
+  planChipTextOff: { ...TEXT.hint, color: COLORS.textSecondary },
+
   // ── ตารางรายเดือน ──
   tableTitle: { ...TEXT.subtitle, color: COLORS.text, marginTop: 16 },
   tableHint: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 4, lineHeight: 16 },
@@ -135,7 +222,17 @@ export const taxStyles = StyleSheet.create({
     paddingVertical: 8,
   },
   mCopyCell: { width: 30 },
-  mCopyBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 6 },
+  // ปุ่มคัดลอกค่าลงเดือนถัดไป — ไอคอนเปล่า ๆ ในตารางไม่มีอะไรบอกว่ากดได้ จึงตีกรอบให้
+  mCopyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.surface,
+  },
   mCopyText: { ...TEXT.hint, color: COLORS.primary },
   // คอลัมน์ "รับจริง" ท้ายแถว — ความกว้างตายตัวเพื่อให้ตัวเลขทุกแถวชิดขวาตรงกัน
   mNetCol: { width: 104 },
@@ -170,7 +267,20 @@ export const taxStyles = StyleSheet.create({
   eligBadge: { ...TEXT.hint, marginTop: 3, lineHeight: 16 },
   eligOk: { color: COLORS.success },
   eligNo: { color: COLORS.textSecondary },
-  condToggle: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+  // ปุ่ม "เงื่อนไขการใช้สิทธิ์" — เดิมเป็นตัวหนังสือสีหลักเปล่า ๆ กลืนไปกับคำอธิบายรอบตัว
+  condToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginTop: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.surface,
+  },
   condToggleText: { ...TEXT.hint, color: COLORS.primary, fontFamily: FONTS.medium },
   condText: { ...TEXT.hint, color: COLORS.textSecondary, lineHeight: 17, marginTop: 4 },
   capWarnBox: {

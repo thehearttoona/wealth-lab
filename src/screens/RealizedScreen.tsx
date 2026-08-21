@@ -21,12 +21,14 @@ import { getUserProfile } from '../services/userProfileStorage';
 import { calculateTax, taxYearOf } from '../utils/taxCalc';
 import {
   COLORS,
+  RADIUS,
   formatCurrency,
   formatCurrencyWithType,
   toChristianYear,
 } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
+import { MascotEmpty } from '../components/Mascot';
 
 // ปีภาษีปัจจุบันเป็น พ.ศ. — ใช้ทั้งดึง TaxProfile และกรองไม้ที่ขายปีนี้
 const currentTaxYear = new Date().getFullYear() + 543;
@@ -208,10 +210,10 @@ export default function RealizedScreen() {
           <Text style={styles.cardTitle}>
             <Ionicons name="ribbon-outline" size={18} color={COLORS.primary} /> ยังไม่มีการขายที่บันทึกไว้
           </Text>
-          <Text style={styles.cardEmpty}>
+          <MascotEmpty>
             กดปุ่ม "ขาย" ที่การ์ดของแต่ละรายการในหน้าพอร์ต แล้วผลกำไรจริงจะมาสรุปที่หน้านี้ —
             กำไรลอยตัวของที่ยังถืออยู่ไม่นับ
-          </Text>
+          </MascotEmpty>
         </View>
       </ScrollView>
     );
@@ -301,7 +303,11 @@ export default function RealizedScreen() {
               <Text style={styles.cardTitle}>
                 <Ionicons name="receipt-outline" size={18} color={COLORS.primary} /> ภาษีจากกำไรที่ขาย ปี {currentTaxYear}
               </Text>
-              <Text style={styles.cardEdit}>{taxProfile ? 'ดูรายละเอียด' : 'ตั้งค่า'}</Text>
+              {/* การ์ดทั้งใบกดได้ — chevron คือตัวบอก ไม่ใช่ตัวหนังสือสีน้ำเงินลอย ๆ */}
+              <View style={styles.cardGoRow}>
+                <Text style={styles.cardEdit}>{taxProfile ? 'ดูรายละเอียด' : 'ตั้งค่า'}</Text>
+                <Ionicons name="chevron-forward" size={14} color={COLORS.primary} />
+              </View>
             </View>
             <View style={styles.kpiRow}>
               <View style={styles.kpiCell}>
@@ -419,6 +425,7 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
+  cardGoRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   cardEdit: {
     fontSize: 13,
     fontFamily: 'NotoSansThai_400Regular',
@@ -532,6 +539,7 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_400Regular',
   },
   undoButton: {
+    borderRadius: RADIUS.sm,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 6,

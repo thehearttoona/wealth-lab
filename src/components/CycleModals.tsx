@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, TEXT, formatCurrency, formatCurrencyWithType } from '../utils/constants';
+import { ActionButton } from './ActionButton';
 import { InvestmentCycle, basketLabel } from '../types/cycle';
 
 // ── Modal ของระบบรอบ ──
@@ -118,10 +119,14 @@ export const CycleSettingsModal: React.FC<{
         </View>
 
         {/* ลบรอบ = เปิดผิดตะกร้า/ผิดค่า ไม่ใช่ "ปิดรอบ" — ไม้ที่ผูกไว้จะถูกถอนออกให้ ไม่ถูกขาย */}
-        <TouchableOpacity style={styles.deleteRow} onPress={onDelete}>
-          <Ionicons name="trash-outline" size={14} color={COLORS.error} />
-          <Text style={styles.deleteText}> ลบรอบนี้ (ไม้ทุกตัวถูกถอนออกจากตะกร้า ไม่มีการขาย)</Text>
-        </TouchableOpacity>
+        <ActionButton
+          label="ลบรอบนี้ (ไม้ทุกตัวถูกถอนออกจากตะกร้า ไม่มีการขาย)"
+          icon="trash-outline"
+          variant="danger"
+          size="sm"
+          onPress={onDelete}
+          style={styles.deleteRow}
+        />
       </ScrollView>
     </View>
   </Modal>
@@ -411,6 +416,5 @@ const styles = StyleSheet.create({
   },
   btnPrimaryText: { ...TEXT.label, color: COLORS.surface },
   btnDisabled: { opacity: 0.5 },
-  deleteRow: { flexDirection: 'row', alignItems: 'center', marginTop: 16 },
-  deleteText: { ...TEXT.caption, color: COLORS.error, flex: 1, minWidth: 0 },
+  deleteRow: { alignSelf: 'stretch', marginTop: 16 },
 });

@@ -1,15 +1,18 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
+import { UserProfile } from '../types/userProfile';
+import { getUserProfile } from '../services/userProfileStorage';
 import { useAuth } from '../hooks/useAuth';
 import { COLORS, FONTS, TEXT } from '../utils/constants';
 import { confirmAsk } from '../utils/dialog';
@@ -25,9 +28,11 @@ const MENU_GROUPS: { title: string; items: MenuItem[] }[] = [
     title: 'ตั้งค่า',
     items: [
       {
+        // คำอธิบายเดิมเขียนว่า "อายุ สถานภาพ คนในอุปการะ" ทั้งที่สถานภาพกับคนในอุปการะ
+        // ย้ายไปหน้าค่าลดหย่อนตั้งแต่ 2026-08-13 — สัญญาไว้ 3 อย่าง มีจริงอย่างเดียว
         route: 'PersonalInfo',
         label: 'ข้อมูลส่วนตัว',
-        hint: 'อายุ สถานภาพ คนในอุปการะ — ใช้แนะนำสิทธิ์ลดหย่อนภาษี',
+        hint: 'ชื่อที่แสดง วันเกิด บัญชีที่ใช้เข้าระบบ',
         icon: 'person-circle-outline',
       },
     ],
@@ -35,6 +40,7 @@ const MENU_GROUPS: { title: string; items: MenuItem[] }[] = [
   {
     title: 'สรุป & วิเคราะห์',
     items: [
+      { route: 'LifeGoal', label: 'เป้าหมายใหญ่สุดของชีวิต', hint: 'บันไดเงินก้อน วัดจากความมั่งคั่งสุทธิทั้งก้อน', icon: 'trophy-outline' },
       { route: 'Overview', label: 'ภาพรวมการเงิน', hint: 'รายจ่าย + พอร์ต รวมในหน้าเดียว', icon: 'analytics-outline' },
       { route: 'Statistics', label: 'สถิติ & ข้อสังเกต', hint: 'แนวโน้มรายจ่าย และคำเตือนอัตโนมัติ', icon: 'stats-chart-outline' },
       { route: 'Tax', label: 'ภาษี', hint: 'ประมาณการภาษีจากเงินเดือน + กำไรที่ขายแล้ว', icon: 'receipt-outline' },
@@ -45,6 +51,7 @@ const MENU_GROUPS: { title: string; items: MenuItem[] }[] = [
     items: [
       { route: 'Accounts', label: 'บัญชีของฉัน', hint: 'เงินสด ธนาคาร พอร์ตลงทุน', icon: 'wallet-outline' },
       { route: 'ManageCatalog', label: 'สกุลเงิน & แพลตฟอร์ม', hint: 'แก้เรตเงิน เพิ่มโบรกเกอร์', icon: 'options-outline' },
+      { route: 'LifeCost', label: 'ค่าเสื่อมของชีวิต', hint: 'ของที่จะต้องจ่ายอีกแน่ ๆ — ต้องกันเดือนละเท่าไหร่', icon: 'hourglass-outline' },
       { route: 'Installments', label: 'ค่าใช้จ่ายผ่อนชำระ', hint: 'รายการผ่อนที่ยังจ่ายอยู่', icon: 'card-outline' },
       { route: 'ImportStatement', label: 'นำเข้า statement', hint: 'อัปโหลดรายการเดินบัญชี', icon: 'cloud-upload-outline' },
     ],
@@ -56,11 +63,26 @@ export default function ProfileScreen() {
   const { user, signOut } = useAuth();
   const { isDesktop } = useResponsive();
 
+  // ชื่อที่ตั้งเองในหน้าข้อมูลส่วนตัวต้องชนะชื่อจาก Google — ไม่งั้นตั้งแล้วไม่เห็นผลตรงนี้
+  // อ่านแบบเงียบ ๆ: ยังไม่ได้รัน sql/user_profile.sql ก็แค่ตกกลับไปใช้ชื่อจาก Google
+  const [person, setPerson] = useState<UserProfile | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      getUserProfile()
+        .then(setPerson)
+        .catch(() => setPerson(null));
+    }, [])
+  );
+
   const email = user?.email || '-';
-  const displayName =
+  const googleName =
     (user?.user_metadata?.full_name as string | undefined) ||
     (user?.user_metadata?.name as string | undefined) ||
     email.split('@')[0];
+  const displayName = person?.displayName?.trim() || googleName;
+  const photo =
+    (user?.user_metadata?.avatar_url as string | undefined) ||
+    (user?.user_metadata?.picture as string | undefined);
   const initial = (displayName || 'U').charAt(0).toUpperCase();
   const provider = (user?.app_metadata?.provider as string | undefined) || 'email';
   const joined = user?.created_at
@@ -82,17 +104,29 @@ export default function ProfileScreen() {
     >
       <Text style={styles.screenTitle}>โปรไฟล์</Text>
 
-      {/* ── การ์ดผู้ใช้ ── */}
-      <View style={styles.userCard}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initial}</Text>
-        </View>
+      {/* ── การ์ดผู้ใช้ ──
+          กดได้ทั้งใบ → หน้าข้อมูลส่วนตัว เดิมเป็นป้ายแสดงผลเฉย ๆ ทั้งที่เป็นของที่ "เป็นตัวเรา"
+          ที่สุดในหน้านี้ แต่กดไม่ได้และไม่มีที่ไหนในแอปให้แก้ */}
+      <TouchableOpacity
+        style={styles.userCard}
+        onPress={() => navigation.navigate('PersonalInfo')}
+        accessibilityRole="button"
+        accessibilityLabel={`ข้อมูลส่วนตัว ${displayName}`}
+      >
+        {photo ? (
+          <Image source={{ uri: photo }} style={styles.avatarImage} />
+        ) : (
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initial}</Text>
+          </View>
+        )}
         <View style={styles.userInfo}>
           <Text style={styles.userName} numberOfLines={1}>{displayName}</Text>
           <Text style={styles.userEmail} numberOfLines={1}>{email}</Text>
           <Text style={styles.userMeta}>เข้าสู่ระบบด้วย {provider} · สมัครเมื่อ {joined}</Text>
         </View>
-      </View>
+        <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+      </TouchableOpacity>
 
       {/* ── เมนูตั้งค่า ── */}
       {MENU_GROUPS.map((group) => (
@@ -170,8 +204,17 @@ const styles = StyleSheet.create({
     ...TEXT.amount,
     color: '#ffffff',
   },
+  // รูปจากบัญชี Google ถ้ามี — ไม่มีค่อยตกไปใช้วงกลมตัวอักษรตัวแรก
+  avatarImage: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: COLORS.divider,
+  },
   userInfo: {
     flex: 1,
+    // flex ต้องมากับ minWidth:0 เสมอบนเว็บ ไม่งั้นอีเมลยาวดันลูกศรหลุดขอบการ์ด
+    minWidth: 0,
   },
   userName: {
     ...TEXT.title,

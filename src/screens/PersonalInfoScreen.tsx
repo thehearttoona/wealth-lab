@@ -1,32 +1,49 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  Image,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types';
+import { useFocusEffect } from '@react-navigation/native';
 import { UserProfile, ageFromBirthDate } from '../types/userProfile';
 import { getUserProfile, saveUserProfile, isUserProfileTableMissing } from '../services/userProfileStorage';
+import { useAuth } from '../hooks/useAuth';
 import { useResponsive } from '../utils/responsive';
 import { COLORS, FONTS, TEXT, toChristianYear } from '../utils/constants';
 import { notify } from '../utils/dialog';
 
-// หน้านี้เหลือข้อเดียว: วันเกิด
+// ── หน้านี้คือ "ตัวเราในแอป" ไม่ใช่ตัวแปรภาษี ──
 //
-// ทำไมเหลือข้อเดียว: อีก 4 กลุ่ม (สถานภาพสมรส / บุตร / พ่อแม่ / เราเป็นผู้พิการ)
-// ถูกกรอกเพื่อ "ตัดสินสิทธิ์ลดหย่อน" อย่างเดียว แต่ต้องเดินมากรอกอีกหน้าหนึ่งก่อน
-// แล้วค่อยเดินกลับไปหน้าค่าลดหย่อน — ตอนนี้ย้ายไปอยู่บนสุดของหน้าค่าลดหย่อนแล้ว
-// กรอกที่เดียวจบ เห็นผลกับยอดลดหย่อนทันทีในหน้าเดียวกัน
+// ก่อนหน้านี้หน้านี้เหลือช่องเดียวคือวันเกิด และเนื้อหาทั้งหน้าอธิบายแต่กลไกภาษี
+// (ยกเว้นเงินได้ 190,000 / RMF อายุ 55) — อ่านแล้วเป็นหน้าตกค้างของหน้าภาษี ไม่ใช่ข้อมูลส่วนตัว
 //
-// วันเกิดไม่ย้ายตามไป เพราะไม่ได้ใช้แค่กับค่าลดหย่อน: มันเป็นตัวตัดสิน
-// "ยกเว้นเงินได้ 190,000 ของผู้มีอายุ 65+" ซึ่งหักก่อนค่าใช้จ่าย 50% (คนละขั้นกับลดหย่อน)
-// และใช้นับถอยหลังเงื่อนไข RMF ที่ต้องถือถึงอายุ 55 — เป็นข้อมูลของ "ตัวเรา" จริง ๆ
+// คำถามที่ใช้ตัดสินสิทธิ์ลดหย่อน (สถานภาพสมรส / บุตร / พ่อแม่ในอุปการะ / เราเป็นผู้พิการ)
+// อยู่ที่หน้าค่าลดหย่อนตามเดิม และ **ห้ามย้ายกลับมาที่นี่** — ต้องกรอกแล้วเห็นยอดลดหย่อน
+// ขยับในหน้าเดียวกัน ไม่ใช่เดินสองหน้า (เหตุผลเดิมของการย้ายเมื่อ 2026-08-13)
+//
+// วันเกิดยังอยู่ที่นี่เพราะเป็นข้อมูลของตัวเราจริง ๆ (บอกอายุ) ส่วนที่มันถูกเอาไปใช้
+// คำนวณภาษีด้วยเป็นผลพลอยได้ ไม่ใช่เหตุผลที่มันอยู่ตรงนี้
 
-// ปีภาษีปัจจุบันเป็น พ.ศ. — หน้าค่าลดหย่อนผูกกับปี ต้องส่งไปด้วยเสมอ
-const currentBuddhistYear = () => new Date().getFullYear() + 543;
+/** แถวข้อมูลที่แก้ไม่ได้ — มาจากบัญชีที่ใช้เข้าระบบ ไม่ใช่ของที่เรากรอกเอง
+ *  ⚠️ ต้องอยู่นอกตัว screen (กฎข้อ 1.13) ไม่งั้น TextInput ในหน้าเดียวกันจะหลุดโฟกัสทุกตัวอักษร */
+const ReadRow: React.FC<{ label: string; value: string }> = ({ label, value }) => (
+  <View style={styles.readRow}>
+    <Text style={styles.readLabel}>{label}</Text>
+    <Text style={styles.readValue} numberOfLines={1}>
+      {value}
+    </Text>
+  </View>
+);
 
 export default function PersonalInfoScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { isDesktop } = useResponsive();
+  const { user } = useAuth();
   const [profile, setProfile] = useState<UserProfile>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -54,8 +71,10 @@ export default function PersonalInfoScreen() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // ส่ง profile ทั้งก้อนที่โหลดมา ไม่ใช่เฉพาะช่องในหน้านี้ — คำตอบเรื่องภาษีที่กรอกไว้
+      // ที่หน้าค่าลดหย่อนอยู่ในก้อนเดียวกัน ถ้าส่งไม่ครบจะถูกทับเป็น null ทั้งชุด
       await saveUserProfile(profile);
-      notify('บันทึกวันเกิดแล้ว', 'สำเร็จ');
+      notify('บันทึกข้อมูลส่วนตัวแล้ว', 'สำเร็จ');
     } catch (e) {
       if (isUserProfileTableMissing(e)) {
         setTableMissing(true);
@@ -77,6 +96,25 @@ export default function PersonalInfoScreen() {
   }
 
   const age = ageFromBirthDate(profile.birthDate);
+  const email = user?.email || '-';
+  // ชื่อจากบัญชี Google — ใช้เป็น placeholder ให้เห็นว่าถ้าไม่ตั้งเองจะได้ชื่อนี้
+  const googleName =
+    (user?.user_metadata?.full_name as string | undefined) ||
+    (user?.user_metadata?.name as string | undefined) ||
+    email.split('@')[0];
+  const photo =
+    (user?.user_metadata?.avatar_url as string | undefined) ||
+    (user?.user_metadata?.picture as string | undefined);
+  const shownName = profile.displayName?.trim() || googleName;
+  const initial = (shownName || 'U').charAt(0).toUpperCase();
+  const provider = (user?.app_metadata?.provider as string | undefined) || 'email';
+  const joined = user?.created_at
+    ? new Date(user.created_at).toLocaleDateString('th-TH', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      })
+    : '-';
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={[styles.content, isDesktop && styles.contentDesktop]}>
@@ -88,12 +126,53 @@ export default function PersonalInfoScreen() {
       )}
 
       <Text style={styles.intro}>
-        กรอกครั้งเดียว ใช้ได้ทุกปีภาษี — ไม่ได้ส่งออกไปไหน เก็บอยู่ในฐานข้อมูลของคุณเอง
+        ข้อมูลของตัวคุณเอง กรอกครั้งเดียวใช้ได้ตลอด — ไม่ได้ส่งออกไปไหน เก็บอยู่ในฐานข้อมูลของคุณเอง
       </Text>
 
-      {/* ── วันเกิด ── */}
+      {/* ── ตัวตนในแอป ── */}
       <View style={styles.card}>
-        <Text style={styles.fieldLabel}>วันเกิด (ปี-เดือน-วัน)</Text>
+        <View style={styles.identityHead}>
+          {photo ? (
+            <Image source={{ uri: photo }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{initial}</Text>
+            </View>
+          )}
+          <View style={styles.identityHeadMain}>
+            <Text style={styles.identityName} numberOfLines={1}>{shownName}</Text>
+            <Text style={styles.identityMeta} numberOfLines={1}>{email}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.fieldLabel}>ชื่อที่แสดงในแอป</Text>
+        <TextInput
+          style={styles.input}
+          value={profile.displayName || ''}
+          onChangeText={(v) => setProfile((p) => ({ ...p, displayName: v || undefined }))}
+          placeholder={googleName}
+          placeholderTextColor={COLORS.textSecondary}
+        />
+        <Text style={styles.fieldHint}>
+          เว้นว่างไว้ = ใช้ชื่อจากบัญชี {provider} ({googleName})
+        </Text>
+      </View>
+
+      {/* ── บัญชีที่ใช้เข้าระบบ: อ่านอย่างเดียว ── */}
+      <Text style={styles.groupTitle}>บัญชีที่ใช้เข้าระบบ</Text>
+      <View style={styles.card}>
+        <ReadRow label="อีเมล" value={email} />
+        <ReadRow label="เข้าสู่ระบบด้วย" value={provider} />
+        <ReadRow label="สมัครเมื่อ" value={joined} />
+        <Text style={styles.fieldHint}>
+          สามอย่างนี้มาจากบัญชีที่ใช้ล็อกอิน แก้ในแอปไม่ได้ — ต้องเปลี่ยนที่ผู้ให้บริการ
+        </Text>
+      </View>
+
+      {/* ── วันเกิด ── */}
+      <Text style={styles.groupTitle}>วันเกิด</Text>
+      <View style={styles.card}>
+        <Text style={styles.fieldLabel}>ปี-เดือน-วัน</Text>
         <TextInput
           style={styles.input}
           value={profile.birthDate || ''}
@@ -109,39 +188,32 @@ export default function PersonalInfoScreen() {
         </Text>
       </View>
 
+      {/* ── โน้ตส่วนตัว ──
+          คอลัมน์ notes มีอยู่ในตารางกับ mapper ทั้งสองทางมานานแล้ว แต่ไม่เคยมีหน้าจอไหนใช้ */}
+      <Text style={styles.groupTitle}>โน้ตส่วนตัว</Text>
+      <View style={styles.card}>
+        <TextInput
+          style={[styles.input, styles.inputMultiline]}
+          value={profile.notes || ''}
+          onChangeText={(v) => setProfile((p) => ({ ...p, notes: v || undefined }))}
+          placeholder="อะไรก็ได้ที่อยากจดไว้เกี่ยวกับตัวเอง"
+          placeholderTextColor={COLORS.textSecondary}
+          multiline
+          numberOfLines={4}
+          textAlignVertical="top"
+        />
+        <Text style={styles.fieldHint}>เห็นแค่คุณคนเดียว ไม่ถูกเอาไปคิดอะไรทั้งนั้น</Text>
+      </View>
+
       <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
         {saving ? (
           <ActivityIndicator size="small" color="#ffffff" />
         ) : (
           <>
             <Ionicons name="save-outline" size={16} color="#ffffff" />
-            <Text style={styles.saveBtnText}> บันทึกวันเกิด</Text>
+            <Text style={styles.saveBtnText}> บันทึก</Text>
           </>
         )}
-      </TouchableOpacity>
-
-      <Text style={styles.groupTitle}>วันเกิดถูกเอาไปใช้ตรงไหน</Text>
-      <View style={styles.card}>
-        <Text style={styles.fieldHint}>
-          · ยกเว้นเงินได้ 190,000 สำหรับผู้มีอายุ 65 ปีขึ้นไป — หักออกก่อนค่าใช้จ่าย 50%
-          จึงไม่ใช่ค่าลดหย่อน และใส่ในช่องลดหย่อนแทนกันไม่ได้{'\n'}
-          · เงื่อนไข RMF ที่ต้องถือจนอายุ 55
-        </Text>
-      </View>
-
-      {/* คำถามที่เหลือย้ายไปหน้าค่าลดหย่อนแล้ว — ต้องมีทางเดินไปให้ ไม่ใช่แค่บอกว่าย้ายไป */}
-      <TouchableOpacity
-        style={styles.navRow}
-        onPress={() => navigation.navigate('TaxDeduction', { year: currentBuddhistYear() })}
-      >
-        <Ionicons name="pricetags-outline" size={18} color={COLORS.primary} />
-        <View style={styles.navRowMain}>
-          <Text style={styles.navRowTitle}>สถานภาพสมรส · บุตร · พ่อแม่ในอุปการะ</Text>
-          <Text style={styles.navRowSub}>
-            ย้ายไปอยู่บนสุดของหน้าค่าลดหย่อนแล้ว เพราะกรอกแล้วต้องเห็นยอดลดหย่อนขยับในหน้าเดียวกัน
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
       </TouchableOpacity>
     </ScrollView>
   );
@@ -163,7 +235,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   intro: { ...TEXT.hint, color: COLORS.textSecondary, lineHeight: 18, marginBottom: 12 },
-  groupTitle: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 20, marginBottom: 6, marginLeft: 2 },
+  groupTitle: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 4, marginBottom: 6, marginLeft: 2 },
   card: {
     backgroundColor: COLORS.surface,
     borderRadius: 12,
@@ -172,6 +244,49 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
   },
+
+  // ── หัวการ์ดตัวตน ──
+  identityHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingBottom: 14,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.divider,
+  },
+  // flex + minWidth:0 คู่กันบังคับ — อีเมลยาวจะดันการ์ดจนล้นบนเว็บ
+  identityHeadMain: { flex: 1, minWidth: 0 },
+  identityName: { ...TEXT.title, color: COLORS.text },
+  identityMeta: { ...TEXT.caption, color: COLORS.textSecondary, marginTop: 2 },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { ...TEXT.amount, color: '#ffffff' },
+  avatarImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.divider,
+  },
+
+  // ── แถวอ่านอย่างเดียว ──
+  readRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 8,
+  },
+  readLabel: { ...TEXT.body, color: COLORS.textSecondary },
+  // ต้องมี flexShrink ไม่งั้นอีเมลยาวดันป้ายซ้ายจนหลุดขอบ (ญาติของกฎ 1.4)
+  readValue: { ...TEXT.body, color: COLORS.text, flexShrink: 1, minWidth: 0, textAlign: 'right' },
+
   fieldLabel: { ...TEXT.body, color: COLORS.text },
   fieldHint: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 3, lineHeight: 18 },
   input: {
@@ -186,6 +301,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     marginTop: 6,
   },
+  inputMultiline: { minHeight: 88, marginTop: 0 },
   saveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -195,18 +311,4 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   saveBtnText: { ...TEXT.subtitle, fontFamily: FONTS.semibold, color: '#ffffff' },
-  navRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    padding: 14,
-  },
-  // flex + minWidth:0 คู่กันบังคับ — ข้อความยาวจะดันลูกศรหลุดขอบการ์ดบนเว็บ
-  navRowMain: { flex: 1, minWidth: 0 },
-  navRowTitle: { ...TEXT.body, color: COLORS.text },
-  navRowSub: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 3, lineHeight: 16 },
 });

@@ -1,8 +1,15 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../types';
 import { Investment } from '../types/investment';
 import { RealizedTrade } from '../types/investment';
+import { UserPlatform } from '../types/investment';
+import { getPlatforms } from '../services/platformStorage';
+import { UserCurrency } from '../types/investment';
+import { getCurrencies } from '../services/currencyStorage';
+import { resolveTradeFee } from '../utils/tradeFee';
 import { TaxProfile, GAIN_RULE_LABELS } from '../types/tax';
 import { getTaxProfile } from '../services/taxStorage';
 import { UserProfile, incomeExemptionFor } from '../types/userProfile';
@@ -36,17 +43,25 @@ import {
   legsOfCycle,
   orphanLegsForBasket,
   summarizeCycle,
+  exitPlanForCycle,
+  FeeRule,
   summarizeCycleHistory,
   legCostTHB,
   legValueTHB,
 } from '../utils/cycles';
 import { CycleCard, CycleStartCard, CycleHistoryCard } from '../components/CycleCard';
 import { CycleSettingsModal, CloseCycleModal, CloseCycleRow } from '../components/CycleModals';
+import { MenuRow, MenuCard } from '../components/MenuRow';
+import { MascotEmpty } from '../components/Mascot';
 import { COLORS, formatCurrency, toChristianYear } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
 
 const currentTaxYear = new Date().getFullYear() + 543;
+
+/** ยอดบาทพร้อมเครื่องหมาย — ชุดเดียวกับที่หน้าพอร์ตใช้ */
+const baht = (n: number, showPlus = false): string =>
+  `${n < 0 ? '-' : showPlus ? '+' : ''}฿${formatCurrency(Math.abs(n))}`;
 
 /**
  * หน้า "รอบลงทุน" — ยกการ์ดรอบทั้งหมดออกมาจากพอร์ต (ดู CLAUDE.md §6.5)
@@ -54,6 +69,7 @@ const currentTaxYear = new Date().getFullYear() + 543;
  * (เป้ากำไรของตะกร้า · เหลือกระสุนกี่ไม้ · ปิดทั้งตะกร้า) มาอยู่ที่นี่ทั้งชุด
  */
 export default function CyclesScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { isDesktop } = useResponsive();
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
@@ -62,6 +78,9 @@ export default function CyclesScreen() {
   const [person, setPerson] = useState<UserProfile | null>(null);
   const [cycles, setCycles] = useState<InvestmentCycle[]>([]);
   const [closedCycles, setClosedCycles] = useState<InvestmentCycle[]>([]);
+  // ค่าธรรมเนียมของแต่ละแพลตฟอร์ม — ใช้คิด "ราคาที่ต้องตั้งขาย" ให้รวมค่าธรรมเนียมขาขาย
+  const [platforms, setPlatforms] = useState<UserPlatform[]>([]);
+  const [currencies, setCurrencies] = useState<UserCurrency[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCycleHistory, setShowCycleHistory] = useState(false);
   // ── ตั้งค่ารอบ ──
@@ -117,6 +136,17 @@ export default function CyclesScreen() {
       setCycles([]);
       setClosedCycles([]);
     }
+    // ค่าธรรมเนียมล้มแยกจากก้อนอื่น — ไม่มีก็แค่ราคาที่โชว์ยังไม่รวมค่าธรรมเนียม (จอบอกเอง)
+    try {
+      setPlatforms(await getPlatforms());
+    } catch {
+      setPlatforms([]);
+    }
+    try {
+      setCurrencies(await getCurrencies());
+    } catch {
+      setCurrencies([]);
+    }
     setLoading(false);
   }, []);
 
@@ -131,11 +161,15 @@ export default function CyclesScreen() {
   // ต้องส่งจำนวนหุ้นไปด้วย (สูตรหารด้วย หุ้น × ครั้งต่อหุ้น) ไม่งั้นจอนี้ได้เลขคนละตัวกับหน้าเงินรอลงทุน
   const powderPerRound = nextLegTHBOf(plan, countSymbols(investments));
 
-  const cycleViews = cycles.map((cycle) => ({
-    cycle,
-    status: summarizeCycle(cycle, legsOfCycle(cycle, investments), { perRoundTHB: powderPerRound }),
-    orphanCount: orphanLegsForBasket(cycle, investments).length,
-  }));
+  const cycleViews = cycles.map((cycle) => {
+    const legs = legsOfCycle(cycle, investments);
+    return {
+      cycle,
+      status: summarizeCycle(cycle, legs, { perRoundTHB: powderPerRound }),
+      orphanCount: orphanLegsForBasket(cycle, investments).length,
+      exits: exitPlanForCycle(cycle, legs, feeOf),
+    };
+  });
   // ตะกร้าที่ยังไม่มีรอบเปิด และมีของถืออยู่จริง — ใช้ในการ์ด "ยังไม่ได้เปิดรอบ"
   const basketsWithoutCycle = BASKET_ORDER.map((basket) => {
     const legs = investments.filter((i) => basketAccepts(basket, i.type));
@@ -432,6 +466,19 @@ export default function CyclesScreen() {
     loadData();
   };
 
+  // ค่าธรรมเนียมของคำสั่ง: แพลตฟอร์มก่อน → สกุลเงิน → ไม่รู้ (ดู utils/tradeFee.ts)
+  // ขั้นต่ำถูกแปลงเป็นบาทให้แล้วในตัว resolver ($1 ของ IBKR ไม่ใช่ 1 บาท)
+  const feeOf = useCallback(
+    (platform?: string, currency?: string): FeeRule | undefined => {
+      const f = resolveTradeFee(platform, currency, platforms, currencies);
+      return f.source == null ? undefined : { percent: f.percent, minTHB: f.minTHB };
+    },
+    [platforms, currencies]
+  );
+
+  // สรุปผลของทุกดีลที่ขายแล้ว — ใช้เป็นตัวเลขบนทางเข้า "ผลงานที่ขายแล้ว" ท้ายหน้า
+  const realized = useMemo(() => summarizeRealized(realizedTrades), [realizedTrades]);
+
   // ── แถวในกล่องปิดรอบ + ภาษีของกำไรที่จะรับรู้ ──
   const tradesThisTaxYear = useMemo(
     () => realizedTrades.filter((t) => taxYearOf(t.sellDate) === currentTaxYear),
@@ -506,12 +553,13 @@ export default function CyclesScreen() {
         )}
 
         <View style={isDesktop ? styles.cardGrid : undefined}>
-          {cycleViews.map(({ cycle, status, orphanCount }) => (
+          {cycleViews.map(({ cycle, status, orphanCount, exits }) => (
             <CycleCard
               key={cycle.id}
               cycle={cycle}
               status={status}
               orphanCount={orphanCount}
+              exits={exits}
               onPullOrphans={() => handlePullOrphans(cycle)}
               onPressClose={() => openCloseCycleModal(cycle)}
               onPressSettings={() => openCycleSettings(cycle)}
@@ -534,11 +582,33 @@ export default function CyclesScreen() {
         </View>
 
         {cycleViews.length === 0 && basketsWithoutCycle.length === 0 && (
-          <Text style={styles.hint}>
+          <MascotEmpty>
             ยังไม่มีรอบที่เปิดอยู่ และยังไม่มีของถืออยู่ให้เปิดรอบ — เพิ่มการลงทุนที่หน้าพอร์ตก่อน
             แล้วการ์ด "ยังไม่ได้เปิดรอบ" จะโผล่มาเอง
-          </Text>
+          </MascotEmpty>
         )}
+        {/* ── ทางเข้า "ผลงานที่ขายแล้ว" ──
+            ย้ายมาจากเมนูหน้าพอร์ต (2026-08-20): รายการขายทุกใบคือ "ผลของรอบ" อยู่แล้ว
+            (การปิดรอบเขียน realized_trades ทีละไม้ ดู §6.5) อ่านคู่กับรอบที่เปิดอยู่
+            และรอบที่ปิดแล้วในหน้าเดียวกันจึงตรงกว่าไปอยู่บนพอร์ต
+            หน้าปลายทางยังเป็น RealizedScreen ใบเดิม — ปุ่มย้อนคืนการขายอยู่ที่นั่น */}
+        <MenuCard>
+          <MenuRow
+            icon="ribbon-outline"
+            title="ผลงานที่ขายแล้ว"
+            tone={COLORS.success}
+            value={realized.tradeCount > 0 ? baht(realized.totalPnlTHB, true) : '—'}
+            valueNegative={realized.totalPnlTHB < 0}
+            sub={
+              realized.tradeCount > 0
+                ? `ชนะ ${realized.winCount}/${realized.tradeCount} ดีล · ย้อนคืนการขายได้ที่นี่`
+                : 'ยังไม่มีการขายที่บันทึกไว้'
+            }
+            onPress={() => navigation.navigate('Realized')}
+            first
+          />
+        </MenuCard>
+
       </ScrollView>
 
       {/* ── Modal ของระบบรอบ: ตั้งค่ารอบ / ปิดรอบทั้งตะกร้า ── */}

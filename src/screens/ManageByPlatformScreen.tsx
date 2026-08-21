@@ -34,6 +34,7 @@ import { getPlatforms } from '../services/platformStorage';
 import { getCurrencies } from '../services/currencyStorage';
 import { formatCurrencyWithType, COLORS } from '../utils/constants';
 import { notify, confirmAsk } from '../utils/dialog';
+import { MascotEmpty } from '../components/Mascot';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'ManageByPlatform'>;
 
@@ -416,7 +417,7 @@ export default function ManageByPlatformScreen() {
             contentContainerStyle={{ padding: 16, paddingBottom: selected.length > 0 ? 96 : 24 }}
           >
             {groups.length === 0 ? (
-              <Text style={styles.empty}>ยังไม่มีการลงทุน{'\n'}ไปที่โหมด "เพิ่มหลายรายการ" เพื่อเริ่มได้เลย</Text>
+              <MascotEmpty>ยังไม่มีการลงทุน{'\n'}ไปที่โหมด "เพิ่มหลายรายการ" เพื่อเริ่มได้เลย</MascotEmpty>
             ) : (
               groups.map((g) => {
                 const ids = g.items.map((i) => i.id);

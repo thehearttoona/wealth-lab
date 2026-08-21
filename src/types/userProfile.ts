@@ -23,6 +23,13 @@ export const MARITAL_LABELS: Record<MaritalStatus, string> = {
 };
 
 export interface UserProfile {
+  /**
+   * ชื่อที่ผู้ใช้ตั้งเอง — ว่าง = ใช้ชื่อจาก Google (user_metadata.full_name) แทน
+   *
+   * ไม่ใช่ข้อมูลภาษี และต้องไม่นับใน isUserProfileAnswered() ด้านล่าง
+   * (ดู sql/user_profile_display_name.sql — เป็นคอลัมน์ทางเลือก)
+   */
+  displayName?: string;
   /** YYYY-MM-DD (ค.ศ.) — ใช้คำนวณอายุ และนับถอยหลังเงื่อนไข RMF ที่ต้องอายุ 55 */
   birthDate?: string;
   maritalStatus?: MaritalStatus;
@@ -51,11 +58,12 @@ export const emptyUserProfile = (): UserProfile => ({});
  *
  * ต้องเช็กที่ "มีคำตอบ" ไม่ใช่ที่ "มีแถวในตาราง": แถวว่างเปล่าเกิดขึ้นได้จากการกดบันทึกทั้งที่ไม่กรอกอะไร
  * ถ้านับแถวว่างว่ากรอกแล้ว หน้าภาษีจะปลดล็อกโดยที่ทุกสิทธิ์ยังเป็น "ยังไม่รู้" ซึ่งช่วยอะไรไม่ได้
- * `notes` ไม่นับ เพราะเป็นข้อความอิสระ ไม่มีผลกับการตัดสินสิทธิ์
+ * `notes` กับ `displayName` ไม่นับ — เป็นข้อมูลของ "ตัวตนในแอป" ไม่มีผลกับการตัดสินสิทธิ์
+ * (ถ้านับ แค่ตั้งชื่อเล่นก็จะปลดล็อกหัวข้อค่าลดหย่อนทั้งที่ยังไม่ได้ตอบคำถามภาษีสักข้อ)
  */
 export const isUserProfileAnswered = (profile: UserProfile | null | undefined): boolean => {
   if (!profile) return false;
-  const { notes, ...answers } = profile;
+  const { notes, displayName, ...answers } = profile;
   return Object.values(answers).some((v) => v !== undefined && v !== null && v !== '');
 };
 

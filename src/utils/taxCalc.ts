@@ -252,37 +252,54 @@ export interface FullYearProjection {
  * วิธีประมาณ: เดือนที่ยังไม่มีเงินเดือน ใช้ค่าของ "เดือนล่าสุดที่กรอก" (เงินเดือน/หัก ณ ที่จ่าย/ประกันสังคม)
  * โบนัสไม่ประมาณให้ เพราะไม่ได้รับทุกเดือน — เดาให้จะทำให้ตัวเลขสูงเกินจริง
  */
+/**
+ * months ชุดที่เดือนยังไม่มีเงินเดือนถูกเติมด้วยเดือนล่าสุด — null = ไม่ต้องประมาณ
+ * (กรอกครบ 12 เดือนแล้ว หรือยังไม่กรอกเลย)
+ *
+ * แยกออกมาจาก projectFullYear เพราะการวางแผนลดหย่อน (utils/taxSavePlan) ต้องได้ "โปรไฟล์ทั้งปี"
+ * ไปจำลองต่อ ไม่ใช่แค่ผลลัพธ์ — ถ้าให้หน้าจอเติมเดือนเอง จะมีสูตรประมาณสองชุดที่หลุดกันได้
+ */
+export function projectMonths(
+  profile: TaxProfile
+): { months: TaxMonth[]; filledMonths: number; basedOnMonth: number } | null {
+  const t = sumTaxMonths(profile.months);
+  if (t.filledMonths === 0 || t.lastSalaryMonth === 0 || t.filledMonths >= 12) return null;
+
+  const base = profile.months.find((x) => x.month === t.lastSalaryMonth);
+  if (!base) return null;
+
+  return {
+    filledMonths: t.filledMonths,
+    basedOnMonth: t.lastSalaryMonth,
+    months: profile.months.map((x) =>
+      (x.salary || 0) > 0
+        ? x
+        : {
+            month: x.month,
+            salary: base.salary,
+            bonus: 0,
+            withheld: base.withheld,
+            socialSecurity: base.socialSecurity,
+          }
+    ),
+  };
+}
+
 export function projectFullYear(
   profile: TaxProfile,
   trades: RealizedTrade[] = [],
   opts: TaxCalcOptions = {}
 ): FullYearProjection {
-  const t = sumTaxMonths(profile.months);
-  if (t.filledMonths === 0 || t.lastSalaryMonth === 0 || t.filledMonths >= 12) {
+  const p = projectMonths(profile);
+  if (!p) {
+    const t = sumTaxMonths(profile.months);
     return { filledMonths: t.filledMonths, basedOnMonth: t.lastSalaryMonth, projected: null };
   }
 
-  const base = profile.months.find((x) => x.month === t.lastSalaryMonth);
-  if (!base) {
-    return { filledMonths: t.filledMonths, basedOnMonth: 0, projected: null };
-  }
-
-  const projectedMonths: TaxMonth[] = profile.months.map((x) =>
-    (x.salary || 0) > 0
-      ? x
-      : {
-          month: x.month,
-          salary: base.salary,
-          bonus: 0,
-          withheld: base.withheld,
-          socialSecurity: base.socialSecurity,
-        }
-  );
-
   return {
-    filledMonths: t.filledMonths,
-    basedOnMonth: t.lastSalaryMonth,
-    projected: calculateTax({ ...profile, months: projectedMonths }, trades, opts),
+    filledMonths: p.filledMonths,
+    basedOnMonth: p.basedOnMonth,
+    projected: calculateTax({ ...profile, months: p.months }, trades, opts),
   };
 }
 

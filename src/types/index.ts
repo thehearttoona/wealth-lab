@@ -60,11 +60,14 @@ export type RootStackParamList = {
   Tax: undefined;
   PersonalInfo: undefined;
   PurchaseGoals: undefined;
+  LifeCost: undefined;
+  LifeGoal: undefined;   // เป้าหมายใหญ่สุดของชีวิต — บันไดเงินก้อน วัดจากความมั่งคั่งสุทธิ   // ค่าเสื่อมของชีวิต — ของที่จะต้องจ่ายอีกแน่ ๆ แค่ยังไม่ถึงวัน
   SellReview: undefined;
   // หน้าที่แยกออกจากพอร์ต (เดิมเป็นการ์ดเรียงกันอยู่ในหน้าเดียว)
   Realized: undefined;
   Cycles: undefined;
   DryPowder: undefined;
+  RedSignals: undefined;   // ประวัติสัญญาณ "ถึงคิวลงไม้" สะสม (การ์ดในพอร์ตเป็นภาพของวันนี้เท่านั้น)
   // หน้าที่แยกออกจากภาษี — ปีที่แก้อยู่ส่งมาทาง param (หน้าภาษีเป็นเจ้าของตัวเลือกปี)
   TaxIncome: { year: number };
   TaxDeduction: { year: number };

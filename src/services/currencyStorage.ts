@@ -8,6 +8,8 @@ const mapFromDb = (row: any): UserCurrency => ({
   code: row.code,
   symbol: row.symbol ?? undefined,
   rateToTHB: row.rate_to_thb ?? undefined,
+  feePercent: row.fee_percent != null ? Number(row.fee_percent) : undefined,
+  feeMin: row.fee_min != null ? Number(row.fee_min) : undefined,
   createdAt: row.created_at,
 });
 
@@ -16,9 +18,21 @@ const mapToDb = (c: UserCurrency, userId: string) => ({
   code: c.code,
   symbol: c.symbol ?? null,
   rate_to_thb: c.rateToTHB ?? null,
+  fee_percent: c.feePercent ?? null,
+  fee_min: c.feeMin ?? null,
   created_at: c.createdAt,
   user_id: userId,
 });
+
+// ยังไม่ได้รัน sql/catalog_fee_by_currency.sql — คอลัมน์ค่าธรรมเนียมยังไม่มี
+// ตัดสองคอลัมน์นั้นออกแล้วลองใหม่ ดีกว่าให้ "เพิ่มสกุลเงิน" พังทั้งปุ่มเพราะฟีเจอร์เสริม
+const isFeeColumnMissing = (error: { message?: string } | null): boolean =>
+  /fee_percent|fee_min/i.test(error?.message || '');
+
+const withoutFeeColumns = (row: ReturnType<typeof mapToDb>) => {
+  const { fee_percent, fee_min, ...rest } = row;
+  return rest;
+};
 
 // ยังไม่ได้รัน sql/catalog_currencies_platforms.sql — ให้แอปทำงานต่อได้ด้วยค่าเริ่มต้น
 export const isCatalogTableMissing = (error: { code?: string; message?: string }): boolean =>
@@ -38,7 +52,12 @@ export const getCurrencies = async (): Promise<UserCurrency[]> => {
 
 export const saveCurrency = async (c: UserCurrency): Promise<void> => {
   const userId = await getUserId();
-  const { error } = await supabase.from('user_currencies').insert(mapToDb(c, userId));
+  const row = mapToDb(c, userId);
+  let { error } = await supabase.from('user_currencies').insert(row);
+  // ยังไม่ได้รัน sql/catalog_fee_by_currency.sql → ลองใหม่โดยไม่ส่งคอลัมน์ค่าธรรมเนียม
+  if (error && isFeeColumnMissing(error)) {
+    ({ error } = await supabase.from('user_currencies').insert(withoutFeeColumns(row)));
+  }
   if (error) throw error;
   await logActivity({
     entity: 'currency',
@@ -60,10 +79,11 @@ export const updateCurrency = async (c: UserCurrency): Promise<void> => {
   } catch {
     // อ่านไม่ได้ก็เขียนต่อ
   }
-  const { error } = await supabase
-    .from('user_currencies')
-    .update(mapToDb(c, userId))
-    .eq('id', c.id);
+  const row = mapToDb(c, userId);
+  let { error } = await supabase.from('user_currencies').update(row).eq('id', c.id);
+  if (error && isFeeColumnMissing(error)) {
+    ({ error } = await supabase.from('user_currencies').update(withoutFeeColumns(row)).eq('id', c.id));
+  }
   if (error) throw error;
   await logActivity({
     entity: 'currency',

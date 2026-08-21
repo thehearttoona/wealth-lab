@@ -15,8 +15,11 @@ import {
   DeductionGroup,
   TaxYearFactKey,
   TAX_YEAR_FACT_FIELDS,
+  MONTH_LABELS_TH,
 } from '../types/tax';
-import { calculateTax } from '../utils/taxCalc';
+import { calculateTax, projectMonths } from '../utils/taxCalc';
+import { buildTaxSavePlan } from '../utils/taxSavePlan';
+import TaxSavePlanCard from '../components/TaxSavePlanCard';
 import { getRealizedTrades } from '../services/realizedStorage';
 import {
   UserProfile,
@@ -112,6 +115,8 @@ export default function TaxDeductionScreen() {
   const [tableMissing, setTableMissing] = useState(false);
   // เงื่อนไขของค่าลดหย่อน — เปิดทีละรายการ (คีย์ของ DEDUCTION_ITEMS)
   const [openCondition, setOpenCondition] = useState<string | null>(null);
+  // เครื่องมือลดหย่อนที่ผู้ใช้กดปิดในการ์ดแผน — ตั้งใจไม่บันทึก เป็นการลองสลับดูเฉย ๆ
+  const [excludedTools, setExcludedTools] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -152,6 +157,41 @@ export default function TaxDeductionScreen() {
     [person, year]
   );
   const breakdown = useMemo(() => calculateTax(profile, trades, taxOpts), [profile, trades, taxOpts]);
+
+  /**
+   * ฐานของ "สูตรลดหย่อนให้ภาษีเป็น 0"
+   *
+   * ต้องเป็นฐานทั้งปีเสมอ — ถ้าวางแผนบนยอดที่กรอกจริง 8 เดือน ขั้นบันไดจะให้ภาษีต่ำกว่าจริงหลายเท่า
+   * (เหตุผลเดียวกับ projectFullYear ใน utils/taxCalc) แล้วแผนจะบอกให้ซื้อสิทธิ์น้อยกว่าที่ต้องใช้จริง
+   */
+  const planBasis = useMemo(() => {
+    const p = projectMonths(profile);
+    if (!p) return { profile, note: null as string | null };
+    return {
+      profile: { ...profile, months: p.months },
+      note:
+        `คิดจากฐานทั้งปี: กรอกจริง ${p.filledMonths}/12 เดือน เดือนที่เหลือประมาณให้เท่าเดือน ` +
+        `${MONTH_LABELS_TH[p.basedOnMonth - 1]} (โบนัสไม่ประมาณให้)`,
+    };
+  }, [profile]);
+
+  const plan = useMemo(
+    () =>
+      buildTaxSavePlan({
+        profile: planBasis.profile,
+        trades,
+        person,
+        opts: taxOpts,
+        exclude: excludedTools,
+      }),
+    [planBasis, trades, person, taxOpts, excludedTools]
+  );
+
+  const toggleTool = useCallback(
+    (key: string) =>
+      setExcludedTools((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key])),
+    []
+  );
 
   // ยังไม่ตอบอะไรเลย = ทุกสิทธิ์เป็น "ยังไม่รู้" — ไม่ล็อกหน้าแล้ว แค่เตือนไว้บนสุด
   const profileAnswered = isUserProfileAnswered(person);
@@ -259,6 +299,15 @@ export default function TaxDeductionScreen() {
       <Text style={styles.yearBar}>
         กำลังแก้ปีภาษี {year} · เปลี่ยนปีได้ที่หน้าภาษี
       </Text>
+
+      {/* แผนอยู่บนสุดเพราะเป็นคำตอบของ "แล้วต้องทำอะไร" — พับไว้ ไม่ให้เบียดช่องกรอก
+          และตั้งใจไม่เขียนยอดลง deductions (ดูหัวไฟล์ TaxSavePlanCard) */}
+      <TaxSavePlanCard
+        plan={plan}
+        basisNote={planBasis.note}
+        excluded={excludedTools}
+        onToggleTool={toggleTool}
+      />
 
       <View style={styles.card}>
         {/* ── ผู้มีสิทธิ์: คำถามตัวตนที่ตัดสินว่าปีนี้ใช้สิทธิ์อะไรได้ ──
@@ -433,7 +482,7 @@ export default function TaxDeductionScreen() {
                                 color={COLORS.primary}
                               />
                               <Text style={styles.condToggleText}>
-                                {openCond ? ' ปิดเงื่อนไข' : ` เงื่อนไขการใช้สิทธิ์ (${item.conditions.length})`}
+                                {openCond ? 'ปิดเงื่อนไข' : `เงื่อนไขการใช้สิทธิ์ (${item.conditions.length})`}
                               </Text>
                             </TouchableOpacity>
                           )}

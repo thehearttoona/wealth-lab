@@ -21,6 +21,7 @@ const boolOrUndef = (v: any): boolean | undefined =>
 // ย้ายไป tax_profiles.year_facts เพราะทุกข้อเปลี่ยนได้ทุกปี (ดู TaxYearFacts ใน types/tax.ts)
 // ไม่ได้ drop คอลัมน์ทิ้งเพื่อไม่ให้ข้อมูลที่เคยกรอกหายก่อน migrate — upsert แตะแค่คอลัมน์ที่ส่งไป
 const mapFromDb = (row: any): UserProfile => ({
+  displayName: row.display_name || undefined,
   birthDate: row.birth_date || undefined,
   maritalStatus: (row.marital_status as MaritalStatus) || undefined,
   spouseHasIncome: boolOrUndef(row.spouse_has_income),
@@ -32,8 +33,9 @@ const mapFromDb = (row: any): UserProfile => ({
   notes: row.notes || undefined,
 });
 
-const mapToDb = (p: UserProfile, userId: string) => ({
+const mapToDb = (p: UserProfile, userId: string): Record<string, any> => ({
   user_id: userId,
+  display_name: p.displayName ?? null,
   birth_date: p.birthDate ?? null,
   marital_status: p.maritalStatus ?? null,
   spouse_has_income: p.spouseHasIncome ?? null,
@@ -58,10 +60,27 @@ export const getUserProfile = async (): Promise<UserProfile | null> => {
   return data ? mapFromDb(data) : null;
 };
 
+// คอลัมน์ที่เพิ่มทีหลัง — ยังไม่ได้รัน SQL ก็ยังต้องบันทึกช่องที่เหลือได้
+// ตัดเฉพาะคอลัมน์ที่ error ฟ้องชื่อมา แล้วลองใหม่ (แพตเทิร์นเดียวกับ investmentPlanStorage)
+const OPTIONAL_COLUMNS = ['display_name'] as const;
+
 export const saveUserProfile = async (profile: UserProfile): Promise<void> => {
   const userId = await getUserId();
-  const { error } = await supabase
-    .from('user_profile')
-    .upsert(mapToDb(profile, userId), { onConflict: 'user_id' });
-  if (error) throw error;
+  let payload = mapToDb(profile, userId);
+
+  for (let attempt = 0; attempt <= OPTIONAL_COLUMNS.length; attempt++) {
+    const { error } = await supabase
+      .from('user_profile')
+      .upsert(payload, { onConflict: 'user_id' });
+    if (!error) return;
+    const missing = OPTIONAL_COLUMNS.find(
+      (c) => c in payload && new RegExp(c, 'i').test(error.message || '')
+    );
+    // ตารางหายทั้งใบ / error อื่น ๆ ต้องโยนต่อ ให้หน้าจอบอกว่าต้องรัน sql/user_profile.sql
+    if (!missing) throw error;
+    const next = { ...payload };
+    delete next[missing];
+    payload = next;
+  }
+  throw new Error('บันทึกข้อมูลส่วนตัวไม่สำเร็จ');
 };

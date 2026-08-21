@@ -1,9 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, StyleProp, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, TEXT, formatCurrency } from '../utils/constants';
+import { COLORS, TEXT, formatCurrency, formatCurrencyWithType } from '../utils/constants';
+import { ActionButton } from './ActionButton';
 import { InvestmentCycle, BasketKey, basketLabel, DEFAULT_CYCLE_TARGET } from '../types/cycle';
-import { CycleStatus, CycleHistory } from '../utils/cycles';
+import { CycleStatus, CycleHistory, SymbolExit } from '../utils/cycles';
 
 // ── การ์ด "รอบนี้" ──
 // ทุกคอมโพเนนต์ในไฟล์นี้อยู่ที่ module scope โดยตั้งใจ (กฎ §1.13 ใน CLAUDE.md):
@@ -24,11 +25,13 @@ export const CycleCard: React.FC<{
   /** ไม้ในตะกร้านี้ที่ยังไม่อยู่รอบไหน — ดึงเข้าเองเท่านั้น ระบบไม่ดึงให้อัตโนมัติ
    *  (ไม่งั้นไม้ที่ตั้งใจถอนออกจากตะกร้าจะถูกลากกลับเข้ามาทุกครั้งที่เปิดหน้า) */
   orphanCount?: number;
+  /** ราคาที่ต้องขายรายตัว (utils/cycles#exitPlanForCycle) — ส่งมาจากจอ เพราะต้องใช้ค่าธรรมเนียมของแพลตฟอร์ม */
+  exits?: SymbolExit[];
   onPullOrphans?: () => void;
   onPressClose: () => void;
   onPressSettings: () => void;
   style?: StyleProp<ViewStyle>;
-}> = ({ cycle, status, orphanCount = 0, onPullOrphans, onPressClose, onPressSettings, style }) => {
+}> = ({ cycle, status, orphanCount = 0, exits = [], onPullOrphans, onPressClose, onPressSettings, style }) => {
   const profit = status.profitTHB;
   const profitPercent = status.profitPercent;
   const isUp = (profit ?? 0) >= 0;
@@ -109,6 +112,48 @@ export const CycleCard: React.FC<{
           มี {status.missingPriceCount} ไม้ที่ยังไม่มีราคาปัจจุบัน — กำไรรวมต่ำกว่าความจริง
         </Text>
       )}
+      {/* ── ราคาที่ต้องตั้งขาย ──
+          %กำไรบอกได้แค่ "ยังไม่ถึง" แต่เอาไปตั้งคำสั่งขายไม่ได้ ต้องมานั่งคิดเองทุกครั้ง
+          สองเลขนี้คือของที่เอาไปตั้งได้เลย และรวมค่าธรรมเนียมขาขายไว้แล้ว (ดู utils/cycles) */}
+      {exits.length > 0 && (
+        <View style={styles.exitBox}>
+          <Text style={styles.exitTitle}>ตั้งขายที่ราคาไหน</Text>
+          {exits.map((e) => (
+            <View key={`${e.symbol}:${e.currency}`} style={styles.exitRow}>
+              <View style={styles.exitMain}>
+                <Text style={styles.exitSymbol} numberOfLines={1}>
+                  {e.symbol}
+                </Text>
+                <Text style={styles.exitSub} numberOfLines={1}>
+                  {e.quantity} หน่วย · ทุนเฉลี่ย {formatCurrencyWithType(e.avgBuyPrice, e.currency)}
+                  {e.currentPrice != null
+                    ? ` · ตอนนี้ ${formatCurrencyWithType(e.currentPrice, e.currency)}`
+                    : ' · ยังไม่มีราคา'}
+                </Text>
+              </View>
+              <View style={styles.exitPrices}>
+                <Text style={styles.exitTarget}>
+                  {e.targetPrice != null
+                    ? formatCurrencyWithType(e.targetPrice, e.currency)
+                    : 'ถึงเป้าแล้ว'}
+                </Text>
+                <Text style={styles.exitBe}>
+                  คุ้มทุน {formatCurrencyWithType(e.breakEvenPrice, e.currency)}
+                  {e.gapPercent != null ? ` · อีก ${e.gapPercent.toFixed(1)}%` : ''}
+                </Text>
+              </View>
+            </View>
+          ))}
+          <Text style={styles.exitNote}>
+            ราคาถึงเป้า = ขายตัวนี้ที่ราคานี้แล้วทั้งรอบถึงเป้า โดยตัวอื่นขายที่ราคาปัจจุบัน ·
+            รวมค่าธรรมเนียมขายแล้ว ยังไม่รวมภาษีกำไร (ดูตอนกดปิดรอบ)
+            {exits.some((e) => e.feeUnknown)
+              ? '\nบางตัวยังไม่ได้ตั้งค่าธรรมเนียมของแพลตฟอร์ม — ราคานี้จึงยังไม่รวมค่าธรรมเนียม ไปตั้งที่ โปรไฟล์ → สกุลเงิน & แพลตฟอร์ม'
+              : ''}
+          </Text>
+        </View>
+      )}
+
       {status.legCountBySymbol.length > 0 && (
         <Text style={styles.sub} numberOfLines={2}>
           {status.legCountBySymbol
@@ -118,12 +163,13 @@ export const CycleCard: React.FC<{
       )}
 
       {orphanCount > 0 && onPullOrphans && (
-        <TouchableOpacity style={styles.pullRow} onPress={onPullOrphans}>
-          <Ionicons name="download-outline" size={14} color={COLORS.primary} />
-          <Text style={styles.pullText}>
-            {' '}มี {orphanCount} ไม้ในตะกร้านี้ที่ยังไม่อยู่รอบ — ดึงเข้ารอบ
-          </Text>
-        </TouchableOpacity>
+        <ActionButton
+          label={`มี ${orphanCount} ไม้ในตะกร้านี้ที่ยังไม่อยู่รอบ — ดึงเข้ารอบ`}
+          icon="download-outline"
+          size="sm"
+          onPress={onPullOrphans}
+          style={styles.pullRow}
+        />
       )}
 
       {/* กดได้ตลอด ไม่ใช่โผล่มาตอนถึงเป้า — การปิดก่อนเป้าเป็นการตัดสินใจที่ชอบธรรม */}
@@ -197,12 +243,13 @@ export const CycleHistoryCard: React.FC<{
         {history.avgDays != null ? ` · เฉลี่ย ${Math.round(history.avgDays)} วัน/รอบ` : ''}
         {history.avgProfitPercent != null ? ` · ${pct(history.avgProfitPercent)}/รอบ` : ''}
       </Text>
-      <TouchableOpacity style={styles.toggle} onPress={onToggle}>
-        <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={COLORS.primary} />
-        <Text style={styles.toggleText}>
-          {expanded ? ' ซ่อนรายรอบ' : ` ดูรายรอบ (${history.cycleCount})`}
-        </Text>
-      </TouchableOpacity>
+      <ActionButton
+        icon={expanded ? 'chevron-up' : 'chevron-down'}
+        label={expanded ? 'ซ่อนรายรอบ' : `ดูรายรอบ (${history.cycleCount})`}
+        size="sm"
+        onPress={onToggle}
+        style={styles.toggle}
+      />
       {expanded &&
         history.rows.map((r) => (
           <View key={r.cycle.id} style={styles.histRow}>
@@ -288,10 +335,35 @@ const styles = StyleSheet.create({
   },
   startRowLeft: { flex: 1, minWidth: 0 },
   startRowName: { ...TEXT.subtitle, color: COLORS.text },
-  pullRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
-  pullText: { ...TEXT.label, color: COLORS.primary, flex: 1, minWidth: 0 },
-  toggle: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
-  toggleText: { ...TEXT.label, color: COLORS.primary },
+  // ── กล่องราคาที่ต้องตั้งขาย ──
+  exitBox: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.divider,
+    gap: 6,
+  },
+  exitTitle: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  // minWidth: 0 ที่คอลัมน์ซ้ายจำเป็นบนเว็บ ไม่งั้นชื่อยาวดันคอลัมน์ราคาหลุดขอบการ์ด
+  exitRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  exitMain: { flex: 1, minWidth: 0 },
+  exitSymbol: { fontSize: 13, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  exitSub: { fontSize: 10.5, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary },
+  exitPrices: { alignItems: 'flex-end' },
+  exitTarget: { fontSize: 14, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.success },
+  exitBe: { fontSize: 10.5, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary },
+  exitNote: {
+    fontSize: 10.5,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    lineHeight: 16,
+  },
+  pullRow: { alignSelf: 'stretch', marginTop: 10 },
+  toggle: { alignSelf: 'flex-start', marginTop: 10 },
   histRow: {
     flexDirection: 'row',
     alignItems: 'center',

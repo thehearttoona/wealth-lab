@@ -20,8 +20,10 @@ import { Currency, INVESTMENT_PLATFORMS } from '../types/investment';
 import { getAccounts, saveAccount, updateAccount, deleteAccount } from '../services/accountStorage';
 import { getCurrencies } from '../services/currencyStorage';
 import { getPlatforms } from '../services/platformStorage';
-import { COLORS, getCurrencySymbol, formatCurrency } from '../utils/constants';
+import { COLORS, RADIUS, getCurrencySymbol, formatCurrency } from '../utils/constants';
+import { ActionButton } from '../components/ActionButton';
 import { notify, confirmAsk } from '../utils/dialog';
+import { MascotEmpty } from '../components/Mascot';
 
 const roleLabel = (role: AccountRole) =>
   ACCOUNT_ROLES.find((r) => r.value === role)?.label || role;
@@ -143,10 +145,7 @@ export default function AccountsScreen() {
         </Text>
 
         {accounts.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Ionicons name="wallet-outline" size={28} color={COLORS.textSecondary} />
-            <Text style={styles.emptyText}>ยังไม่มีบัญชี — กด "เพิ่มบัญชี" เพื่อเริ่ม</Text>
-          </View>
+          <MascotEmpty>ยังไม่มีบัญชี — กด "เพิ่มบัญชี" เพื่อเริ่ม</MascotEmpty>
         ) : (
           accounts.map((acc) => (
             <TouchableOpacity key={acc.id} style={styles.card} onPress={() => openEdit(acc)}>
@@ -280,13 +279,19 @@ export default function AccountsScreen() {
             </TouchableOpacity>
             <View style={styles.modalBottomRow}>
               {editing && (
-                <TouchableOpacity onPress={handleDelete}>
-                  <Text style={styles.modalDeleteText}>ลบบัญชี</Text>
-                </TouchableOpacity>
+                <ActionButton
+                  label="ลบบัญชี"
+                  icon="trash-outline"
+                  variant="danger"
+                  onPress={handleDelete}
+                />
               )}
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Text style={styles.modalCancelText}>ยกเลิก</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label="ยกเลิก"
+                variant="quiet"
+                onPress={() => setModalVisible(false)}
+                style={styles.modalCancelBtn}
+              />
             </View>
           </ScrollView>
         </View>
@@ -339,6 +344,7 @@ const styles = StyleSheet.create({
   cardBalance: { fontSize: 14, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
   cardBalanceMuted: { fontSize: 14, color: COLORS.textSecondary, fontFamily: 'NotoSansThai_400Regular' },
   addBtn: {
+    borderRadius: RADIUS.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -349,6 +355,7 @@ const styles = StyleSheet.create({
   },
   addBtnText: { color: '#ffffff', fontSize: 15, fontFamily: 'NotoSansThai_600SemiBold' },
   importBtn: {
+    borderRadius: RADIUS.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -398,6 +405,7 @@ const styles = StyleSheet.create({
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
+    borderRadius: RADIUS.sm,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
@@ -407,9 +415,8 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   chipText: { fontSize: 12, fontFamily: 'NotoSansThai_400Regular', color: COLORS.text },
   chipTextActive: { color: '#ffffff' },
-  modalSaveBtn: { backgroundColor: COLORS.primary, paddingVertical: 13, alignItems: 'center', marginTop: 20 },
+  modalSaveBtn: { backgroundColor: COLORS.primary, borderRadius: RADIUS.md, paddingVertical: 13, alignItems: 'center', marginTop: 20 },
   modalSaveBtnText: { color: '#ffffff', fontSize: 15, fontFamily: 'NotoSansThai_600SemiBold' },
   modalBottomRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 },
-  modalDeleteText: { color: COLORS.error, fontSize: 13, fontFamily: 'NotoSansThai_500Medium' },
-  modalCancelText: { color: COLORS.textSecondary, fontSize: 13, fontFamily: 'NotoSansThai_500Medium', marginLeft: 'auto' },
+  modalCancelBtn: { marginLeft: 'auto' },
 });

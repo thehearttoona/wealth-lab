@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -32,17 +32,30 @@ import {
 } from '../utils/dryPowder';
 import {
   COLORS,
+  RADIUS,
   formatCurrency,
   formatCurrencyWithType,
   convertToTHB,
   convertFromTHB,
   toChristianYear,
 } from '../utils/constants';
+import { ActionButton } from '../components/ActionButton';
+import { Mascot, MascotState } from '../components/Mascot';
 import { notify, confirmAsk } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
+import { buildPowderFlow, powderPace, powderWindow, DeployRow } from '../utils/powderFlow';
 
 const fmtDateTH = (iso: string): string =>
   new Date(iso).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
+
+/** ช่วงวันแบบสั้น "17–23 ส.ค." — เดือนพิมพ์ครั้งเดียวถ้าอยู่เดือนเดียวกัน */
+const fmtRangeTH = (aISO: string, bISO: string): string => {
+  const a = new Date(aISO);
+  const b = new Date(bISO);
+  const day = (d: Date) => d.toLocaleDateString('th-TH', { day: 'numeric' });
+  const dayMon = (d: Date) => d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+  return a.getMonth() === b.getMonth() ? `${day(a)}–${dayMon(b)}` : `${dayMon(a)}–${dayMon(b)}`;
+};
 
 /** "เหลือกี่ครั้งต่อหุ้น" หารไม่ลงตัวได้ (17 ไม้ / 5 หุ้น) — ทศนิยม 1 ตำแหน่งเฉพาะตอนไม่ลงตัว */
 const fmtRounds = (n: number): string => (Number.isInteger(n) ? `${n}` : n.toFixed(1));
@@ -282,6 +295,18 @@ export default function DryPowderScreen() {
   const dryPowderUSD = dryPowder > 0 ? convertFromTHB(dryPowder, 'USD') : 0;
   const nextLegUSD = status.nextLegTHB != null ? convertFromTHB(status.nextLegTHB, 'USD') : null;
 
+  // อารมณ์ของน้องหมุดบนการ์ด "ขนาดไม้" — ไล่จากแย่สุดไปดีสุด
+  // ยังคิดไม้ไม่ได้ (ไม่มียอด/ไม่มีแผน) = หลับ · ไม้หมด = ตื่นตัว (ต้องเติมแล้ว)
+  // ลงเกินแผนจนไม้หด = เศร้า · นอกนั้น = ยิ้ม
+  const powderMood: MascotState =
+    status.nextLegTHB == null
+      ? 'sleep'
+      : status.legsLeft <= 0
+        ? 'alert'
+        : status.underfunded
+          ? 'sad'
+          : 'happy';
+
   // ซื้อไปแล้วกี่รายการหลังวันที่กำหนด — สัญญาณว่ายอด/ตัวนับที่จดไว้เก่าแล้ว
   const purchasesSince = (asOf?: string): { count: number; cost: number } | null => {
     if (!asOf) return null;
@@ -306,6 +331,84 @@ export default function DryPowderScreen() {
     plan?.powderStartedAt != null &&
     boughtSinceStart != null &&
     boughtSinceStart.count !== status.legsUsed;
+
+  // ── จังหวะการลงเงิน (อ่านอย่างเดียว ไม่มีผลกับขนาดไม้ — ดู utils/powderFlow) ──
+  // "วันนี้" ใช้ก้อนเดียวกับที่หน้านี้ใช้ประทับวันที่ ไม่ใช่ new Date() ใหม่ทุกจุด
+  const todayDate = new Date(`${today}T00:00:00`);
+  const deployRows: DeployRow[] = useMemo(() => {
+    const rows: DeployRow[] = [];
+    investments.forEach((inv) =>
+      rows.push({
+        date: inv.buyDate,
+        thb: convertToTHB(inv.buyPrice, inv.currency) * inv.quantity + (inv.fees || 0),
+      })
+    );
+    // ของที่ขายไปแล้วก็เคยเป็นไม้ที่ใช้เงินจริง — ตัดออกแล้วสัปดาห์เก่าจะดูเหมือนไม่ได้ลงอะไรเลย
+    realizedTrades.forEach((t) =>
+      rows.push({ date: t.buyDate, thb: convertToTHB(t.buyPrice, t.currency) * t.quantity })
+    );
+    return rows;
+  }, [investments, realizedTrades]);
+  const flow = useMemo(() => buildPowderFlow(deployRows, todayDate, 8), [deployRows, today]);
+  const maxWeekThb = Math.max(1, ...flow.weeks.map((w) => w.thb));
+  const pace = powderPace(
+    plan?.powderStartedAt,
+    status.spanDays,
+    status.legsPlanned,
+    status.legsUsed,
+    todayDate
+  );
+  const batchWindow = powderWindow(plan?.powderStartedAt, status.spanDays);
+
+  // ── ยอดที่ "น่าจะเหลือ" = ที่จดไว้ − ที่ซื้อไปหลังจดยอด ──
+  // แอปไม่หักเงินอัตโนมัติ (ตั้งใจ) แต่ไม่ได้แปลว่าต้องให้คนคิดลบในหัวเอง — คิดให้ แล้วให้คนกดยืนยัน
+  const suggestedRemaining =
+    boughtSincePowder && boughtSincePowder.cost > 0
+      ? Math.max(0, dryPowder - boughtSincePowder.cost)
+      : null;
+  // เขียนทับให้อัตโนมัติได้เฉพาะตอนที่ "รู้แน่ว่าต้องหักจากช่องไหน" — ยอดเดียวและเป็นบาท
+  // หลายรายการ/สกุลอื่น แอปไม่มีทางรู้ว่าเงินออกจากบัญชีไหน ต้องให้คนเลือกเองในโมดัล
+  const powderItems = plan?.dryPowderItems || [];
+  const canApplySuggestion =
+    suggestedRemaining != null &&
+    powderItems.length <= 1 &&
+    (powderItems[0]?.currency ?? 'THB') === 'THB';
+
+  const applySuggestedRemaining = async () => {
+    if (suggestedRemaining == null || !plan) return;
+    const ok = await confirmAsk(
+      'ปรับยอดให้ตรงจริง',
+      `ตั้งเงินรอลงทุนเป็น ฿${formatCurrency(suggestedRemaining)}\n` +
+        `(ที่จดไว้ ฿${formatCurrency(dryPowder)} − ที่ซื้อไปหลังจดยอด ฿${formatCurrency(
+          boughtSincePowder?.cost ?? 0
+        )})\n\nหมุดของก้อนและตัวนับไม้ไม่ถูกแตะ`,
+      'ใช้ยอดนี้'
+    );
+    if (!ok) return;
+    const prev = powderItems[0];
+    const item: DryPowderItem = {
+      id: prev?.id ?? `p${Date.now()}-0`,
+      label: prev?.label ?? '',
+      amount: suggestedRemaining,
+      currency: 'THB',
+      asOf: today,
+    };
+    // ห้ามแตะ powderBaseTHB / powderStartedAt / powderLegsUsed — นี่คือ "แก้ยอด" ไม่ใช่ "เริ่มก้อนใหม่"
+    const next: InvestmentPlan = {
+      ...plan,
+      dryPowderItems: suggestedRemaining > 0 ? [item] : undefined,
+      dryPowder: suggestedRemaining > 0 ? suggestedRemaining : undefined,
+      dryPowderAsOf: suggestedRemaining > 0 ? today : undefined,
+    };
+    try {
+      await saveInvestmentPlan(next);
+      pendingPlan.current = null;
+      setPlan(next);
+      notify(`ปรับยอดเป็น ฿${formatCurrency(suggestedRemaining)} แล้ว`);
+    } catch {
+      notify('ปรับยอดไม่สำเร็จ');
+    }
+  };
 
   const startNewBatch = async () => {
     if (dryPowder <= 0) {
@@ -355,15 +458,21 @@ export default function DryPowderScreen() {
             <Text style={styles.cardTitle}>
               <Ionicons name="cash-outline" size={18} color={COLORS.primary} /> เงินรอลงทุน
             </Text>
-            <TouchableOpacity onPress={openPowderModal}>
-              <Text style={styles.cardEdit}>{dryPowder > 0 ? 'แก้ยอด' : 'จดยอด'}</Text>
-            </TouchableOpacity>
+            <ActionButton
+              label={dryPowder > 0 ? 'แก้ยอด' : 'จดยอด'}
+              icon="create-outline"
+              size="sm"
+              onPress={openPowderModal}
+            />
           </View>
 
           {dryPowder <= 0 ? (
-            <Text style={styles.cardEmpty}>
-              กด "จดยอด" ใส่เงินที่พร้อมลงตอนนี้ → ระบบจะบอกว่าไม้ถัดไปเท่าไหร่ และรับดิ่งได้อีกกี่ %
-            </Text>
+            <View style={styles.emptyRow}>
+              <Mascot state="sleep" size={56} />
+              <Text style={[styles.cardEmpty, styles.emptyRowText]}>
+                กด "จดยอด" ใส่เงินที่พร้อมลงตอนนี้ → ระบบจะบอกว่าไม้ถัดไปเท่าไหร่ และรับดิ่งได้อีกกี่ %
+              </Text>
+            </View>
           ) : (
             <>
               {(plan?.dryPowderItems || []).map((it) => (
@@ -402,11 +511,38 @@ export default function DryPowderScreen() {
                 </Text>
               ) : null}
               {boughtSincePowder && boughtSincePowder.count > 0 && plan?.dryPowderAsOf ? (
-                <Text style={[styles.subText, { color: COLORS.warning }]}>
-                  <Ionicons name="alert-circle-outline" size={13} color={COLORS.warning} />
-                  {' '}ซื้อไป {boughtSincePowder.count} รายการ (~{formatCurrency(boughtSincePowder.cost)})
-                  หลังจดยอดเมื่อ {fmtDateTH(plan.dryPowderAsOf)} — กด "แก้ยอด" ให้ตรงจริง
-                </Text>
+                /* เดิมบรรทัดนี้บอกแค่ว่า "ยอดเก่าแล้ว ไปแก้เอง" ทั้งที่รู้ทั้งสองตัวเลขอยู่แล้ว
+                   คนเลยต้องลบในหัวทุกครั้งก่อนตัดสินใจว่าสัปดาห์นี้ยังซื้อไหวไหม — คิดให้เลย */
+                <View style={styles.suggestBox}>
+                  <View style={styles.suggestTop}>
+                    <Text style={styles.suggestLabel}>น่าจะเหลือตอนนี้</Text>
+                    <Text style={styles.suggestValue}>
+                      ฿{formatCurrency(suggestedRemaining ?? 0)}
+                    </Text>
+                  </View>
+                  <Text style={styles.suggestSub}>
+                    ที่จดไว้ ฿{formatCurrency(dryPowder)} − ซื้อไปหลังจดยอด{' '}
+                    {boughtSincePowder.count} รายการ (~฿{formatCurrency(boughtSincePowder.cost)})
+                    {'\n'}จดไว้เมื่อ {fmtDateTH(plan.dryPowderAsOf)} · แอปไม่หักให้เอง ยอดจริงอยู่ที่คุณยืนยัน
+                  </Text>
+                  <View style={styles.suggestActions}>
+                    {canApplySuggestion ? (
+                      <ActionButton
+                        label="ใช้ยอดนี้"
+                        icon="checkmark-outline"
+                        variant="primary"
+                        size="sm"
+                        onPress={applySuggestedRemaining}
+                      />
+                    ) : null}
+                    <ActionButton
+                      label={canApplySuggestion ? 'แก้เอง' : 'แก้ยอดให้ตรง'}
+                      icon="create-outline"
+                      size="sm"
+                      onPress={openPowderModal}
+                    />
+                  </View>
+                </View>
               ) : plan?.dryPowderAsOf ? (
                 <Text style={styles.subTextMuted}>
                   จดยอดไว้เมื่อ {fmtDateTH(plan.dryPowderAsOf)} · ยังไม่มีการซื้อหลังจากนั้น
@@ -422,9 +558,12 @@ export default function DryPowderScreen() {
             <Text style={styles.cardTitle}>
               <Ionicons name="layers-outline" size={18} color={COLORS.primary} /> ขนาดไม้
             </Text>
-            <TouchableOpacity onPress={startNewBatch}>
-              <Text style={styles.cardEdit}>เริ่มก้อนใหม่</Text>
-            </TouchableOpacity>
+            <ActionButton
+              label="เริ่มก้อนใหม่"
+              icon="refresh-outline"
+              size="sm"
+              onPress={startNewBatch}
+            />
           </View>
 
           <View style={styles.heroRow}>
@@ -444,6 +583,9 @@ export default function DryPowderScreen() {
                 ลงไปแล้ว {status.legsUsed}/{status.legsPlanned}
               </Text>
             </View>
+            {/* อารมณ์ = สถานะกระสุน ตัวเดียวกับเลขสองก้อนซ้ายมือ ไม่ใช่ของประดับ
+                กระสุนหมด/ลงเกินแผน ต้องอ่านออกก่อนที่จะทันอ่านคำเตือนข้างล่าง */}
+            <Mascot state={powderMood} size={56} />
           </View>
 
           {/* ที่มาของเลข — เขียนตัวหารตามที่ใช้จริง ไม่ใช่ตามที่อยากให้ดูสวย */}
@@ -455,6 +597,34 @@ export default function DryPowderScreen() {
             {status.roundsPerSymbol} ครั้ง (กระจาย {status.spanDays} วัน · ซื้อทุก {status.everyDays}{' '}
             วัน)
           </Text>
+
+          {/* จังหวะเทียบปฏิทิน — บอกอย่างเดียว ไม่ไปขยับเงิน (ดูคำเตือนใน utils/powderFlow)
+              "ช้ากว่าจังหวะ" ไม่ใช่คำด่า: ไม้ลงตอนมีสัญญาณ ไม่ใช่ลงเพราะถึงกำหนด */}
+          {pace ? (
+            <View style={styles.paceBox}>
+              <Text style={styles.paceLine}>
+                ผ่านมา {pace.elapsedDays}/{pace.spanDays} วัน
+                {batchWindow ? ` · ก้อนนี้ ${fmtRangeTH(batchWindow.startISO, batchWindow.endISO)}` : ''}
+              </Text>
+              <Text style={styles.paceLine}>
+                ตามจังหวะควรลงแล้ว ~{pace.legsExpected} ไม้ · ลงจริง {pace.legsUsed} ไม้
+              </Text>
+              <Text
+                style={[
+                  styles.paceState,
+                  pace.state === 'ahead' ? { color: COLORS.warning } : null,
+                ]}
+              >
+                {pace.over
+                  ? `เลยช่วงที่ตั้งไว้มา ${pace.elapsedDays - pace.spanDays} วัน — ก้อนนี้ยืดกว่าแผน`
+                  : pace.state === 'ahead'
+                    ? 'เร็วกว่าจังหวะ — กระสุนจะหมดก่อนครบช่วง'
+                    : pace.state === 'behind'
+                      ? 'ช้ากว่าจังหวะ — ปกติ ถ้าช่วงนี้ยังไม่มีสัญญาณให้ลง'
+                      : 'พอดีจังหวะ'}
+              </Text>
+            </View>
+          ) : null}
 
           {status.reason ? <Text style={styles.reasonText}>{status.reason}</Text> : null}
 
@@ -557,6 +727,62 @@ export default function DryPowderScreen() {
         </View>
         {/* ── จบแถวสองคอลัมน์ ── */}
 
+        {/* ── การ์ด 3: ลงไปสัปดาห์ละเท่าไหร่ ──
+            กระสุนของผู้ใช้เป็นกระแส (เติมทุกสัปดาห์) ไม่ใช่ก้อนที่ตั้งแล้วใช้จนหมด
+            คำถามที่ตอบไม่ได้มาตลอดคือ "ปกติลงสัปดาห์ละเท่าไหร่" ซึ่งเป็นฐานของการวางแผนเก็บเงินเพิ่ม
+            ทุกตัวเลขในการ์ดนี้มาจากวันที่ซื้อจริงในพอร์ต + ประวัติขาย — ไม่เกี่ยวกับตัวนับไม้ที่กดเอง
+            สัปดาห์ = จันทร์–อาทิตย์ตามปฏิทินจริง (ที่ขอไว้) แต่ไม่มีผลกับขนาดไม้แม้แต่บาทเดียว */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>
+              <Ionicons name="calendar-outline" size={18} color={COLORS.primary} /> ลงไปสัปดาห์ละเท่าไหร่
+            </Text>
+          </View>
+
+          <View style={styles.avgRow}>
+            <View style={styles.avgCell}>
+              <Text style={styles.heroLabel}>เฉลี่ยต่อสัปดาห์</Text>
+              <Text style={styles.avgValue}>
+                {flow.avgThbPerWeek == null ? '—' : `฿${formatCurrency(flow.avgThbPerWeek)}`}
+              </Text>
+            </View>
+            <View style={styles.avgCell}>
+              <Text style={styles.heroLabel}>ไม้ต่อสัปดาห์</Text>
+              <Text style={styles.avgValue}>
+                {flow.avgLegsPerWeek == null ? '—' : flow.avgLegsPerWeek.toFixed(1)}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.subTextMuted}>
+            {flow.weeksCounted > 0
+              ? `เฉลี่ยจาก ${flow.weeksCounted} สัปดาห์ที่จบแล้ว — สัปดาห์นี้ยังไม่จบ จึงไม่เอามาเฉลี่ย (ไม่งั้นทุกวันจันทร์ค่าเฉลี่ยจะดิ่ง)`
+              : 'ยังไม่มีสัปดาห์ที่จบให้เฉลี่ย — ตัวเลขจะขึ้นเองหลังผ่านไปหนึ่งสัปดาห์เต็ม'}
+          </Text>
+
+          <View style={styles.weekList}>
+            {flow.weeks.map((w) => (
+              <View key={w.startISO} style={styles.weekRow}>
+                <Text style={[styles.weekLabel, w.current && styles.weekLabelNow]}>
+                  {fmtRangeTH(w.startISO, w.endISO)}
+                  {w.current ? ' · สัปดาห์นี้' : ''}
+                </Text>
+                <View style={styles.weekBarTrack}>
+                  <View
+                    style={[
+                      styles.weekBarFill,
+                      { width: `${Math.round((w.thb / maxWeekThb) * 100)}%` },
+                      w.current && { backgroundColor: COLORS.accent },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.weekValue}>
+                  {w.legs > 0 ? `${w.legs} ไม้ · ฿${formatCurrency(w.thb)}` : '—'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
         {/* เลขไม้ถัดไปนี้เป็นตัวเดียวกับที่การ์ดรอบลงทุนใช้แปลงงบเป็น "เหลือกี่ไม้" — บอกไว้ให้รู้ว่าเกี่ยวกัน */}
         <Text style={styles.hint}>
           ยอด "ไม้ถัดไป" คือตัวที่หน้า "รอบลงทุน" ใช้แปลงงบที่เหลือของรอบให้เป็นจำนวนไม้ที่ยังลงได้
@@ -640,9 +866,12 @@ export default function DryPowderScreen() {
               <Text style={styles.modalSaveBtnText}>จดยอด ({formatCurrency(powderRowsTotal)})</Text>
             </TouchableOpacity>
             <View style={styles.modalBottomRow}>
-              <TouchableOpacity onPress={() => setPowderModalVisible(false)}>
-                <Text style={styles.modalCancelText}>ยกเลิก</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label="ยกเลิก"
+                variant="quiet"
+                onPress={() => setPowderModalVisible(false)}
+                style={styles.modalCancelBtn}
+              />
             </View>
           </ScrollView>
         </View>
@@ -674,11 +903,10 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_600SemiBold',
     color: COLORS.text,
   },
-  cardEdit: {
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_400Regular',
-    color: COLORS.primary,
-  },
+
+  // จอว่างที่มีมาสคอต: รูปซ้าย ข้อความขวา (minWidth: 0 กันข้อความดันรูปหลุดขอบบนเว็บ)
+  emptyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+  emptyRowText: { flex: 1, minWidth: 0 },
   cardEmpty: {
     fontSize: 12,
     fontFamily: 'NotoSansThai_300Light',
@@ -715,6 +943,87 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSansThai_300Light',
     color: COLORS.textSecondary,
     lineHeight: 17,
+  },
+  // ── กล่อง "น่าจะเหลือ" — เด่นกว่าคำเตือนเดิม เพราะมันคือเลขที่ใช้ตัดสินใจซื้อจริง ──
+  suggestBox: {
+    marginTop: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    backgroundColor: `${COLORS.warning}0D`,
+    gap: 8,
+  },
+  suggestTop: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
+  suggestLabel: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_500Medium',
+    color: COLORS.text,
+  },
+  suggestValue: {
+    fontSize: 20,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.warning,
+  },
+  suggestSub: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    lineHeight: 17,
+  },
+  suggestActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  // ── แถบจังหวะ ──
+  paceBox: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.divider,
+    gap: 2,
+  },
+  paceLine: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  paceState: {
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_500Medium',
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  // ── การ์ดรายสัปดาห์ ──
+  avgRow: { flexDirection: 'row', gap: 12, marginBottom: 6 },
+  avgCell: { flex: 1, minWidth: 0 },
+  avgValue: {
+    fontSize: 22,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.primary,
+  },
+  weekList: { marginTop: 12, gap: 6 },
+  weekRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  weekLabel: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+    width: 132,
+  },
+  weekLabelNow: { fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  // แถบต้องมี minWidth: 0 คู่กับ flex ไม่งั้นบนเว็บมันไม่ยอมหดให้ป้ายกับตัวเลขสองข้าง (§1.4)
+  weekBarTrack: {
+    flex: 1,
+    minWidth: 0,
+    height: 8,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.divider,
+    overflow: 'hidden',
+  },
+  weekBarFill: { height: 8, borderRadius: RADIUS.pill, backgroundColor: COLORS.primary },
+  weekValue: {
+    fontSize: 11,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.text,
+    width: 132,
+    textAlign: 'right',
   },
   // ── คำตอบหลัก: ไม้ถัดไป | เหลืออีกกี่ไม้ ──
   heroRow: {
@@ -869,6 +1178,7 @@ const styles = StyleSheet.create({
   // 6 ตัวเลือกในแถวเดียวบนมือถือจะแคบจนอ่านไม่ออก — ให้ตัดบรรทัดแทนการบีบ
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
   spanChip: {
+    borderRadius: RADIUS.sm,
     paddingVertical: 7,
     paddingHorizontal: 12,
     alignItems: 'center',
@@ -976,6 +1286,7 @@ const styles = StyleSheet.create({
   },
   powderCurrencyRow: { flexGrow: 0 },
   powderCurBtn: {
+    borderRadius: RADIUS.sm,
     paddingHorizontal: 10,
     paddingVertical: 5,
     marginRight: 6,
@@ -989,6 +1300,7 @@ const styles = StyleSheet.create({
   powderRowAmount: { flex: 2, minWidth: 0, padding: 10, fontSize: 14, textAlign: 'right', fontFamily: 'NotoSansThai_400Regular' },
   powderRowDelete: { paddingHorizontal: 2, paddingVertical: 6 },
   powderAddBtn: {
+    borderRadius: RADIUS.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1004,6 +1316,7 @@ const styles = StyleSheet.create({
   },
   modalSaveBtn: {
     backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.md,
     padding: 16,
     alignItems: 'center',
     marginTop: 24,
@@ -1021,10 +1334,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 16,
   },
-  modalCancelText: {
-    color: COLORS.textSecondary,
-    fontSize: 13,
-    fontFamily: 'NotoSansThai_400Regular',
-    marginLeft: 'auto',
-  },
+  modalCancelBtn: { marginLeft: 'auto' },
 });

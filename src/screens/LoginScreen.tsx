@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  Image,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -13,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../services/supabase';
 import { COLORS } from '../utils/constants';
+import { Mascot } from '../components/Mascot';
 
 export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
@@ -40,11 +40,11 @@ return (
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.card}>
-        <Image
-          source={require('../../assets/icon.png')}
-          style={styles.logoMark}
-          resizeMode="contain"
-        />
+        {/* น้องหมุดแทนไฟล์ไอคอน 344KB ที่เคยโหลดตรงนี้ — เป็นจอแรกที่ทุกคนเห็น
+            และเป็นที่เดียวที่มาสคอตทำหน้าที่ "แบรนด์" ไม่ใช่ "สถานะ" */}
+        <View style={styles.logoMark}>
+          <Mascot state="happy" size={118} />
+        </View>
         <Text style={styles.logo}>Pakmut Wealth</Text>
         <Text style={styles.subtitle}>วางแผนการเงินและติดตามพอร์ตลงทุน</Text>
 
@@ -83,8 +83,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   logoMark: {
-    width: 96,
-    height: 96,
     alignSelf: 'center',
     marginBottom: 12,
   },

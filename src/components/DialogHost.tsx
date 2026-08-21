@@ -62,7 +62,7 @@ const ToastRow: React.FC<{ item: ToastItem; onClose: () => void }> = ({ item, on
         {
           opacity: anim,
           transform: [
-            { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
+            { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-12, 0] }) },
           ],
         },
       ]}
@@ -106,9 +106,11 @@ export default function DialogHost() {
       {/* box-none = กล่องนี้ไม่กินคลิก มีแต่ตัว toast เองที่กดได้ ไม่งั้นจะบังพอร์ตด้านหลัง */}
       <View
         pointerEvents="box-none"
-        style={[styles.toastWrap, { bottom: insets.bottom + 16, right: insets.right + 16 }]}
+        style={[styles.toastWrap, { top: insets.top + 16, right: insets.right + 16 }]}
       >
-        {toasts.map((t) => (
+        {/* เรียงกลับด้าน: ใบใหม่สุดอยู่ติดขอบบนเสมอ ตาจึงมองที่เดิมทุกครั้ง
+            (ถ้าเรียงตามคิว ใบใหม่จะไปโผล่ล่างสุด แล้วพอใบเก่าหมดอายุทั้งกองจะกระตุกขึ้น) */}
+        {[...toasts].reverse().map((t) => (
           <ToastRow key={t.id} item={t} onClose={() => dismissToast(t.id)} />
         ))}
       </View>

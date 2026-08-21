@@ -39,7 +39,7 @@ const currentBuddhistYear = () => new Date().getFullYear() + 543;
 
 // หัวข้อยุบได้ที่เหลืออยู่ในหน้านี้ — ทั้งหมดเป็น "อ่านอย่างเดียว/อ้างอิง" ยกเว้น rules
 // (form/deduct ที่เคยอยู่ตรงนี้ กลายเป็นหน้า TaxIncome / TaxDeduction แล้ว)
-type SectionId = 'gains' | 'method' | 'rules' | 'brackets';
+type SectionId = 'source' | 'gains' | 'method' | 'rules' | 'brackets';
 
 /** บรรทัดในสูตร — ซ้ายคำอธิบาย ขวาตัวเลข (เว้น value ไว้ = บรรทัดข้อความล้วน) */
 const FormulaLine: React.FC<{ label: string; value?: string; strong?: boolean }> = ({
@@ -239,46 +239,59 @@ export default function TaxScreen() {
         // กำไรที่ขายจริงทั้งปีนี้ (รวมส่วนที่ยกเว้นภาษี เช่น หุ้นไทย) — คนละตัวกับ gainIncome
         const realizedGain = breakdown.gains.reduce((s, g) => s + g.gain, 0);
         return (
-          <View style={styles.heroCard}>
-            <Text style={styles.heroLabel}>
-              {projection.projected
-                ? `ภาษีทั้งปี (คาดการณ์) — ถ้าเดือนที่เหลือได้เท่าเดือน ${MONTH_LABELS_TH[projection.basedOnMonth - 1]}`
-                : 'ภาษีทั้งปี (ประมาณการ)'}
-            </Text>
-            <Text style={styles.heroValue}>{formatCurrency(annual.tax)}</Text>
-            <View style={styles.heroSplit}>
-              <View style={styles.heroSplitCell}>
-                <Text style={styles.heroSplitLabel}>หัก ณ ที่จ่ายแล้ว</Text>
-                <Text style={styles.heroSplitValue}>{formatCurrency(breakdown.withheld)}</Text>
-              </View>
-              <View style={styles.heroSplitCell}>
-                <Text style={styles.heroSplitLabel}>
-                  สิ้นปี{annualOwes ? 'ต้องจ่ายเพิ่ม' : 'ได้คืน'}
+          <>
+            {/* เลขใหญ่ = เงินที่จะขยับจริงจากกระเป๋าตอนสิ้นปี ไม่ใช่ "ภาษีทั้งปี"
+                ภาษีทั้งปีเป็นยอดที่ถูกหักไปเรื่อย ๆ อยู่แล้ว คนเปิดหน้านี้มาถามว่า
+                "ตกลงต้องควักเพิ่มอีกเท่าไหร่ / ได้คืนเท่าไหร่" — ตอบข้อนั้นก่อน */}
+            <View style={styles.heroCard}>
+              <Text style={styles.heroLabel}>
+                สิ้นปี{annualOwes ? 'ต้องจ่ายเพิ่ม' : 'ได้คืน'}
+              </Text>
+              <Text
+                style={[styles.heroValue, { color: annualOwes ? COLORS.error : COLORS.success }]}
+              >
+                {formatCurrency(Math.abs(annual.balance))}
+              </Text>
+              <Text style={styles.heroFoot}>
+                ภาษีทั้งปี {formatCurrency(annual.tax)} · หักไปแล้ว{' '}
+                {formatCurrency(breakdown.withheld)}
+              </Text>
+              {projection.projected && (
+                <Text style={styles.heroEstimate}>
+                  คาดการณ์ — เดือนที่เหลือคิดเท่าเดือน
+                  {MONTH_LABELS_TH[projection.basedOnMonth - 1]}
                 </Text>
-                <Text
-                  style={[
-                    styles.heroSplitValue,
-                    { color: annualOwes ? COLORS.error : COLORS.success },
-                  ]}
-                >
-                  {formatCurrency(Math.abs(annual.balance))}
-                </Text>
-              </View>
+              )}
             </View>
 
-            {/* ── แถวย่อย: ตัวเลขนี้ประกอบขึ้นจากอะไร ── */}
-            <View style={styles.heroBreak}>
+            {/* ── ที่มาของตัวเลข ──
+                เดิมของทั้งหมดนี้อยู่ในการ์ดสรุปใบเดียว รวมแล้วมีตัวเลข 14 ตัวขนาดใกล้กันหมด
+                จนอ่านไม่ออกว่าตัวไหนคือคำตอบ (ผู้ใช้บอกเองว่า "ดูค่อนข้างยาก")
+                ย้ายลงมาพับไว้ และแยกเป็นสามกลุ่มตาม "ชนิดของตัวเลข" ซึ่งเดิมปนกันหมด:
+                  ส่วนประกอบ = บวกอยู่ในภาษีทั้งปีจริง
+                  ตัวตั้ง     = ของที่ใช้คิด ไม่ได้อยู่ในยอดภาษี
+                  อีกมุมหนึ่ง = คำตอบเวอร์ชันอื่น ไม่ใช่ส่วนหนึ่งของเลขใหญ่
+                เดิมสามอย่างนี้วางเรียงกันหน้าตาเหมือนกันใต้หัวว่า "ประกอบขึ้นจากอะไร"
+                ทำให้ "จากที่กรอกจริง" อ่านเหมือนเป็นชิ้นส่วนของภาษีทั้งปี ทั้งที่เป็นคนละคำตอบ */}
+            <Section
+              id="source"
+              openId={openSection}
+              onToggle={toggleSection}
+              title="ที่มาของตัวเลข"
+              subtitle={`ภาษีทั้งปี ${formatCurrency(annual.tax)} คิดมาจากอะไร`}
+            >
+              <Text style={styles.sourceGroupTitle}>ส่วนประกอบของภาษีทั้งปี</Text>
               <View style={styles.heroBreakRow}>
-                <Text style={styles.heroBreakLabel}>
-                  จากที่กรอกจริง {breakdown.filledMonths}/12 เดือน
+                <Text style={styles.heroBreakLabel}>ภาษีจากเงินได้จากงาน</Text>
+                <Text style={styles.heroBreakValue}>
+                  {formatCurrency(annual.tax - annual.taxFromGains)}
                 </Text>
-                <Text style={styles.heroBreakValue}>{formatCurrency(breakdown.tax)}</Text>
               </View>
-              {/* 3.3.2 — ภาษีจากกำไรขาย ต้องบอกยอดกำไรที่ขายได้จริงคู่กันเสมอ
+              {/* ภาษีจากกำไรขาย ต้องบอกยอดกำไรที่ขายได้จริงคู่กันเสมอ
                   เห็นแต่ภาษีอย่างเดียวแล้วเทียบไม่ได้ว่าคุ้มไหมที่จะขายในปีนี้ */}
               <View style={styles.heroBreakRow}>
                 <Text style={styles.heroBreakLabel}>
-                  ภาษีจากกำไรขายปีนี้
+                  ภาษีจากกำไรขาย
                   {'\n'}
                   <Text style={styles.heroBreakSub}>
                     ขายได้กำไรรวม {formatCurrency(realizedGain)}
@@ -289,8 +302,8 @@ export default function TaxScreen() {
                 </Text>
                 <Text style={styles.heroBreakValue}>{formatCurrency(breakdown.taxFromGains)}</Text>
               </View>
-              {/* 3.3.1 — ลดหย่อนรวมที่หักได้จริง (ส่วนตัว + ประกันสังคม + ที่กรอกเอง)
-                  เป็นตัวเลขที่ลดภาษีโดยตรง ควรอ่านได้จากการ์ดแรกโดยไม่ต้องกดเข้าไปหน้าลูก */}
+
+              <Text style={styles.sourceGroupTitle}>ตัวตั้งที่ใช้คิด</Text>
               <View style={styles.heroBreakRow}>
                 <Text style={styles.heroBreakLabel}>
                   ลดหย่อนรวมที่หักได้
@@ -305,19 +318,38 @@ export default function TaxScreen() {
                   −{formatCurrency(breakdown.totalDeductions)}
                 </Text>
               </View>
-            </View>
+              <View style={styles.heroBreakRow}>
+                <Text style={styles.heroBreakLabel}>
+                  เงินได้สุทธิ
+                  {'\n'}
+                  <Text style={styles.heroBreakSub}>
+                    อยู่ขั้น {(annual.marginalRate * 100).toFixed(0)}% · อัตราที่จ่ายจริง{' '}
+                    {(breakdown.effectiveRate * 100).toFixed(1)}%
+                  </Text>
+                </Text>
+                <Text style={styles.heroBreakValue}>{formatCurrency(annual.netIncome)}</Text>
+              </View>
 
-            <Text style={styles.heroFoot}>
-              เงินได้สุทธิ {formatCurrency(annual.netIncome)} · อยู่ขั้น{' '}
-              {(annual.marginalRate * 100).toFixed(0)}% · อัตราที่จ่ายจริง{' '}
-              {(breakdown.effectiveRate * 100).toFixed(1)}%
-            </Text>
-            {projection.projected && (
-              <Text style={styles.projectWarn}>
-                โบนัสไม่ถูกประมาณให้ (ไม่ได้รับทุกเดือน) — ถ้าปีนี้จะได้โบนัสอีก ให้ใส่ในเดือนที่คาดว่าจะได้
-              </Text>
-            )}
-          </View>
+              {projection.projected && (
+                <>
+                  <Text style={styles.sourceGroupTitle}>อีกมุมหนึ่ง — ไม่ใช่ส่วนหนึ่งของเลขข้างบน</Text>
+                  <View style={styles.heroBreakRow}>
+                    <Text style={styles.heroBreakLabel}>
+                      ถ้านับเฉพาะ {breakdown.filledMonths}/12 เดือนที่กรอกจริง
+                      {'\n'}
+                      <Text style={styles.heroBreakSub}>
+                        ไม่คาดการณ์เดือนที่เหลือ — ต่ำกว่าของจริงเสมอเพราะขั้นบันไดไม่เป็นเชิงเส้น
+                      </Text>
+                    </Text>
+                    <Text style={styles.heroBreakValue}>{formatCurrency(breakdown.tax)}</Text>
+                  </View>
+                  <Text style={styles.projectWarn}>
+                    โบนัสไม่ถูกประมาณให้ (ไม่ได้รับทุกเดือน) — ถ้าปีนี้จะได้โบนัสอีก ให้ใส่ในเดือนที่คาดว่าจะได้
+                  </Text>
+                </>
+              )}
+            </Section>
+          </>
         );
       })()}
 
@@ -644,25 +676,16 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.semibold,
     color: COLORS.text,
     marginTop: 2,
-    marginBottom: 14,
   },
-  heroSplit: {
-    flexDirection: 'row',
-    gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.divider,
-    paddingTop: 12,
-  },
-  heroSplitCell: { flex: 1 },
-  heroSplitLabel: { ...TEXT.hint, color: COLORS.textSecondary },
-  heroSplitValue: { ...TEXT.title, color: COLORS.text, marginTop: 2 },
-  heroFoot: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 12, lineHeight: 17 },
-  // แถวย่อยที่แยกให้ดูว่ายอดภาษีก้อนใหญ่ประกอบขึ้นจากอะไร
-  heroBreak: {
+  heroFoot: { ...TEXT.hint, color: COLORS.textSecondary, marginTop: 8, lineHeight: 17 },
+  // ป้ายบอกว่าเลขใหญ่เป็นการคาดการณ์ ไม่ใช่ยอดที่เกิดขึ้นจริงแล้ว
+  heroEstimate: { ...TEXT.hint, color: COLORS.warning, marginTop: 6, lineHeight: 16 },
+  // หัวกลุ่มในหัวข้อ "ที่มาของตัวเลข" — แยกส่วนประกอบ / ตัวตั้ง / อีกมุมหนึ่ง ออกจากกัน
+  sourceGroupTitle: {
+    ...TEXT.hint,
+    color: COLORS.textSecondary,
     marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.divider,
-    paddingTop: 4,
+    marginBottom: 2,
   },
   heroBreakRow: {
     flexDirection: 'row',

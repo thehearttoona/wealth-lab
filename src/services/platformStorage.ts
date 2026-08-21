@@ -9,6 +9,7 @@ const mapFromDb = (row: any): UserPlatform => ({
   name: row.name,
   feePercent: row.fee_percent != null ? Number(row.fee_percent) : undefined,
   feeMinTHB: row.fee_min_thb != null ? Number(row.fee_min_thb) : undefined,
+  feeMinCurrency: row.fee_min_currency ?? undefined,
   createdAt: row.created_at,
 });
 
@@ -17,6 +18,7 @@ const mapToDb = (p: UserPlatform, userId: string) => ({
   name: p.name,
   fee_percent: p.feePercent ?? null,
   fee_min_thb: p.feeMinTHB ?? null,
+  fee_min_currency: p.feeMinCurrency ?? null,
   created_at: p.createdAt,
   user_id: userId,
 });
@@ -24,10 +26,10 @@ const mapToDb = (p: UserPlatform, userId: string) => ({
 // ยังไม่ได้รัน sql/user_platforms_fee.sql — คอลัมน์ค่าธรรมเนียมยังไม่มี
 // ตัดสองคอลัมน์นั้นออกแล้วลองใหม่ ดีกว่าให้ "เพิ่มแพลตฟอร์ม" พังทั้งปุ่มเพราะฟีเจอร์เสริม
 const isFeeColumnMissing = (error: { message?: string } | null): boolean =>
-  /fee_percent|fee_min_thb/i.test(error?.message || '');
+  /fee_percent|fee_min_thb|fee_min_currency/i.test(error?.message || '');
 
 const withoutFeeColumns = (row: ReturnType<typeof mapToDb>) => {
-  const { fee_percent, fee_min_thb, ...rest } = row;
+  const { fee_percent, fee_min_thb, fee_min_currency, ...rest } = row;
   return rest;
 };
 

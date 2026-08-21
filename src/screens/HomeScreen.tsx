@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
+  LayoutChangeEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -20,6 +21,7 @@ import QuickAddSheet from '../components/QuickAddSheet';
 import { getExpenses, deleteExpense, getRecurringBills, deleteRecurringBill } from '../services/storage';
 import { formatCurrency, formatDate, COLORS, getCurrentMonthYear } from '../utils/constants';
 import { confirmAsk } from '../utils/dialog';
+import { ActionButton } from '../components/ActionButton';
 import { useResponsive } from '../utils/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -46,6 +48,14 @@ type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'H
 // (จอ 1024 หักไซด์บาร์ 200 เหลือ 824 → ยังเรียงลงมาเหมือนเดิม)
 const TWO_COL_MIN_PANE = 940;
 
+// ── ช่องปฏิทินเป็นจัตุรัส ──
+// ความกว้างของช่องคือ 1/7 ของปฏิทินซึ่งยืดตามจอ จึงรู้ค่าล่วงหน้าไม่ได้ ต้องวัดจาก onLayout
+// แล้วเอาความกว้างที่วัดได้ไปตั้งเป็นความสูง — วัดที่ "ช่องจริง" ไม่ใช่คำนวณจากคอนเทนเนอร์หาร 7
+// เพราะ react-native-calendars ใส่ paddingLeft/Right 5 ของมันเองเข้ามาด้วย (calendar/style.js)
+const DAY_CELL_MIN = 44;   // กันจอแคบมาก ๆ ที่ช่องจะเตี้ยจนเลขวัน + ยอดสองบรรทัดล้นกรอบ
+const DAY_CELL_MAX = 110;  // จอกว้างมาก ช่องจัตุรัสจะโตเกิน 200px ปฏิทินสูงจนเลื่อนหาไม่เจอ
+                           // เกินจากนี้ช่องจะกว้างกว่าสูง = พฤติกรรมเดิมก่อนแก้
+
 // สีไฮไลต์ช่องปฏิทินวันที่มีแต่รายรับ — เขียวอ่อนให้เข้ากับธีมสว่าง (เดิมเป็น #0F2A1E เขียวเข้มจนตัวเลขจม)
 const INCOME_DAY_BG = '#E3F3EC';
 const INCOME_DAY_BORDER = '#B7E0CE';
@@ -58,6 +68,18 @@ export default function HomeScreen() {
   // เดสก์ท็อปมีไซด์บาร์ค้างอยู่เสมอ ความกว้างจริงของหน้าจึงเป็น width ลบไซด์บาร์
   const paneWidth = isDesktop ? width - sidebarWidth : width;
   const twoCol = isDesktop && paneWidth >= TWO_COL_MIN_PANE;
+  // ความสูงของช่องวัน = ความกว้างที่วัดได้จริง (0 = ยังไม่ได้วัด ใช้ความสูงคงที่ใน styles ไปก่อน
+  // เฟรมแรกเฟรมเดียว ไม่ปล่อยเป็น 0 ไม่งั้นปฏิทินยุบแบนก่อนแล้วค่อยกางออก)
+  const [dayCellSize, setDayCellSize] = useState(0);
+  // ทุกช่องในเดือนยิง onLayout หมด แต่กว้างเท่ากัน ตัวไหนวัดได้ก่อนก็ตั้งค่าให้ทั้งเดือน
+  // เทียบด้วยส่วนต่าง > 1 ไม่ใช่ !== เพราะ flex:1 ใน 7 ช่องทำให้บางช่องต่างกันเศษ 1px
+  // ถ้าเทียบตรง ๆ สองช่องจะตั้งค่าสลับกันไปมาไม่จบ (setState ลูป)
+  const onDayCellLayout = useCallback((e: LayoutChangeEvent) => {
+    const w = Math.round(e.nativeEvent.layout.width);
+    if (w <= 0) return;
+    const next = Math.max(DAY_CELL_MIN, Math.min(DAY_CELL_MAX, w));
+    setDayCellSize((cur) => (Math.abs(cur - next) > 1 ? next : cur));
+  }, []);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [weekTotal, setWeekTotal] = useState(0);
   const [totalMonth, setTotalMonth] = useState(0);
@@ -680,9 +702,14 @@ export default function HomeScreen() {
                 style={[
                   styles.dayContainer,
                   isDesktop && styles.dayContainerDesktop,
+                  // ความสูง = ความกว้างที่วัดได้ → ช่องเป็นจัตุรัส
+                  // ต้องอยู่หลัง dayContainerDesktop เพื่อทับความสูงคงที่ของมัน และอยู่ก่อน
+                  // customStyles ได้ เพราะ marking ตั้งแต่สี/เส้นขอบเท่านั้น ไม่เคยตั้งความสูง
+                  dayCellSize > 0 && { height: dayCellSize },
                   isSelected && styles.dayContainerSelected,
                   marking?.customStyles?.container,
                 ]}
+                onLayout={onDayCellLayout}
                 onPress={() => onDayPress(date)}
               >
                 <Text style={[
@@ -901,21 +928,29 @@ export default function HomeScreen() {
             {incomeSelectMode ? (
               <>
                 {selectedIncomeIds.size > 0 && (
-                  <TouchableOpacity onPress={handleDeleteSelectedIncomes} style={styles.deleteSelectedBtn}>
-                    <Ionicons name="trash-outline" size={12} color={COLORS.error} />
-                    <Text style={styles.deleteSelectedText}>ลบ ({selectedIncomeIds.size})</Text>
-                  </TouchableOpacity>
+                  <ActionButton
+                    label={`ลบ (${selectedIncomeIds.size})`}
+                    icon="trash-outline"
+                    variant="danger"
+                    size="sm"
+                    onPress={handleDeleteSelectedIncomes}
+                  />
                 )}
-                <TouchableOpacity onPress={() => { setIncomeSelectMode(false); setSelectedIncomeIds(new Set()); }} style={styles.cancelSelectBtn}>
-                  <Text style={styles.cancelSelectText}>ยกเลิก</Text>
-                </TouchableOpacity>
+                <ActionButton
+                  label="ยกเลิก"
+                  variant="quiet"
+                  size="sm"
+                  onPress={() => { setIncomeSelectMode(false); setSelectedIncomeIds(new Set()); }}
+                />
               </>
             ) : (
               <>
-                <TouchableOpacity onPress={() => setIncomeSelectMode(true)} style={styles.selectModeBtn}>
-                  <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
-                  <Text style={styles.selectModeText}>เลือก</Text>
-                </TouchableOpacity>
+                <ActionButton
+                  label="เลือก"
+                  icon="checkbox-outline"
+                  size="sm"
+                  onPress={() => setIncomeSelectMode(true)}
+                />
                 <Text style={styles.incomeTotalText}>{formatCurrency(filteredIncomes.reduce((s, i) => s + i.amount, 0))}</Text>
               </>
             )}
@@ -939,21 +974,29 @@ export default function HomeScreen() {
           {expenseSelectMode ? (
             <>
               {selectedExpenseIds.size > 0 && (
-                <TouchableOpacity onPress={handleDeleteSelectedExpenses} style={styles.deleteSelectedBtn}>
-                  <Ionicons name="trash-outline" size={12} color={COLORS.error} />
-                  <Text style={styles.deleteSelectedText}>ลบ ({selectedExpenseIds.size})</Text>
-                </TouchableOpacity>
+                <ActionButton
+                  label={`ลบ (${selectedExpenseIds.size})`}
+                  icon="trash-outline"
+                  variant="danger"
+                  size="sm"
+                  onPress={handleDeleteSelectedExpenses}
+                />
               )}
-              <TouchableOpacity onPress={() => { setExpenseSelectMode(false); setSelectedExpenseIds(new Set()); }} style={styles.cancelSelectBtn}>
-                <Text style={styles.cancelSelectText}>ยกเลิก</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label="ยกเลิก"
+                variant="quiet"
+                size="sm"
+                onPress={() => { setExpenseSelectMode(false); setSelectedExpenseIds(new Set()); }}
+              />
             </>
           ) : (
             <>
-              <TouchableOpacity onPress={() => setExpenseSelectMode(true)} style={styles.selectModeBtn}>
-                <Ionicons name="checkbox-outline" size={13} color={COLORS.textSecondary} />
-                <Text style={styles.selectModeText}>เลือก</Text>
-              </TouchableOpacity>
+              <ActionButton
+                label="เลือก"
+                icon="checkbox-outline"
+                size="sm"
+                onPress={() => setExpenseSelectMode(true)}
+              />
               <Text style={styles.expenseTotalText}>{formatCurrency(filteredExpenses.reduce((s, e) => s + e.amount, 0))}</Text>
             </>
           )}
@@ -2036,47 +2079,7 @@ const styles = StyleSheet.create({
     backgroundColor: `${COLORS.error}10`,
     borderBottomColor: `${COLORS.error}30`,
   },
-  selectModeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-  },
-  selectModeText: {
-    color: COLORS.textSecondary,
-    fontSize: 10,
-    fontFamily: 'NotoSansThai_300Light',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  cancelSelectBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-  },
-  cancelSelectText: {
-    color: COLORS.accent,
-    fontSize: 10,
-    fontFamily: 'NotoSansThai_300Light',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  deleteSelectedBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: COLORS.error,
-  },
-  deleteSelectedText: {
-    color: COLORS.error,
-    fontSize: 10,
-    fontFamily: 'NotoSansThai_300Light',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
+
   emptyText: {
     textAlign: 'center',
     color: COLORS.textSecondary,

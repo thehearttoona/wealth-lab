@@ -22,8 +22,10 @@ import {
   FLAT_BAND_PERCENT,
 } from '../utils/sellReview';
 import { COLORS, TEXT, FONTS, formatCurrency, formatCurrencyWithType } from '../utils/constants';
+import { ActionButton } from '../components/ActionButton';
 import { notify } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
+import { MascotEmpty } from '../components/Mascot';
 
 const CARD_BASIS = 420;
 
@@ -108,10 +110,10 @@ export default function SellReviewScreen() {
   if (!summary || tradeCount === 0) {
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.empty}>
+        <MascotEmpty>
           ยังไม่มีประวัติการขาย{'\n'}
           พอเริ่มกด "ขาย" ที่รายการลงทุน หน้านี้จะบอกได้ว่าจังหวะขายของคุณเป็นอย่างไร
-        </Text>
+        </MascotEmpty>
       </ScrollView>
     );
   }
@@ -250,12 +252,13 @@ export default function SellReviewScreen() {
       <View style={isDesktop ? styles.cardGrid : undefined}>{visible.map(renderRow)}</View>
 
       {sorted.length > 5 && (
-        <TouchableOpacity style={styles.toggleRow} onPress={() => setShowAll((v) => !v)}>
-          <Ionicons name={showAll ? 'chevron-up' : 'chevron-down'} size={14} color={COLORS.primary} />
-          <Text style={styles.toggleText}>
-            {showAll ? ' ย่อรายการ' : ` ดูทั้งหมด (${sorted.length} ไม้)`}
-          </Text>
-        </TouchableOpacity>
+        <ActionButton
+          icon={showAll ? 'chevron-up' : 'chevron-down'}
+          label={showAll ? 'ย่อรายการ' : `ดูทั้งหมด (${sorted.length} ไม้)`}
+          size="sm"
+          onPress={() => setShowAll((v) => !v)}
+          style={styles.toggleRow}
+        />
       )}
     </ScrollView>
   );
@@ -309,6 +312,5 @@ const styles = StyleSheet.create({
   pos: { color: COLORS.success, fontFamily: FONTS.semibold },
   neg: { color: COLORS.error, fontFamily: FONTS.semibold },
 
-  toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
-  toggleText: { color: COLORS.primary, fontSize: 13, fontFamily: FONTS.medium },
+  toggleRow: { alignSelf: 'center', marginVertical: 12 },
 });

@@ -7,6 +7,7 @@ import { RootStackParamList, InstallmentPlan } from '../types';
 import { getInstallmentPlans, deleteInstallmentPlan } from '../services/installmentStorage';
 import { formatCurrency, COLORS } from '../utils/constants';
 import { confirmAsk } from '../utils/dialog';
+import { MascotEmpty } from '../components/Mascot';
 import {
   getCurrentMonthKey,
   addMonths,
@@ -118,7 +119,7 @@ export default function InstallmentsScreen() {
 
         <View style={styles.listContainer}>
           {activePlans.length === 0 ? (
-            <Text style={styles.emptyText}>ยังไม่มีรายการที่กำลังผ่อนอยู่</Text>
+            <MascotEmpty>ยังไม่มีรายการที่กำลังผ่อนอยู่</MascotEmpty>
           ) : (
             activePlans.map((p) => renderPlanCard(p, false))
           )}

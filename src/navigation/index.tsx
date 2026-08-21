@@ -2,6 +2,7 @@ import React, { useState, useEffect, createContext, useContext, useCallback } fr
 import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
 import LoginScreen from '../screens/LoginScreen';
+import { Mascot } from '../components/Mascot';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -41,10 +42,13 @@ import TaxIncomeScreen from '../screens/TaxIncomeScreen';
 import TaxDeductionScreen from '../screens/TaxDeductionScreen';
 import PersonalInfoScreen from '../screens/PersonalInfoScreen';
 import PurchaseGoalsScreen from '../screens/PurchaseGoalsScreen';
+import LifeCostScreen from '../screens/LifeCostScreen';
+import LifeGoalScreen from '../screens/LifeGoalScreen';
 import SellReviewScreen from '../screens/SellReviewScreen';
 import RealizedScreen from '../screens/RealizedScreen';
 import CyclesScreen from '../screens/CyclesScreen';
 import DryPowderScreen from '../screens/DryPowderScreen';
+import RedSignalsScreen from '../screens/RedSignalsScreen';
 import { refreshCurrencyCache } from '../services/currencyStorage';
 import { COLORS } from '../utils/constants';
 import { useResponsive } from '../utils/responsive';
@@ -182,8 +186,11 @@ export default function Navigation() {
   }, [user]);
 
   if (loading || (user && !currencyReady)) {
+    // ด่านโหลดสองด่าน (auth → เรตสกุลเงิน) เป็นจอแรกที่เห็นทุกครั้งที่เปิดแอป
+    // วงกลมหมุนเปล่า ๆ อ่านไม่ออกว่า "แอปกำลังทำงาน" หรือ "ค้าง" — น้องหมุดทำให้รู้ว่าเป็นแอปนี้
     return (
-      <View style={{ flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{ flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center', gap: 18 }}>
+        <Mascot state="happy" size={108} />
         <ActivityIndicator color={COLORS.primary} size="large" />
       </View>
     );
@@ -381,10 +388,46 @@ export default function Navigation() {
           })}
         />
         <Stack.Screen
+          name="RedSignals"
+          component={RedSignalsScreen}
+          options={({ navigation }) => ({
+            title: 'บันทึกสัญญาณ',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
+          name="LifeGoal"
+          component={LifeGoalScreen}
+          options={({ navigation }) => ({
+            title: 'เป้าหมายใหญ่สุดของชีวิต',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
+          name="LifeCost"
+          component={LifeCostScreen}
+          options={({ navigation }) => ({
+            title: 'ค่าเสื่อมของชีวิต',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
           name="PurchaseGoals"
           component={PurchaseGoalsScreen}
           options={({ navigation }) => ({
-            title: 'ของที่อยากได้',
+            title: 'ปลดล็อกรางวัล',
             headerLeft: () => (
               <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
                 <Ionicons name="chevron-back" size={16} color="#ffffff" />

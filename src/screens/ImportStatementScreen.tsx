@@ -16,7 +16,8 @@ import { Account } from '../types/account';
 import { getAccounts } from '../services/accountStorage';
 import { parseKBankStatement } from '../utils/statementParser';
 import { ImportRow, ImportRowType, saveImportRows } from '../services/importStorage';
-import { EXPENSE_CATEGORIES, COLORS, getCurrencySymbol, formatCurrency } from '../utils/constants';
+import { EXPENSE_CATEGORIES, COLORS, RADIUS, getCurrencySymbol, formatCurrency } from '../utils/constants';
+import { ActionButton } from '../components/ActionButton';
 import { notify } from '../utils/dialog';
 import { INCOME_CATEGORIES } from '../services/incomeStorage';
 
@@ -185,12 +186,18 @@ export default function ImportStatementScreen() {
                 {'   '}เงินออก <Text style={{ color: COLORS.error }}>-{getCurrencySymbol(currency)}{formatCurrency(sumOut)}</Text>
               </Text>
               <View style={styles.selectRow}>
-                <TouchableOpacity onPress={() => setAllInclude(true)}>
-                  <Text style={styles.selectLink}>เลือกทั้งหมด</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setAllInclude(false)}>
-                  <Text style={styles.selectLink}>เอาออกทั้งหมด</Text>
-                </TouchableOpacity>
+                <ActionButton
+                  label="เลือกทั้งหมด"
+                  icon="checkbox-outline"
+                  size="sm"
+                  onPress={() => setAllInclude(true)}
+                />
+                <ActionButton
+                  label="เอาออกทั้งหมด"
+                  icon="square-outline"
+                  size="sm"
+                  onPress={() => setAllInclude(false)}
+                />
               </View>
             </View>
 
@@ -268,6 +275,7 @@ const styles = StyleSheet.create({
   warn: { fontSize: 12, fontFamily: 'NotoSansThai_400Regular', color: COLORS.error },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
   chip: {
+    borderRadius: RADIUS.sm,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
@@ -289,6 +297,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   parseBtn: {
+    borderRadius: RADIUS.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -306,8 +315,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   summaryLine: { fontSize: 12, fontFamily: 'NotoSansThai_400Regular', color: COLORS.text },
-  selectRow: { flexDirection: 'row', gap: 16, marginTop: 2 },
-  selectLink: { fontSize: 12, fontFamily: 'NotoSansThai_500Medium', color: COLORS.primary },
+  selectRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
   row: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -325,6 +333,7 @@ const styles = StyleSheet.create({
   typeScroll: { flexGrow: 0 },
   catScroll: { flexGrow: 0 },
   miniChip: {
+    borderRadius: RADIUS.sm,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderWidth: 1,
@@ -336,6 +345,7 @@ const styles = StyleSheet.create({
   miniChipText: { fontSize: 11, fontFamily: 'NotoSansThai_400Regular', color: COLORS.text },
   miniChipTextActive: { color: '#ffffff' },
   catChip: {
+    borderRadius: RADIUS.sm,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderWidth: 1,
@@ -347,6 +357,7 @@ const styles = StyleSheet.create({
   catChipText: { fontSize: 11, fontFamily: 'NotoSansThai_400Regular', color: COLORS.textSecondary },
   catChipTextActive: { color: '#ffffff' },
   saveBtn: {
+    borderRadius: RADIUS.md,
     backgroundColor: COLORS.primary,
     paddingVertical: 14,
     alignItems: 'center',

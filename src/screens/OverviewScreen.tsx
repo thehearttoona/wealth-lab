@@ -30,6 +30,7 @@ import {
 } from '../utils/activityLog';
 import MonthlyFlowChart from '../components/charts/MonthlyFlowChart';
 import CategoryBars from '../components/charts/CategoryBars';
+import { MascotEmpty } from '../components/Mascot';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Overview'>;
 
@@ -153,8 +154,7 @@ export default function OverviewScreen() {
         <Text style={styles.sectionTitle}>ความเคลื่อนไหวล่าสุด</Text>
         {days.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Ionicons name="time-outline" size={26} color={COLORS.textSecondary} />
-            <Text style={styles.emptyText}>ยังไม่มีรายการ — เริ่มบันทึกรายรับ/รายจ่ายได้ที่หน้าหลัก</Text>
+            <MascotEmpty>ยังไม่มีรายการ — เริ่มบันทึกรายรับ/รายจ่ายได้ที่หน้าหลัก</MascotEmpty>
           </View>
         ) : (
           <View style={styles.card}>
