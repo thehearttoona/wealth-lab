@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, StyleProp, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, TEXT, formatCurrency, formatCurrencyWithType } from '../utils/constants';
@@ -41,6 +41,19 @@ export const CycleCard: React.FC<{
       ? 0
       : Math.max(0, Math.min(1, profitPercent / cycle.targetProfitPercent));
   const bounce = status.requiredBouncePercent;
+  // พับไว้เป็นค่าเริ่มต้น — การ์ดต้องเห็นปุ่ม "ปิดรอบทั้งตะกร้า" โดยไม่ต้องเลื่อน
+  const [showExits, setShowExits] = useState(false);
+  // ตอนพับ โชว์ตัวที่ใกล้ถึงเป้าที่สุด (ช่องว่าง % น้อยสุด) — เลขที่มีโอกาสได้ใช้ก่อนเพื่อน
+  const nearest = exits
+    .filter((e) => e.targetPrice != null && e.gapPercent != null)
+    .sort((a, b) => (a.gapPercent as number) - (b.gapPercent as number))[0];
+  // ภาษีคิดครั้งเดียวจากกำไรรวมของรอบ ตัวเลขจึงเท่ากันทุกแถว — พิมพ์ที่หมายเหตุพอ
+  const taxSample = exits.find((e) => e.taxTHB != null && (e.taxTHB as number) > 0);
+  const taxNote = !exits.some((e) => e.taxIncluded)
+    ? ' · ยังไม่รวมภาษีกำไร (ไปกรอกเงินเดือนที่หน้าภาษีก่อน ราคานี้จะยังต่ำกว่าความจริง)'
+    : taxSample
+      ? ` · เผื่อภาษีกำไรไว้แล้ว ~฿${formatCurrency(taxSample.taxTHB as number)} (คิดจากฐานเงินเดือนของคุณ)`
+      : ' · รอบนี้ไม่มีภาษีกำไรที่ต้องเผื่อ';
 
   return (
     <View style={[styles.card, style]}>
@@ -114,43 +127,68 @@ export const CycleCard: React.FC<{
       )}
       {/* ── ราคาที่ต้องตั้งขาย ──
           %กำไรบอกได้แค่ "ยังไม่ถึง" แต่เอาไปตั้งคำสั่งขายไม่ได้ ต้องมานั่งคิดเองทุกครั้ง
-          สองเลขนี้คือของที่เอาไปตั้งได้เลย และรวมค่าธรรมเนียมขาขายไว้แล้ว (ดู utils/cycles) */}
+          สองเลขนี้เอาไปตั้งได้เลย: รวมค่าธรรมเนียมขาย + เผื่อภาษีกำไรแล้ว (ดู utils/cycles)
+          พับได้เพราะรอบที่มีหลายตัวจะยาวจนดันปุ่มปิดรอบตกจอ */}
       {exits.length > 0 && (
         <View style={styles.exitBox}>
-          <Text style={styles.exitTitle}>ตั้งขายที่ราคาไหน</Text>
-          {exits.map((e) => (
-            <View key={`${e.symbol}:${e.currency}`} style={styles.exitRow}>
-              <View style={styles.exitMain}>
-                <Text style={styles.exitSymbol} numberOfLines={1}>
-                  {e.symbol}
-                </Text>
-                <Text style={styles.exitSub} numberOfLines={1}>
-                  {e.quantity} หน่วย · ทุนเฉลี่ย {formatCurrencyWithType(e.avgBuyPrice, e.currency)}
-                  {e.currentPrice != null
-                    ? ` · ตอนนี้ ${formatCurrencyWithType(e.currentPrice, e.currency)}`
-                    : ' · ยังไม่มีราคา'}
-                </Text>
-              </View>
-              <View style={styles.exitPrices}>
-                <Text style={styles.exitTarget}>
-                  {e.targetPrice != null
-                    ? formatCurrencyWithType(e.targetPrice, e.currency)
-                    : 'ถึงเป้าแล้ว'}
-                </Text>
-                <Text style={styles.exitBe}>
-                  คุ้มทุน {formatCurrencyWithType(e.breakEvenPrice, e.currency)}
-                  {e.gapPercent != null ? ` · อีก ${e.gapPercent.toFixed(1)}%` : ''}
-                </Text>
-              </View>
-            </View>
-          ))}
-          <Text style={styles.exitNote}>
-            ราคาถึงเป้า = ขายตัวนี้ที่ราคานี้แล้วทั้งรอบถึงเป้า โดยตัวอื่นขายที่ราคาปัจจุบัน ·
-            รวมค่าธรรมเนียมขายแล้ว ยังไม่รวมภาษีกำไร (ดูตอนกดปิดรอบ)
-            {exits.some((e) => e.feeUnknown)
-              ? '\nบางตัวยังไม่ได้ตั้งค่าธรรมเนียมของแพลตฟอร์ม — ราคานี้จึงยังไม่รวมค่าธรรมเนียม ไปตั้งที่ โปรไฟล์ → สกุลเงิน & แพลตฟอร์ม'
-              : ''}
-          </Text>
+          <TouchableOpacity
+            style={styles.exitHead}
+            onPress={() => setShowExits((v) => !v)}
+            accessibilityRole="button"
+          >
+            <Text style={styles.exitTitle}>ตั้งขายที่ราคาไหน</Text>
+            <Text style={styles.exitHeadSub} numberOfLines={1}>
+              {showExits ? `${exits.length} ตัว` : nearest
+                ? `${nearest.symbol} ${formatCurrencyWithType(nearest.targetPrice as number, nearest.currency)}${
+                    exits.length > 1 ? ` +${exits.length - 1}` : ''
+                  }`
+                : `${exits.length} ตัว`}
+            </Text>
+            <Ionicons
+              name={showExits ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={COLORS.textSecondary}
+            />
+          </TouchableOpacity>
+
+          {showExits && (
+            <>
+              {exits.map((e) => (
+                <View key={`${e.symbol}:${e.currency}`} style={styles.exitRow}>
+                  <View style={styles.exitMain}>
+                    <Text style={styles.exitSymbol} numberOfLines={1}>
+                      {e.symbol}
+                    </Text>
+                    <Text style={styles.exitSub} numberOfLines={1}>
+                      {e.quantity} หน่วย · ทุนเฉลี่ย {formatCurrencyWithType(e.avgBuyPrice, e.currency)}
+                      {e.currentPrice != null
+                        ? ` · ตอนนี้ ${formatCurrencyWithType(e.currentPrice, e.currency)}`
+                        : ' · ยังไม่มีราคา'}
+                    </Text>
+                  </View>
+                  <View style={styles.exitPrices}>
+                    <Text style={styles.exitTarget}>
+                      {e.targetPrice != null
+                        ? formatCurrencyWithType(e.targetPrice, e.currency)
+                        : 'ถึงเป้าแล้ว'}
+                    </Text>
+                    <Text style={styles.exitBe}>
+                      คุ้มทุน {formatCurrencyWithType(e.breakEvenPrice, e.currency)}
+                      {e.gapPercent != null ? ` · อีก ${e.gapPercent.toFixed(1)}%` : ''}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+              <Text style={styles.exitNote}>
+                ราคาถึงเป้า = ขายตัวนี้ที่ราคานี้แล้วทั้งรอบถึงเป้า โดยตัวอื่นขายที่ราคาปัจจุบัน ·
+                รวมค่าธรรมเนียมขายแล้ว
+                {taxNote}
+                {exits.some((e) => e.feeUnknown)
+                  ? '\nบางตัวยังไม่ได้ตั้งค่าธรรมเนียมของแพลตฟอร์ม — ราคานี้จึงยังไม่รวมค่าธรรมเนียม ไปตั้งที่ โปรไฟล์ → สกุลเงิน & แพลตฟอร์ม'
+                  : ''}
+              </Text>
+            </>
+          )}
         </View>
       )}
 
@@ -342,6 +380,16 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: COLORS.divider,
     gap: 6,
+  },
+  exitHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // minWidth: 0 ให้บรรทัดสรุปหดได้ ไม่ดัน chevron หลุดขอบการ์ดบนเว็บ
+  exitHeadSub: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'right',
+    fontSize: 11.5,
+    fontFamily: 'NotoSansThai_400Regular',
+    color: COLORS.textSecondary,
   },
   exitTitle: {
     fontSize: 12,

@@ -255,6 +255,13 @@ export interface SymbolExit {
   /** ค่าธรรมเนียมขายโดยประมาณตอนขายที่ targetPrice (บาท) — null = ยังไม่ได้ตั้ง */
   sellFeeTHB: number | null;
   feeUnknown: boolean;
+  /**
+   * ภาษีกำไรโดยประมาณของ "ทั้งรอบ" ถ้าขายที่ targetPrice (บาท)
+   * null = คิดไม่ได้ (ยังไม่ได้กรอกเงินเดือนที่หน้าภาษี) — จอต้องบอก ไม่ใช่คิดเป็น 0
+   */
+  taxTHB: number | null;
+  /** true = targetPrice เผื่อภาษีไว้แล้ว */
+  taxIncluded: boolean;
 }
 
 /** ค่าธรรมเนียมขายของมูลค่า V บาท */
@@ -284,10 +291,25 @@ const grossNeededFor = (netWanted: number, fee: FeeRule | undefined): number => 
  *
  * แยกตัวด้วย `symbol:currency` เพราะเหรียญเดียวกันคนละสกุลคือคนละราคา (เหตุผลเดียวกับ §6.2)
  */
+export interface ExitPlanOptions {
+  /**
+   * ภาษีที่เพิ่มขึ้นจริงเมื่อกำไรก้อนนี้เข้าฐาน (บาท) — ต้องเป็น "ส่วนต่าง" ไม่ใช่ กำไร × อัตราขั้น
+   * เพราะฐานภาษีเป็นขั้นบันได กำไรก้อนใหญ่พาดข้ามขั้น (ดู §6.1 estimateGainTax)
+   * ไม่ส่งมา = คิดภาษีไม่ได้ ราคาที่ได้จะเป็นราคาก่อนภาษี และ taxIncluded = false
+   */
+  taxOf?: (taxableGainTHB: number) => number;
+  /** สัดส่วนของกำไรที่ต้องเสียภาษีตามชนิดสินทรัพย์: หุ้นไทย 0 · คริปโต 1 · นำเข้าบางส่วน 0–1 */
+  taxWeightOf?: (type: Investment['type']) => number;
+}
+
+/** จำนวนรอบที่หมุนหาเป้าเมื่อมีภาษี — ภาษีขึ้นกับราคา และราคาก็ขึ้นกับภาษี จึงต้องวนหา */
+const TAX_SOLVE_ROUNDS = 8;
+
 export const exitPlanForCycle = (
   cycle: InvestmentCycle,
   legs: Investment[],
-  feeOf: (platform?: string, currency?: string) => FeeRule | undefined
+  feeOf: (platform?: string, currency?: string) => FeeRule | undefined,
+  opts: ExitPlanOptions = {}
 ): SymbolExit[] => {
   interface Bucket {
     symbol: string;
@@ -297,6 +319,8 @@ export const exitPlanForCycle = (
     grossNative: number;
     currentPrice: number | null;
     platform?: string;
+    /** ชนิดสินทรัพย์ — ใช้ตัดสินว่ากำไรก้อนนี้เสียภาษีไหม */
+    type: Investment['type'];
   }
   const buckets = new Map<string, Bucket>();
   legs.forEach((inv) => {
@@ -311,6 +335,7 @@ export const exitPlanForCycle = (
       grossNative: 0,
       currentPrice: null,
       platform: inv.platform,
+      type: inv.type,
     };
     b.quantity += inv.quantity;
     b.costTHB += legCostTHB(inv);
@@ -342,14 +367,48 @@ export const exitPlanForCycle = (
     const breakEvenTHB = grossNeededFor(b.costTHB, fee);
     const breakEvenPrice = perUnitTHB(breakEvenTHB) / rate;
 
-    const otherNet = list.filter((x) => x !== b).reduce((s, x) => s + netNowOf(x), 0);
-    const needNet = netWantedTotal - otherNet;
+    const others = list.filter((x) => x !== b);
+    const otherNet = others.reduce((s, x) => s + netNowOf(x), 0);
+
+    // ── ภาษีกำไร: ต้องเผื่อไว้ในราคาขาย ไม่งั้นขายตามราคาที่โชว์แล้วเงินที่เหลือจริงต่ำกว่าเป้า ──
+    // ภาษีขึ้นกับกำไร กำไรขึ้นกับราคา และราคาก็ต้องเผื่อภาษี → เป็นสมการวนกลับ แก้ตรง ๆ ไม่ได้
+    // (ฐานภาษีเป็นขั้นบันได จะแก้เป็นสูตรปิดก็ไม่ได้อีก) จึงหมุนหาแบบ fixed point
+    // ลู่เข้าเร็วเพราะแต่ละรอบส่วนต่างหดลงเท่ากับอัตราภาษีขั้นสุดท้าย (< 100%)
+    const taxOf = opts.taxOf;
+    const weightOf = opts.taxWeightOf;
+    const taxWeight = weightOf ? Math.max(0, Math.min(1, weightOf(b.type))) : 0;
+    /** กำไรที่เข้าฐานภาษีของตัวอื่น ๆ ถ้าขายวันนี้ — ขาดทุนต่อตัวไม่ลดภาษี (เคลมป์ 0 เหมือน taxCalc) */
+    const otherTaxableGain = others.reduce((sum, x) => {
+      const w = weightOf ? Math.max(0, Math.min(1, weightOf(x.type))) : 0;
+      if (w <= 0) return sum;
+      return sum + Math.max(0, netNowOf(x) - x.costTHB) * w;
+    }, 0);
+
     let targetPrice: number | null = null;
     let sellFeeTHB: number | null = null;
+    let taxTHB: number | null = null;
+    let grossTHB = 0;
+    let needNet = netWantedTotal - otherNet;
     if (needNet > 0) {
-      const grossTHB = grossNeededFor(needNet, fee);
-      targetPrice = perUnitTHB(grossTHB) / rate;
-      sellFeeTHB = feeUnknown ? null : sellFeeOf(grossTHB, fee);
+      grossTHB = grossNeededFor(needNet, fee);
+      if (taxOf) {
+        let tax = 0;
+        for (let i = 0; i < TAX_SOLVE_ROUNDS; i++) {
+          // เงินสุทธิที่ต้องได้จากตัวนี้ = เป้าทั้งรอบ + ภาษีที่ต้องจ่าย − ที่ตัวอื่นทำได้
+          const need = netWantedTotal + tax - otherNet;
+          if (need <= 0) break;
+          grossTHB = grossNeededFor(need, fee);
+          const myNet = grossTHB - sellFeeOf(grossTHB, fee);
+          const myGain = Math.max(0, myNet - b.costTHB) * taxWeight;
+          tax = Math.max(0, taxOf(otherTaxableGain + myGain));
+        }
+        taxTHB = tax;
+        needNet = netWantedTotal + tax - otherNet;
+      }
+      if (needNet > 0) {
+        targetPrice = perUnitTHB(grossTHB) / rate;
+        sellFeeTHB = feeUnknown ? null : sellFeeOf(grossTHB, fee);
+      }
     }
 
     return {
@@ -367,6 +426,8 @@ export const exitPlanForCycle = (
           : null,
       sellFeeTHB,
       feeUnknown,
+      taxTHB,
+      taxIncluded: !!opts.taxOf,
     };
   });
 };

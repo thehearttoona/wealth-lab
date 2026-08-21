@@ -176,13 +176,59 @@ export default function CyclesScreen() {
     [platforms, currencies]
   );
 
+  const tradesThisTaxYear = useMemo(
+    () => realizedTrades.filter((t) => taxYearOf(t.sellDate) === currentTaxYear),
+    [realizedTrades]
+  );
+  const taxOpts = useMemo(
+    () => ({ incomeExemption: incomeExemptionFor(person, currentTaxYear).amount }),
+    [person]
+  );
+
+  // ── ภาษีกำไรสำหรับ "ราคาที่ต้องตั้งขาย" ──
+  // ต้องอยู่เหนือ cycleViews เช่นเดียวกับ feeOf (ดูเหตุผล TDZ ข้างบน)
+  //
+  // ใช้ส่วนต่างของภาษีทั้งปี (คิดสองครั้ง มี/ไม่มีกำไรก้อนนี้) ไม่ใช่ กำไร × อัตราขั้น
+  // เพราะฐานเป็นขั้นบันได กำไรก้อนใหญ่พาดข้ามขั้น — สูตรเดียวกับตอนกดปิดรอบ จึงไม่มีทางขัดกันเอง
+  const taxOfGain = useCallback(
+    (taxableGainTHB: number): number => {
+      if (!taxProfile || !(taxableGainTHB > 0)) return 0;
+      const before = calculateTax(taxProfile, tradesThisTaxYear, taxOpts);
+      const after = calculateTax(
+        { ...taxProfile, otherIncome: taxProfile.otherIncome + taxableGainTHB },
+        tradesThisTaxYear,
+        taxOpts
+      );
+      return Math.max(0, after.tax - before.tax);
+    },
+    [taxProfile, tradesThisTaxYear, taxOpts]
+  );
+
+  // หุ้นไทยยกเว้น · คริปโต/หุ้นนอกเสียเต็ม · แบบนำเข้าคิดตามสัดส่วนที่นำเงินกลับ
+  const taxWeightOf = useCallback(
+    (type: Investment['type']): number => {
+      if (!taxProfile) return 0;
+      const rule = gainRuleFor(type, taxProfile);
+      if (rule === 'exempt') return 0;
+      if (rule === 'taxable_on_remit')
+        return Math.min(1, Math.max(0, taxProfile.remittedRatio ?? 1));
+      return 1;
+    },
+    [taxProfile]
+  );
+
   const cycleViews = cycles.map((cycle) => {
     const legs = legsOfCycle(cycle, investments);
     return {
       cycle,
       status: summarizeCycle(cycle, legs, { perRoundTHB: powderPerRound }),
       orphanCount: orphanLegsForBasket(cycle, investments).length,
-      exits: exitPlanForCycle(cycle, legs, feeOf),
+      exits: exitPlanForCycle(cycle, legs, feeOf, {
+        // ไม่มีโปรไฟล์ภาษี = คิดภาษีไม่ได้ ส่ง undefined ไปเลย ห้ามส่งฟังก์ชันที่คืน 0
+        // (0 อ่านว่า "ไม่มีภาษี" ซึ่งคนละเรื่องกับ "ยังคิดไม่ได้" — การ์ดต้องแยกสองอย่างนี้)
+        taxOf: taxProfile ? taxOfGain : undefined,
+        taxWeightOf: taxProfile ? taxWeightOf : undefined,
+      }),
     };
   });
   // ตะกร้าที่ยังไม่มีรอบเปิด และมีของถืออยู่จริง — ใช้ในการ์ด "ยังไม่ได้เปิดรอบ"
@@ -485,14 +531,6 @@ export default function CyclesScreen() {
   const realized = useMemo(() => summarizeRealized(realizedTrades), [realizedTrades]);
 
   // ── แถวในกล่องปิดรอบ + ภาษีของกำไรที่จะรับรู้ ──
-  const tradesThisTaxYear = useMemo(
-    () => realizedTrades.filter((t) => taxYearOf(t.sellDate) === currentTaxYear),
-    [realizedTrades]
-  );
-  const taxOpts = useMemo(
-    () => ({ incomeExemption: incomeExemptionFor(person, currentTaxYear).amount }),
-    [person]
-  );
   const closeRows = closeTarget ? buildCloseRows(closeTarget, investments) : [];
   const closeTax = (() => {
     if (!closeTarget || !taxProfile) return { taxTHB: null as number | null, note: undefined as string | undefined };
