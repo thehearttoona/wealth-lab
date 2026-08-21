@@ -139,8 +139,8 @@ export const CycleCard: React.FC<{
             <Text style={styles.exitTitle}>ตั้งขายที่ราคาไหน</Text>
             <Text style={styles.exitHeadSub} numberOfLines={1}>
               {showExits ? `${exits.length} ตัว` : nearest
-                ? `${nearest.symbol} ${formatCurrencyWithType(nearest.targetPrice as number, nearest.currency)}${
-                    exits.length > 1 ? ` +${exits.length - 1}` : ''
+                ? `ใกล้สุด ${nearest.symbol} ${formatCurrencyWithType(nearest.targetPrice as number, nearest.currency)}${
+                    exits.length > 1 ? ` · อีก ${exits.length - 1} ตัว` : ''
                   }`
                 : `${exits.length} ตัว`}
             </Text>
@@ -153,34 +153,58 @@ export const CycleCard: React.FC<{
 
           {showExits && (
             <>
-              {exits.map((e) => (
-                <View key={`${e.symbol}:${e.currency}`} style={styles.exitRow}>
-                  <View style={styles.exitMain}>
-                    <Text style={styles.exitSymbol} numberOfLines={1}>
-                      {e.symbol}
-                    </Text>
-                    <Text style={styles.exitSub} numberOfLines={1}>
-                      {e.quantity} หน่วย · ทุนเฉลี่ย {formatCurrencyWithType(e.avgBuyPrice, e.currency)}
-                      {e.currentPrice != null
-                        ? ` · ตอนนี้ ${formatCurrencyWithType(e.currentPrice, e.currency)}`
-                        : ' · ยังไม่มีราคา'}
-                    </Text>
+              {exits.map((e) => {
+                const isNearest = nearest && nearest.symbol === e.symbol && nearest.currency === e.currency;
+                return (
+                  <View key={`${e.symbol}:${e.currency}`} style={styles.exitCard}>
+                    <View style={styles.exitCardHead}>
+                      <Text style={styles.exitSymbol} numberOfLines={1}>
+                        {e.symbol}
+                      </Text>
+                      <Text style={styles.exitQty} numberOfLines={1}>
+                        {e.quantity} หน่วย · ทุนเฉลี่ย {formatCurrencyWithType(e.avgBuyPrice, e.currency)}
+                      </Text>
+                      {isNearest && exits.length > 1 && (
+                        <Text style={styles.exitBadge}>ใกล้ถึงเป้าสุด</Text>
+                      )}
+                    </View>
+
+                    {/* หนึ่งบรรทัด = หนึ่งราคา + ป้ายกำกับซ้ายมือเสมอ
+                        ก่อนหน้านี้วางสี่ราคาไว้สองมุมโดยไม่มีป้าย อ่านไม่ออกว่าอันไหนคืออันไหน */}
+                    <View style={styles.priceLine}>
+                      <Text style={styles.priceLabelMain}>ตั้งขายที่</Text>
+                      <Text style={styles.priceValueMain}>
+                        {e.targetPrice != null
+                          ? formatCurrencyWithType(e.targetPrice, e.currency)
+                          : 'ไม่ต้องรอตัวนี้แล้ว'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.priceLine}>
+                      <Text style={styles.priceLabel}>ราคาตอนนี้</Text>
+                      <Text style={styles.priceValue}>
+                        {e.currentPrice != null
+                          ? formatCurrencyWithType(e.currentPrice, e.currency)
+                          : 'ยังไม่มีราคา'}
+                      </Text>
+                      {e.gapPercent != null && (
+                        <Text style={styles.priceHint}>ต้องขึ้นอีก {e.gapPercent.toFixed(1)}%</Text>
+                      )}
+                    </View>
+
+                    <View style={styles.priceLine}>
+                      <Text style={styles.priceLabel}>ห้ามขายต่ำกว่า</Text>
+                      <Text style={[styles.priceValue, styles.priceValueFloor]}>
+                        {formatCurrencyWithType(e.breakEvenPrice, e.currency)}
+                      </Text>
+                      <Text style={styles.priceHint}>ต่ำกว่านี้ขาดทุนจริง</Text>
+                    </View>
                   </View>
-                  <View style={styles.exitPrices}>
-                    <Text style={styles.exitTarget}>
-                      {e.targetPrice != null
-                        ? formatCurrencyWithType(e.targetPrice, e.currency)
-                        : 'ถึงเป้าแล้ว'}
-                    </Text>
-                    <Text style={styles.exitBe}>
-                      คุ้มทุน {formatCurrencyWithType(e.breakEvenPrice, e.currency)}
-                      {e.gapPercent != null ? ` · อีก ${e.gapPercent.toFixed(1)}%` : ''}
-                    </Text>
-                  </View>
-                </View>
-              ))}
+                );
+              })}
               <Text style={styles.exitNote}>
-                ราคาถึงเป้า = ขายตัวนี้ที่ราคานี้แล้วทั้งรอบถึงเป้า โดยตัวอื่นขายที่ราคาปัจจุบัน ·
+                "ตั้งขายที่" = ขายตัวนี้ที่ราคานี้แล้วทั้งรอบถึงเป้า โดยตัวอื่นขายที่ราคาปัจจุบัน —
+                ตัวไหนถึงราคาของมันก่อน ขายตัวนั้นก็ปิดรอบได้เลย ไม่ต้องรอให้ถึงพร้อมกัน ·
                 รวมค่าธรรมเนียมขายแล้ว
                 {taxNote}
                 {exits.some((e) => e.feeUnknown)
@@ -379,7 +403,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: COLORS.divider,
-    gap: 6,
+    gap: 8,
   },
   exitHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   // minWidth: 0 ให้บรรทัดสรุปหดได้ ไม่ดัน chevron หลุดขอบการ์ดบนเว็บ
@@ -397,13 +421,58 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
   // minWidth: 0 ที่คอลัมน์ซ้ายจำเป็นบนเว็บ ไม่งั้นชื่อยาวดันคอลัมน์ราคาหลุดขอบการ์ด
-  exitRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  exitMain: { flex: 1, minWidth: 0 },
-  exitSymbol: { fontSize: 13, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
-  exitSub: { fontSize: 10.5, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary },
-  exitPrices: { alignItems: 'flex-end' },
-  exitTarget: { fontSize: 14, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.success },
-  exitBe: { fontSize: 10.5, fontFamily: 'NotoSansThai_300Light', color: COLORS.textSecondary },
+  // การ์ดย่อยต่อหนึ่งตัว — กรอบจาง ๆ กันไม่ให้ราคาของสองตัวปนกัน
+  exitCard: {
+    borderWidth: 1,
+    borderColor: COLORS.divider,
+    borderRadius: 8,
+    padding: 10,
+    gap: 3,
+  },
+  exitCardHead: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' },
+  exitSymbol: { fontSize: 13.5, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.text },
+  // minWidth: 0 ให้บรรทัดรายละเอียดหดได้ ไม่ดันป้ายหลุดขอบการ์ดบนเว็บ
+  exitQty: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 10.5,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  exitBadge: {
+    fontSize: 10,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.success,
+    backgroundColor: `${COLORS.success}14`,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  // หนึ่งบรรทัด = ป้าย + ราคา + คำขยาย เรียงซ้ายไปขวาเสมอ
+  priceLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 2 },
+  priceLabelMain: {
+    width: 96,
+    fontSize: 12,
+    fontFamily: 'NotoSansThai_600SemiBold',
+    color: COLORS.text,
+  },
+  priceValueMain: { fontSize: 17, fontFamily: 'NotoSansThai_600SemiBold', color: COLORS.success },
+  priceLabel: {
+    width: 96,
+    fontSize: 11.5,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
+  priceValue: { fontSize: 13, fontFamily: 'NotoSansThai_500Medium', color: COLORS.text },
+  priceValueFloor: { color: COLORS.error },
+  priceHint: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 10.5,
+    fontFamily: 'NotoSansThai_300Light',
+    color: COLORS.textSecondary,
+  },
   exitNote: {
     fontSize: 10.5,
     fontFamily: 'NotoSansThai_300Light',
