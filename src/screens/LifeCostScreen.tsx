@@ -28,6 +28,8 @@ import {
   isLifeCostTableMissing,
 } from '../services/lifeCostStorage';
 import { summarizeLifeCosts, addMonths, LifeCostStatus } from '../utils/lifeCost';
+import { requiredMonthlyContribution } from '../utils/investmentGoals';
+import { getPortfolioSummary } from '../services/investmentStorage';
 import { COLORS, RADIUS, TEXT, FONTS, formatCurrency, toChristianYear } from '../utils/constants';
 import { ActionButton } from '../components/ActionButton';
 import { Mascot, MascotEmpty, MascotState } from '../components/Mascot';
@@ -35,6 +37,11 @@ import { notify, confirmAsk } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
 
 const CARD_BASIS = 420;
+
+// ── "ให้พอร์ตจ่ายค่าเสื่อมแทน" ──
+// ผลตอบแทนที่ใช้คิดเป็น "ข้อสมมติ" ไม่ใช่คำสัญญา จึงให้เลือกเองและพิมพ์กำกับบนจอเสมอ
+const RETURN_STEPS = [5, 7, 10];
+const HORIZON_STEPS = [5, 10, 15, 20];
 
 const fmtDateTH = (iso: string): string =>
   new Date(iso).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
@@ -87,6 +94,11 @@ export default function LifeCostScreen() {
   const [reserveTarget, setReserveTarget] = useState<LifeCost | null>(null);
   const [reserveInput, setReserveInput] = useState('');
 
+  // ── เป้าลงทุนต่อเดือน: ข้อสมมติเก็บในหน้า ไม่บันทึกลง DB (เป็นการลองเล่นตัวเลข ไม่ใช่แผนผูกมัด) ──
+  const [ratePercent, setRatePercent] = useState(7);
+  const [years, setYears] = useState(10);
+  const [portfolioValue, setPortfolioValue] = useState(0);
+
   const today = new Date().toISOString().slice(0, 10);
   const todayDate = useMemo(() => new Date(`${today}T00:00:00`), [today]);
 
@@ -97,6 +109,12 @@ export default function LifeCostScreen() {
     } catch (e) {
       if (isLifeCostTableMissing(e)) setTableMissing(true);
       setItems([]);
+    }
+    // มูลค่าพอร์ตล้มแยกจากรายการค่าเสื่อม — ไม่มีก็แค่การ์ด "ให้พอร์ตจ่ายแทน" คิดจาก 0
+    try {
+      setPortfolioValue((await getPortfolioSummary()).totalValue);
+    } catch {
+      setPortfolioValue(0);
     }
     setLoading(false);
   }, []);
@@ -109,6 +127,21 @@ export default function LifeCostScreen() {
 
   const summary = useMemo(() => summarizeLifeCosts(items, todayDate), [items, todayDate]);
   const mood = moodFor(summary.count, summary.overdueCount, summary.gap);
+
+  // ── ทุนที่ต้องมีเพื่อให้ "ผลตอบแทนของพอร์ต" จ่ายค่าเสื่อมแทนได้ตลอด ──
+  // เงินต้น = ค่าเสื่อมต่อปี ÷ อัตราผลตอบแทน (perpetuity) — ถึงจุดนี้แล้วไม่ต้องควักเงินเดือนอีก
+  const perYear = summary.perYear;
+  const capitalNeeded = ratePercent > 0 ? perYear / (ratePercent / 100) : null;
+  const coveredPercent =
+    capitalNeeded != null && capitalNeeded > 0
+      ? Math.min(100, (portfolioValue / capitalNeeded) * 100)
+      : null;
+  // ลงเพิ่มเดือนละเท่าไหร่ถึงจะไปถึงทุนก้อนนั้นในกี่ปีที่เลือก
+  // (ใช้ requiredMonthlyContribution ที่มีอยู่แล้วใน utils/investmentGoals — เดิมไม่มีใครเรียก)
+  const monthlyNeeded =
+    capitalNeeded != null
+      ? requiredMonthlyContribution(portfolioValue, capitalNeeded, ratePercent, years)
+      : null;
 
   // ── เพิ่ม / แก้ไข ──
   const openAdd = () => {
@@ -366,6 +399,83 @@ export default function LifeCostScreen() {
           )}
         </View>
 
+        {/* ── ให้พอร์ตจ่ายค่าเสื่อมแทน ──
+            แปลง "ค่าเสื่อมต่อเดือน" ให้เป็น **เป้าลงทุน** ไม่ใช่ **เป้ากำไรรายเดือน** โดยตั้งใจ:
+            เป้ากำไรรายเดือนสร้างแรงกดดันให้ขายตอนสิ้นเดือนเพื่อให้ครบโควตา ซึ่งขัดกับทั้งระบบ
+            (จังหวะขายมาจากรอบถึงเป้า ไม่ใช่จากวันที่) ส่วนเป้าลงเงินไม่มีผลข้างเคียงนั้น
+            ทำมากทำน้อยก็แค่ถึงช้าหรือเร็ว */}
+        {summary.count > 0 && capitalNeeded != null && (
+          <View style={styles.investCard}>
+            <Text style={styles.investTitle}>
+              <Ionicons name="trending-up-outline" size={16} color={COLORS.primary} />{' '}
+              ให้พอร์ตจ่ายค่าเสื่อมแทน
+            </Text>
+            <Text style={styles.investLead}>
+              ค่าเสื่อมปีละ ฿{formatCurrency(perYear)} — ถ้าพอร์ตโตพอ ผลตอบแทนจะจ่ายก้อนนี้แทนคุณได้
+              โดยไม่ต้องควักเงินเดือน
+            </Text>
+
+            <View style={styles.investRow}>
+              <Text style={styles.investLabel}>ต้องมีพอร์ต</Text>
+              <Text style={styles.investValue}>฿{formatCurrency(capitalNeeded)}</Text>
+            </View>
+            <View style={styles.investRow}>
+              <Text style={styles.investLabel}>ตอนนี้มี</Text>
+              <Text style={styles.investSub}>
+                ฿{formatCurrency(portfolioValue)}
+                {coveredPercent != null ? ` · ${coveredPercent.toFixed(0)}%` : ''}
+              </Text>
+            </View>
+            <View style={styles.track}>
+              <View style={[styles.fill, { width: `${coveredPercent ?? 0}%` }]} />
+            </View>
+
+            <Text style={styles.investChipLabel}>สมมติผลตอบแทนต่อปี</Text>
+            <View style={styles.chipWrap}>
+              {RETURN_STEPS.map((r) => (
+                <TouchableOpacity
+                  key={r}
+                  style={[styles.chip, ratePercent === r && styles.chipOn]}
+                  onPress={() => setRatePercent(r)}
+                >
+                  <Text style={[styles.chipText, ratePercent === r && styles.chipTextOn]}>{r}%</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.investChipLabel}>อยากถึงภายในกี่ปี</Text>
+            <View style={styles.chipWrap}>
+              {HORIZON_STEPS.map((y) => (
+                <TouchableOpacity
+                  key={y}
+                  style={[styles.chip, years === y && styles.chipOn]}
+                  onPress={() => setYears(y)}
+                >
+                  <Text style={[styles.chipText, years === y && styles.chipTextOn]}>{y} ปี</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.investResult}>
+              <Text style={styles.investResultLabel}>ลงทุนเพิ่มเดือนละ</Text>
+              <Text style={styles.investResultValue}>
+                {monthlyNeeded == null
+                  ? '—'
+                  : monthlyNeeded <= 0
+                    ? 'ไม่ต้องเติมแล้ว'
+                    : `฿${formatCurrency(monthlyNeeded)}`}
+              </Text>
+            </View>
+            <Text style={styles.investNote}>
+              {monthlyNeeded != null && monthlyNeeded <= 0
+                ? `พอร์ตที่มีอยู่โตเองจนพอจ่ายค่าเสื่อมภายใน ${years} ปี ไม่ต้องเติมเพิ่ม`
+                : `เติมเท่านี้ทุกเดือน ${years} ปี แล้วค่าเสื่อมทั้งหมดจะจ่ายด้วยผลตอบแทนของพอร์ต`}
+              {'\n'}ผลตอบแทน {ratePercent}%/ปี เป็นข้อสมมติที่คุณเลือกเอง ไม่ใช่สิ่งที่รับประกันได้ ·
+              เลขนี้เป็นเป้า "ลงเงินเพิ่ม" ไม่ใช่เป้า "ต้องทำกำไรให้ได้เท่านี้"
+            </Text>
+          </View>
+        )}
+
         <TouchableOpacity style={styles.addBtn} onPress={openAdd}>
           <Ionicons name="add-circle-outline" size={18} color="#ffffff" />
           <Text style={styles.addBtnText}> เพิ่มรายการ</Text>
@@ -592,6 +702,37 @@ const styles = StyleSheet.create({
   kpiLabel: { fontSize: 10, fontFamily: FONTS.regular, color: COLORS.textSecondary, marginBottom: 2 },
   kpiValue: { fontSize: 15, fontFamily: FONTS.semibold, color: COLORS.text },
   nextUpText: { ...TEXT.caption, color: COLORS.text, marginTop: 12 },
+
+  // ── การ์ดเป้าลงทุน ──
+  investCard: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+    marginBottom: 12,
+    gap: 6,
+  },
+  investTitle: { ...TEXT.title, color: COLORS.text },
+  investLead: { ...TEXT.hint, color: COLORS.textSecondary, lineHeight: 18, marginBottom: 4 },
+  investRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
+  investLabel: { fontSize: 12, fontFamily: FONTS.regular, color: COLORS.textSecondary },
+  investValue: { fontSize: 18, fontFamily: FONTS.semibold, color: COLORS.primary },
+  investSub: { fontSize: 13, fontFamily: FONTS.medium, color: COLORS.text },
+  investChipLabel: { fontSize: 11, fontFamily: FONTS.regular, color: COLORS.textSecondary, marginTop: 8 },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  investResult: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.divider,
+  },
+  investResultLabel: { fontSize: 13, fontFamily: FONTS.semibold, color: COLORS.text },
+  investResultValue: { fontSize: 22, fontFamily: FONTS.semibold, color: COLORS.success },
+  investNote: { fontSize: 10.5, fontFamily: FONTS.light, color: COLORS.textSecondary, lineHeight: 16 },
 
   addBtn: {
     borderRadius: RADIUS.md,
