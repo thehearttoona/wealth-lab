@@ -13,6 +13,9 @@
 //
 // ⚠️ ผลตอบแทน ≤ เงินเฟ้อ = ทุนเป็นอนันต์ ต้องคืน reason ไม่ใช่คืนเลขมั่ว ๆ หรือ Infinity
 
+import { LifeCost } from '../types/lifeCost';
+import { summarizeLifeCosts } from './lifeCost';
+
 /** หนึ่งอย่างที่ต้องจ่ายทุกเดือน — มาจากค่าเสื่อมหรือบิลประจำก็ได้ คำถามเดียวกัน */
 export interface OutflowItem {
   id: string;
@@ -131,4 +134,36 @@ export const avgMonthlyBill = (
     .slice(0, Math.max(1, months));
   if (entries.length === 0) return 0;
   return entries.reduce((s, [, v]) => s + v, 0) / entries.length;
+};
+
+/**
+ * แปลง "ค่าเสื่อม + บิลประจำ" เป็นรายการ outflow ของบันได — **ทางเดียวของทั้งแอป**
+ *
+ * เดิมหน้าค่าเสื่อมประกอบลิสต์นี้เองในตัว render พอหัวพอร์ตต้องใช้บันไดชุดเดียวกัน
+ * (เป้าพอร์ต = ทุนที่ต้องมีเพื่อปลดค่าชีวิต) สองที่ต้องได้ลิสต์เดียวกันเป๊ะ ๆ
+ * ไม่งั้นหัวพอร์ตกับหน้าค่าเสื่อมจะบอก "ปลดครบต้องมีเท่าไหร่" ไม่ตรงกัน
+ *
+ * รับ `today` เข้ามาแทนที่จะอ่าน `new Date()` เอง — เหตุผลเดียวกับ utils/lifeCost.ts
+ */
+export const outflowsFrom = (
+  costs: LifeCost[],
+  bills: { id: string; name: string; monthlyAmounts?: { [key: string]: number } }[],
+  today: Date
+): OutflowItem[] => {
+  const fromCosts: OutflowItem[] = summarizeLifeCosts(costs, today).rows.map((r) => ({
+    id: r.item.id,
+    name: r.item.name,
+    monthlyTHB: r.perMonth,
+    kind: 'life_cost' as const,
+  }));
+  const fromBills: OutflowItem[] = bills
+    .map((b) => ({
+      id: b.id,
+      name: b.name,
+      // ใช้ยอดที่กรอกจริงเฉลี่ย ไม่ใช่ช่อง amount ที่เป็นแค่ค่าอ้างอิง (ดู avgMonthlyBill)
+      monthlyTHB: avgMonthlyBill(b.monthlyAmounts),
+      kind: 'bill' as const,
+    }))
+    .filter((b) => b.monthlyTHB > 0);
+  return [...fromCosts, ...fromBills];
 };

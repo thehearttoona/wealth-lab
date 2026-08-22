@@ -50,6 +50,7 @@ import {
   toChristianYear,
   COLORS,
   RADIUS,
+  FONTS,
   assetColor,
   assetTint,
 } from '../utils/constants';
@@ -75,6 +76,12 @@ import { PurchaseGoal } from '../types/purchaseGoal';
 import { getPurchaseGoals } from '../services/purchaseGoalStorage';
 import { planPurchaseGoals } from '../utils/purchaseGoals';
 import { loadLifeLedger } from '../services/ledgerProfit';
+import { buildExpenseLadder, outflowsFrom } from '../utils/expenseLadder';
+import { INFLATION_RATE } from '../utils/portfolioCoverage';
+import { getLifeCosts } from '../services/lifeCostStorage';
+import { getRecurringBills } from '../services/storage';
+import { LifeCost } from '../types/lifeCost';
+import { RecurringBill } from '../types';
 import { LifeLedger } from '../utils/lifeLedger';
 import { calculateTax, estimateGainTax, taxYearOf } from '../utils/taxCalc';
 import { UserProfile, incomeExemptionFor } from '../types/userProfile';
@@ -173,6 +180,10 @@ const currentTaxYear = new Date().getFullYear() + 543;
 // ── ค่ากริดเดสก์ท็อป (ต้องตรงกับ styles.flatListRow / styles.cardGrid) ──
 // COL_TARGET = ความกว้างการ์ดที่อ่านสบาย: เนื้อในเป็นชื่อ + ราคา + กำไร ซึ่งกว้างเกิน ~420
 // ก็แค่เพิ่มที่ว่างกลางการ์ด ไม่ได้อ่านง่ายขึ้น จำนวนคอลัมน์จึงโตแทนความกว้างการ์ด
+// ผลตอบแทนที่ใช้คิด "ทุนที่ต้องมีเพื่อปลดค่าชีวิต" เมื่อผู้ใช้ยังไม่ได้ตั้งเลขคาดหวังไว้เอง
+// ต้องเท่ากับค่าเริ่มต้นของชิปในหน้าค่าเสื่อม ไม่งั้นสองหน้าโชว์ทุนที่ต้องมีไม่ตรงกัน
+const LADDER_DEFAULT_RETURN = 7;
+
 const GRID_COL_TARGET = 380;
 const GRID_GAP = 12;
 const GRID_PADDING = 16;
@@ -294,6 +305,14 @@ export default function PortfolioScreen() {
   const nextRefreshAtRef = useRef<Date | null>(null);
   const refreshInFlight = useRef(false);
   const [goal, setGoal] = useState<PortfolioGoal | null>(null);
+  // ── ที่มาของเป้าบนหัวพอร์ต ──
+  // 'life' = ทุนที่ต้องมีเพื่อปลดค่าใช้จ่ายจริงของตัวเอง (ค่าเสื่อม + บิลประจำ)
+  // 'manual' = ยอดที่ผู้ใช้พิมพ์เอง
+  // ค่าเริ่มต้นเป็น 'life' เพราะเลขนั้นตอบได้ว่า "ทำไมต้องเป็นตัวเลขนี้" ส่วนยอดที่พิมพ์เองตอบไม่ได้
+  // เก็บใน state ของจอ ไม่ลง DB — สลับดูได้ตลอด ไม่ใช่การตั้งค่าที่ผูกมัด
+  const [goalSource, setGoalSource] = useState<'life' | 'manual'>('life');
+  const [lifeCosts, setLifeCosts] = useState<LifeCost[]>([]);
+  const [recurringBills, setRecurringBills] = useState<RecurringBill[]>([]);
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [goalTargetInput, setGoalTargetInput] = useState('');
   const [goalExpectedInput, setGoalExpectedInput] = useState('');
@@ -388,6 +407,18 @@ export default function PortfolioScreen() {
       // (ถ้ากดขายจริงแล้วตารางยังไม่มี handleConfirmSell จะบอกให้ไปรัน SQL อยู่แล้ว)
       setRealizedTrades([]);
       setLifeLedger(null);
+    }
+    // ค่าเสื่อม + บิลประจำ = ฐานของ "เป้าพอร์ต = ทุนที่ต้องมีเพื่อปลดค่าชีวิต"
+    // ล้มแยกกันได้: ไม่มีสักอย่างก็แค่เป้าตกไปใช้ยอดที่ผู้ใช้ตั้งเองเหมือนเดิม
+    try {
+      setLifeCosts(await getLifeCosts());
+    } catch {
+      setLifeCosts([]);
+    }
+    try {
+      setRecurringBills(await getRecurringBills());
+    } catch {
+      setRecurringBills([]);
     }
     try {
       // ของที่อยากได้ — โชว์เป็นบรรทัดสรุปในเมนู ไม่มีตาราง/ไม่มีของก็ซ่อนบรรทัดนั้น
@@ -1315,6 +1346,34 @@ export default function PortfolioScreen() {
   //   needPercent = เป้า/มูลค่าตอนนี้ − 1 → ต้องโตอีกกี่ % จากของที่ถืออยู่
   //   roundMonths = พอร์ตอายุกี่เดือนแล้ว → เอาไปบอกว่ากำไร % ที่ทำมาใช้เวลาเท่าไหร่
   // ไม่แปลงเป็น "อีกกี่ปีถึงเป้า" — นั่นคือพยากรณ์วันที่ ซึ่งจงใจไม่โชว์บนหน้านี้
+  // ── เป้าพอร์ต = ทุนที่ต้องมีเพื่อปลดค่าใช้จ่ายจริงของตัวเอง (2026-08-22 เจ้าของเลือกเอง) ──
+  // บันไดชุดเดียวกับหน้าค่าเสื่อม (outflowsFrom + buildExpenseLadder ที่เดียว) ไม่งั้นสองหน้า
+  // จะบอก "ปลดครบต้องมีเท่าไหร่" ไม่ตรงกัน · วัดด้วย **มูลค่าพอร์ต** เพราะทุนที่สร้างผลตอบแทน
+  // คือมูลค่าตลาด ไม่ใช่ต้นทุน (และหน้าค่าเสื่อมก็ใช้ totalValue อยู่แล้ว)
+  const ladderRatePercent =
+    goal?.expectedAnnualReturnPercent && goal.expectedAnnualReturnPercent > 0
+      ? goal.expectedAnnualReturnPercent
+      : LADDER_DEFAULT_RETURN;
+  const lifeLadder = useMemo(
+    () =>
+      buildExpenseLadder(
+        outflowsFrom(lifeCosts, recurringBills, new Date()),
+        summary.totalValue,
+        ladderRatePercent,
+        INFLATION_RATE
+      ),
+    [lifeCosts, recurringBills, summary.totalValue, ladderRatePercent]
+  );
+  // reason != null = ผลตอบแทนไม่ชนะเงินเฟ้อ ทุนเป็นอนันต์ → ใช้เป็นเป้าไม่ได้ ต้องถอยไปเป้าที่ตั้งเอง
+  const ladderReady = lifeLadder.rungs.length > 0 && !lifeLadder.reason;
+  const useLadderGoal = ladderReady && goalSource === 'life';
+  // ขั้นที่กำลังทำ — null = ปลดครบทุกขั้นแล้ว แล้วเป้าจะกลายเป็นยอดปลดครบ
+  const ladderRung = lifeLadder.current;
+  const ladderTarget = ladderRung ? ladderRung.cumulativeTHB : lifeLadder.totalCapitalTHB;
+  const ladderPercent =
+    ladderTarget > 0 ? Math.max(0, Math.min(100, (summary.totalValue / ladderTarget) * 100)) : 0;
+  const ladderGapTHB = Math.max(0, ladderTarget - summary.totalValue);
+
   const goalGap = (() => {
     const target = goal?.targetAmount;
     if (!target || target <= 0 || summary.totalValue <= 0) return null;
@@ -1477,7 +1536,7 @@ export default function PortfolioScreen() {
                 </View>
                 {/* ต้นทุนโชว์บรรทัดนี้เฉพาะตอนยังไม่ตั้งเป้า — ตั้งเป้าแล้วส่วนเป้าหมายด้านล่าง
                     มี "ต้นทุนที่ลงไปแล้ว" ยอดเดียวกัน (summary.totalCost ตัวเดียวกัน) อยู่แล้ว */}
-                {!goalAnalysis && (
+                {!goalAnalysis && !useLadderGoal && (
                   <Text style={styles.summaryCost}>ลงทุนไปแล้ว {formatCurrency(summary.totalCost)}</Text>
                 )}
               </View>
@@ -1492,18 +1551,98 @@ export default function PortfolioScreen() {
               <Text style={styles.headerGoalTitle}>
                 <Ionicons name="disc-outline" size={16} color="#ffffff" /> เป้าหมายพอร์ตรวม
               </Text>
+              {/* โหมดบันไดพาไปหน้าค่าเสื่อม เพราะที่นั่นคือที่ที่แก้รายการและผลตอบแทนได้จริง
+                  กดแก้ตัวเลขเป้าตรงนี้ไม่ได้โดยตั้งใจ — เป้ามาจากค่าใช้จ่ายจริง ไม่ใช่ตัวเลขที่ตั้งได้ */}
               <ActionButton
-                label={goal ? 'แก้ไข' : 'ตั้งเป้า'}
-                icon={goal ? 'create-outline' : 'add-circle-outline'}
+                label={useLadderGoal ? 'ดูบันได' : goal ? 'แก้ไข' : 'ตั้งเป้า'}
+                icon={useLadderGoal ? 'list-outline' : goal ? 'create-outline' : 'add-circle-outline'}
                 variant="onDark"
                 size="sm"
-                onPress={openGoalModal}
+                onPress={useLadderGoal ? () => navigation.navigate('LifeCost') : openGoalModal}
               />
             </View>
 
-            {!goalAnalysis ? (
+            {/* ── ชิปสลับที่มาของเป้า ──
+                โผล่ทันทีที่บันไดคิดได้ ไม่รอให้มีเป้าที่ตั้งเองก่อน — ไม่งั้นคนที่ยังไม่เคยตั้งเป้า
+                จะไม่มีทางเข้าไปตั้ง (ไก่กับไข่ แบบเดียวกับแถวเมนูบัญชีชีวิต) */}
+            {ladderReady && (
+              <View style={styles.goalSrcRow}>
+                {([
+                  ['life', 'ปลดค่าชีวิต'],
+                  ['manual', 'เป้าที่ตั้งเอง'],
+                ] as const).map(([key, label]) => (
+                  <TouchableOpacity
+                    key={key}
+                    style={[styles.goalSrcChip, goalSource === key && styles.goalSrcChipOn]}
+                    onPress={() => setGoalSource(key)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`ใช้ ${label} เป็นเป้าพอร์ต`}
+                  >
+                    <Text
+                      style={[styles.goalSrcText, goalSource === key && styles.goalSrcTextOn]}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {useLadderGoal ? (
+              /* ── เป้า = ทุนที่ต้องมีเพื่อปลดค่าใช้จ่ายจริง ──
+                 เป้าคือ "ทุนสะสมถึงขั้นที่กำลังทำ" ไม่ใช่ยอดปลดครบ เพราะยอดปลดครบเป็นหลักล้าน
+                 อยู่ไกลจนแถบไม่ขยับ ส่วนขั้นถัดไปเป็นก้อนที่ปลดได้จริงในเวลาที่มองเห็น */
+              <>
+                <View style={styles.goalCardTopRow}>
+                  <Text style={styles.headerGoalSub}>
+                    มูลค่าพอร์ต {formatCurrency(summary.totalValue)}
+                  </Text>
+                  <Text style={styles.headerGoalSub}>
+                    {ladderRung
+                      ? `เป้า ${formatCurrency(ladderTarget)}`
+                      : `ปลดครบทุกขั้นแล้ว (${formatCurrency(ladderTarget)})`}
+                  </Text>
+                </View>
+                <View style={styles.headerGoalTrack}>
+                  <View
+                    style={[
+                      styles.goalFill,
+                      {
+                        width: `${ladderPercent}%`,
+                        backgroundColor: ladderRung ? '#ffffff' : COLORS.success,
+                      },
+                    ]}
+                  />
+                </View>
+                {/* บรรทัดนี้คือเหตุผลของตัวเลขข้างบน — ปลดขั้นนี้แล้วได้อะไรกลับมาเป็นเงินต่อเดือน */}
+                <Text style={styles.headerGoalHint}>
+                  {ladderRung
+                    ? `ขั้นนี้คือ "${ladderRung.name}" — ปลดแล้วไม่ต้องจ่ายเดือนละ ` +
+                      `${formatCurrency(ladderRung.monthlyTHB)} อีก · เหลืออีก ${formatCurrency(ladderGapTHB)}`
+                    : `ผลตอบแทนจ่ายค่าใช้จ่ายประจำได้เดือนละ ${formatCurrency(lifeLadder.totalMonthlyTHB)} แล้ว`}
+                </Text>
+                <Text style={styles.headerGoalHint}>
+                  ปลดไปแล้ว {lifeLadder.clearedCount}/{lifeLadder.rungs.length} อย่าง ·
+                  {' '}ปลดครบทุกขั้นต้องมี {formatCurrency(lifeLadder.totalCapitalTHB)}
+                  {lifeLadder.freedMonthlyTHB > 0
+                    ? ` · ได้เงินคืนแล้วเดือนละ ${formatCurrency(lifeLadder.freedMonthlyTHB)}`
+                    : ''}
+                </Text>
+                {/* ผลตอบแทนเป็นข้อสมมติ ไม่ใช่คำสัญญา — ต้องพิมพ์กำกับทุกที่ที่เอาไปคิดทุน */}
+                <Text style={styles.headerGoalAssume}>
+                  คิดที่ผลตอบแทน {ladderRatePercent}% ต่อปี หักเงินเฟ้อ {INFLATION_RATE}% แล้วเหลือ{' '}
+                  {lifeLadder.realReturnPercent.toFixed(1)}%
+                  {goal?.expectedAnnualReturnPercent && goal.expectedAnnualReturnPercent > 0
+                    ? ' (เลขที่คุณตั้งไว้เอง)'
+                    : ' (ค่าเริ่มต้น ตั้งเองได้ที่ปุ่มแก้ไขในโหมดเป้าที่ตั้งเอง)'}
+                </Text>
+              </>
+            ) : !goalAnalysis ? (
               <Text style={styles.headerGoalEmpty}>
                 ปักยอดพอร์ตที่อยากได้ แล้วระบบจะสรุปให้ว่าไปได้กี่ % และต้องลงเดือนละเท่าไหร่ถึงจะทันกรอบเวลา
+                {ladderReady
+                  ? '\n\nหรือกด "ปลดค่าชีวิต" ข้างบน แล้วเป้าจะมาจากค่าใช้จ่ายจริงของคุณเอง'
+                  : ''}
               </Text>
             ) : (
               <>
@@ -2436,6 +2575,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.15)',
   },
   // ── ส่วน "เป้าหมายพอร์ตรวม" ที่ย้ายขึ้นมาอยู่ในกล่องสรุปนี้ (ไม่มีการ์ดแยกแล้ว) ──
+  // ชิปสลับที่มาของเป้า — อยู่บนพื้นน้ำเงิน จึงใช้ขาวโปร่งทั้งชุด (COLORS.* จมพื้น)
+  goalSrcRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  goalSrcChip: {
+    paddingVertical: 5,
+    paddingHorizontal: 11,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  goalSrcChipOn: { backgroundColor: 'rgba(255,255,255,0.18)', borderColor: '#ffffff' },
+  goalSrcText: { fontSize: 12, fontFamily: FONTS.regular, color: 'rgba(255,255,255,0.75)' },
+  goalSrcTextOn: { fontFamily: FONTS.semibold, color: '#ffffff' },
+  // บรรทัดข้อสมมติ — เล็กกว่า hint ได้ แต่ห้ามจางกว่านี้: ขาว 62% บน #294E80 ได้คอนทราสต์ ~3.2
+  // ซึ่งตกเกณฑ์อ่านออกที่ 11px ต้องอยู่แถว 0.82 ขึ้นไป (ญาติของกฎสีใน utils/constants.ts)
+  headerGoalAssume: {
+    fontSize: 11,
+    fontFamily: FONTS.regular,
+    color: '#ffffff',
+    opacity: 0.82,
+    marginTop: 6,
+    lineHeight: 16,
+  },
   headerGoalDivider: {
     height: 1,
     backgroundColor: 'rgba(255,255,255,0.25)',

@@ -29,7 +29,7 @@ import {
 } from '../services/lifeCostStorage';
 import { summarizeLifeCosts, addMonths, LifeCostStatus } from '../utils/lifeCost';
 import { requiredMonthlyContribution } from '../utils/investmentGoals';
-import { buildExpenseLadder, avgMonthlyBill, OutflowItem } from '../utils/expenseLadder';
+import { buildExpenseLadder, outflowsFrom, OutflowItem } from '../utils/expenseLadder';
 import { INFLATION_RATE } from '../utils/portfolioCoverage';
 import { getRecurringBills } from '../services/storage';
 import { RecurringBill } from '../types';
@@ -150,24 +150,12 @@ export default function LifeCostScreen() {
   // ── บันได "ให้พอร์ตจ่ายชีวิตแทน" ──
   // ค่าเสื่อม + บิลประจำ = ของที่ต้องจ่ายทุกเดือนเหมือนกัน อยู่บันไดเดียวกัน
   // เรียงจากทุนน้อยไปมาก เพื่อให้ปลดอันแรกได้เร็วที่สุด แล้วเงินที่ว่างมาเร่งขั้นถัดไป
-  const outflows: OutflowItem[] = useMemo(() => {
-    const fromCosts: OutflowItem[] = summary.rows.map((r) => ({
-      id: r.item.id,
-      name: r.item.name,
-      monthlyTHB: r.perMonth,
-      kind: 'life_cost' as const,
-    }));
-    const fromBills: OutflowItem[] = bills
-      .map((b) => ({
-        id: b.id,
-        name: b.name,
-        // ใช้ยอดที่กรอกจริงเฉลี่ย ไม่ใช่ช่อง amount ที่เป็นแค่ค่าอ้างอิง (ดู utils/expenseLadder)
-        monthlyTHB: avgMonthlyBill(b.monthlyAmounts),
-        kind: 'bill' as const,
-      }))
-      .filter((b) => b.monthlyTHB > 0);
-    return [...fromCosts, ...fromBills];
-  }, [summary.rows, bills]);
+  // ประกอบลิสต์ที่ utils/expenseLadder ที่เดียว — หัวพอร์ตใช้บันไดชุดเดียวกันเป็นเป้าพอร์ต
+  // ถ้าสองที่ประกอบเอง จะบอก "ปลดครบต้องมีเท่าไหร่" ไม่ตรงกัน
+  const outflows: OutflowItem[] = useMemo(
+    () => outflowsFrom(items, bills, todayDate),
+    [items, bills, todayDate]
+  );
 
   const ladder = useMemo(
     () => buildExpenseLadder(outflows, portfolioValue, ratePercent, INFLATION_RATE),
