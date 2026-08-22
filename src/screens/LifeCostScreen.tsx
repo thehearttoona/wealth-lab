@@ -30,6 +30,13 @@ import {
 import { summarizeLifeCosts, addMonths, LifeCostStatus } from '../utils/lifeCost';
 import { requiredMonthlyContribution } from '../utils/investmentGoals';
 import { buildExpenseLadder, outflowsFrom, OutflowItem } from '../utils/expenseLadder';
+import {
+  getLadderFreed,
+  setLadderFreed,
+  clearLadderFreed,
+  isLadderFreedTableMissing,
+  LadderItemKind,
+} from '../services/ladderFreedStorage';
 import { INFLATION_RATE } from '../utils/portfolioCoverage';
 import { getRecurringBills } from '../services/storage';
 import { RecurringBill } from '../types';
@@ -109,6 +116,8 @@ export default function LifeCostScreen() {
   const [bills, setBills] = useState<RecurringBill[]>([]);
   // บัญชีให้พอร์ตจ่ายชีวิต — หน้านี้แค่โชว์ยอดค้างเป็นทางเข้า ไม่คิดซ้ำ (คิดที่ utils/lifeLedger)
   const [lifeLedger, setLifeLedger] = useState<LifeLedger | null>(null);
+  // ขั้นที่คนกดยืนยันว่าปลดจริง — คนละเรื่องกับ "ทุนถึงแล้ว" ที่คำนวณได้ (ดู utils/expenseLadder)
+  const [ladderFreed, setLadderFreed_] = useState<Map<string, string>>(new Map());
 
   const today = new Date().toISOString().slice(0, 10);
   const todayDate = useMemo(() => new Date(`${today}T00:00:00`), [today]);
@@ -135,6 +144,12 @@ export default function LifeCostScreen() {
     }
     // ยังไม่ได้รัน sql/life_ledger.sql = ได้บัญชีเปล่า แถวยังโชว์ได้เป็นทางเข้าไปเริ่ม
     setLifeLedger(await loadLifeLedger());
+    // getLadderFreed ทนตารางหายเองแล้ว (คืน Map ว่าง) — ยังไม่รัน SQL ก็แค่ยังไม่มีใครติ๊ก
+    try {
+      setLadderFreed_(await getLadderFreed());
+    } catch {
+      setLadderFreed_(new Map());
+    }
     setLoading(false);
   }, []);
 
@@ -158,9 +173,39 @@ export default function LifeCostScreen() {
   );
 
   const ladder = useMemo(
-    () => buildExpenseLadder(outflows, portfolioValue, ratePercent, INFLATION_RATE),
-    [outflows, portfolioValue, ratePercent]
+    () => buildExpenseLadder(outflows, portfolioValue, ratePercent, INFLATION_RATE, ladderFreed),
+    [outflows, portfolioValue, ratePercent, ladderFreed]
   );
+
+  /**
+   * กดยืนยัน/ยกเลิกว่าปลดขั้นนี้จริงแล้ว
+   *
+   * ⚠️ ปุ่มนี้ไม่เปลี่ยนตัวเลขทุน/ขั้นที่กำลังทำเลย — มันบันทึกว่าโลกจริงเกิดขึ้นแล้ว
+   * (เหตุผลอยู่หัวไฟล์ utils/expenseLadder.ts) กดผิดกดซ้ำเพื่อยกเลิกได้
+   */
+  const toggleFreed = async (kind: LadderItemKind, id: string, name: string, isFreed: boolean) => {
+    if (!isFreed) {
+      const ok = await confirmAsk(
+        'ปลดขั้นนี้แล้ว',
+        `ยืนยันว่าตอนนี้ "${name}" ให้พอร์ตจ่ายแทนแล้วจริง ๆ ใช่ไหม\n\n` +
+          'ปุ่มนี้เป็นการจดว่าเกิดขึ้นแล้ว ไม่ได้เปลี่ยนตัวเลขทุนหรือขั้นที่กำลังทำ\n' +
+          'กดแล้วยอดนี้จะไปนับใน "เงินที่กลับมาแล้วเดือนละ"',
+        'ยืนยัน'
+      );
+      if (!ok) return;
+    }
+    try {
+      if (isFreed) await clearLadderFreed(kind, id);
+      else await setLadderFreed(kind, id, today, name);
+      loadData();
+    } catch (e) {
+      notify(
+        isLadderFreedTableMissing(e)
+          ? 'ยังใช้ไม่ได้ — เอา sql/expense_ladder_freed.sql ไปรันที่ Supabase ก่อน 1 ครั้ง'
+          : 'บันทึกไม่สำเร็จ'
+      );
+    }
+  };
   // ลงเพิ่มเดือนละเท่าไหร่ถึงจะปลดครบทุกขั้นในกี่ปีที่เลือก
   // (requiredMonthlyContribution มีอยู่แล้วใน utils/investmentGoals — เดิมไม่มีใครเรียก)
   const monthlyNeeded =
@@ -488,22 +533,53 @@ export default function LifeCostScreen() {
               {ladder.monthlyProgressPercent.toFixed(0)}% ของที่ต้องจ่าย) — แบบไม่แตะเงินต้น
             </Text>
 
-            {ladder.rungs.map((r) => (
-              <View key={`${r.kind}:${r.id}`} style={styles.rungRow}>
-                <Ionicons
-                  name={r.cleared ? 'checkmark-circle' : 'ellipse-outline'}
-                  size={15}
-                  color={r.cleared ? COLORS.success : COLORS.textSecondary}
-                />
-                <Text style={styles.rungName} numberOfLines={1}>
-                  {r.name}
-                </Text>
-                <Text style={styles.rungMonthly}>฿{formatCurrency(r.monthlyTHB)}/ด</Text>
-                <Text style={[styles.rungState, r.cleared && styles.rungStateDone]}>
-                  {r.cleared ? 'ปลดแล้ว' : `${r.percent.toFixed(0)}%`}
-                </Text>
-              </View>
-            ))}
+            {/* ── สามสถานะต่อแถว ──
+                ยังไม่ถึง = % · ทุนถึงแล้วแต่ยังไม่กด = "ถึงแล้ว" + ปุ่มยืนยัน · กดแล้ว = "ปลดแล้ว"
+                เดิมมีสองสถานะแล้วพิมพ์ "ปลดแล้ว" ทันทีที่ทุนถึง ซึ่งอ้างสิ่งที่ยังไม่เกิด
+                (เจ้าของยังจ่ายจากเงินเดือนอยู่ ยังไม่เคยขายอะไรเลย) */}
+            {ladder.rungs.map((r) => {
+              const isFreed = !!r.freedAt;
+              return (
+                <View key={`${r.kind}:${r.id}`} style={styles.rungRow}>
+                  <Ionicons
+                    name={
+                      isFreed
+                        ? 'checkmark-circle'
+                        : r.reached
+                          ? 'radio-button-on-outline'
+                          : 'ellipse-outline'
+                    }
+                    size={15}
+                    color={
+                      isFreed
+                        ? COLORS.success
+                        : r.reached
+                          ? COLORS.accentText
+                          : COLORS.textSecondary
+                    }
+                  />
+                  <Text style={styles.rungName} numberOfLines={1}>
+                    {r.name}
+                  </Text>
+                  <Text style={styles.rungMonthly}>฿{formatCurrency(r.monthlyTHB)}/ด</Text>
+                  {/* ปุ่มต้องโผล่เมื่อ "ถึงแล้ว" **หรือ** "กดไว้แล้ว" — ถ้าเช็คแค่ reached
+                      พอสลับชิปผลตอบแทนลง (25% → 7%) ขั้นที่กดไว้จะกลายเป็นยังไม่ถึง
+                      แล้วปุ่มยกเลิกหายไปทั้งที่ยังติ๊กอยู่ = กดผิดแล้วถอยไม่ได้
+                      (เจอตอนเรนเดอร์จริง ไม่ใช่ตอนอ่านโค้ด) */}
+                  {r.reached || isFreed ? (
+                    <ActionButton
+                      label={isFreed ? 'ปลดแล้ว' : 'ถึงแล้ว · ยืนยัน'}
+                      icon={isFreed ? 'checkmark' : 'hand-right-outline'}
+                      variant={isFreed ? 'secondary' : 'primary'}
+                      size="sm"
+                      onPress={() => toggleFreed(r.kind, r.id, r.name, isFreed)}
+                    />
+                  ) : (
+                    <Text style={styles.rungState}>{r.percent.toFixed(0)}%</Text>
+                  )}
+                </View>
+              );
+            })}
 
             {ladder.current && (
               <Text style={styles.rungNext}>
@@ -513,10 +589,19 @@ export default function LifeCostScreen() {
                 {formatCurrency(ladder.current.monthlyTHB)}
               </Text>
             )}
+            {/* เงินที่กลับมาแล้วนับจากขั้นที่ "กดยืนยัน" เท่านั้น — ประโยคนี้อ้างว่าเงินอยู่ในกระเป๋าจริง */}
             {ladder.freedMonthlyTHB > 0 && (
               <Text style={styles.rungFreed}>
-                ปลดไปแล้ว {ladder.clearedCount} อย่าง — ได้เงินคืนเดือนละ ฿
+                ปลดจริงไปแล้ว {ladder.freedCount} อย่าง — ได้เงินคืนเดือนละ ฿
                 {formatCurrency(ladder.freedMonthlyTHB)} เอาไปลงทุนต่อได้
+              </Text>
+            )}
+            {/* ถึงแล้วแต่ยังไม่กด — ชวนให้กด ไม่ใช่ติ๊กให้เอง */}
+            {ladder.reachedNotFreedMonthlyTHB > 0 && (
+              <Text style={styles.rungReached}>
+                ทุนถึงแล้ว {ladder.reachedCount - ladder.freedCount} อย่าง (เดือนละ ฿
+                {formatCurrency(ladder.reachedNotFreedMonthlyTHB)}) — ยังไม่ได้กดยืนยัน
+                กดตอนที่เปลี่ยนมาให้พอร์ตจ่ายจริงแล้ว
               </Text>
             )}
 
@@ -769,6 +854,12 @@ export default function LifeCostScreen() {
 
 const styles = StyleSheet.create({
   menuCardDesktop: { borderRadius: RADIUS.lg },
+  rungReached: {
+    ...TEXT.caption,
+    color: COLORS.accentText,
+    marginTop: 6,
+    lineHeight: 18,
+  },
   investNow: {
     ...TEXT.caption,
     color: COLORS.primary,

@@ -81,6 +81,7 @@ import { INFLATION_RATE } from '../utils/portfolioCoverage';
 import { getLifeCosts } from '../services/lifeCostStorage';
 import { getRecurringBills } from '../services/storage';
 import { LifeCost } from '../types/lifeCost';
+import { getLadderFreed } from '../services/ladderFreedStorage';
 import { RecurringBill } from '../types';
 import { LifeLedger } from '../utils/lifeLedger';
 import { calculateTax, estimateGainTax, taxYearOf } from '../utils/taxCalc';
@@ -315,6 +316,9 @@ export default function PortfolioScreen() {
   const [ladderListOpen, setLadderListOpen] = useState(false);
   const [lifeCosts, setLifeCosts] = useState<LifeCost[]>([]);
   const [recurringBills, setRecurringBills] = useState<RecurringBill[]>([]);
+  // ขั้นที่คนกดยืนยันว่าปลดจริง — หน้านี้อ่านอย่างเดียว ปุ่มยืนยันอยู่หน้าค่าเสื่อม
+  // (ที่นั่นคือที่ที่จัดการรายการอยู่แล้ว หัวพอร์ตเป็นกระดานสรุป ไม่ใช่ที่กรอก)
+  const [ladderFreed, setLadderFreed] = useState<Map<string, string>>(new Map());
   const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [goalTargetInput, setGoalTargetInput] = useState('');
   const [goalExpectedInput, setGoalExpectedInput] = useState('');
@@ -421,6 +425,12 @@ export default function PortfolioScreen() {
       setRecurringBills(await getRecurringBills());
     } catch {
       setRecurringBills([]);
+    }
+    // getLadderFreed ทนตารางหายเองแล้ว (คืน Map ว่าง) = ยังไม่มีใครกดยืนยัน ซึ่งถูกต้อง
+    try {
+      setLadderFreed(await getLadderFreed());
+    } catch {
+      setLadderFreed(new Map());
     }
     try {
       // ของที่อยากได้ — โชว์เป็นบรรทัดสรุปในเมนู ไม่มีตาราง/ไม่มีของก็ซ่อนบรรทัดนั้น
@@ -1362,9 +1372,10 @@ export default function PortfolioScreen() {
         outflowsFrom(lifeCosts, recurringBills, new Date()),
         summary.totalValue,
         ladderRatePercent,
-        INFLATION_RATE
+        INFLATION_RATE,
+        ladderFreed
       ),
-    [lifeCosts, recurringBills, summary.totalValue, ladderRatePercent]
+    [lifeCosts, recurringBills, summary.totalValue, ladderRatePercent, ladderFreed]
   );
   // reason != null = ผลตอบแทนไม่ชนะเงินเฟ้อ ทุนเป็นอนันต์ → ใช้เป็นเป้าไม่ได้ ต้องถอยไปเป้าที่ตั้งเอง
   const ladderReady = lifeLadder.rungs.length > 0 && !lifeLadder.reason;
@@ -1392,7 +1403,11 @@ export default function PortfolioScreen() {
   const ladderRungCapGap = ladderRung
     ? Math.max(0, ladderRung.cumulativeTHB - summary.totalValue)
     : 0;
-  const ladderClearedNames = lifeLadder.rungs.filter((r) => r.cleared).map((r) => r.name);
+  // สองลิสต์แยกกัน: กดยืนยันแล้ว (ปลดจริง) กับทุนถึงแล้วแต่ยังไม่ได้กด
+  const ladderFreedNames = lifeLadder.rungs.filter((r) => r.freedAt).map((r) => r.name);
+  const ladderReachedNames = lifeLadder.rungs
+    .filter((r) => r.reached && !r.freedAt)
+    .map((r) => r.name);
   // รายการเรียงจากน้อยไปมากอยู่แล้ว (buildExpenseLadder เรียงตามทุน = เรียงตามยอดต่อเดือน)
   // ตัดที่ 8 แถวเพื่อไม่ให้หัวพอร์ตยาวเกิน แล้วบอกตรง ๆ ว่าเหลืออีกกี่อย่าง — ห้ามตัดเงียบ
   const LADDER_ROWS_MAX = 8;
@@ -1664,9 +1679,17 @@ export default function PortfolioScreen() {
                     {formatCurrency(ladderRungCapGap)}
                   </Text>
                 )}
-                {ladderClearedNames.length > 0 && (
+                {ladderFreedNames.length > 0 && (
                   <Text style={styles.ladderCleared}>
-                    ปลดไปแล้ว {ladderClearedNames.length} อย่าง: {ladderClearedNames.join(' · ')}
+                    ปลดจริงแล้ว {ladderFreedNames.length} อย่าง: {ladderFreedNames.join(' · ')}
+                  </Text>
+                )}
+                {/* ทุนถึงแล้วแต่ยังไม่ได้กดยืนยัน — บอกว่าถึงแล้ว ไม่ใช่ติ๊กให้เอง
+                    ปุ่มยืนยันอยู่หน้าค่าเสื่อม (ปุ่ม "ดูบันได" มุมขวาพาไปที่นั่น) */}
+                {ladderReachedNames.length > 0 && (
+                  <Text style={styles.ladderReached}>
+                    ทุนถึงแล้ว {ladderReachedNames.length} อย่าง: {ladderReachedNames.join(' · ')} —
+                    ยังไม่ได้กดยืนยัน กดที่ "ดูบันได" ตอนเปลี่ยนมาให้พอร์ตจ่ายจริงแล้ว
                   </Text>
                 )}
 
@@ -1694,9 +1717,21 @@ export default function PortfolioScreen() {
                     {ladderVisibleRungs.map((r) => (
                       <View key={`${r.kind}:${r.id}`} style={styles.ladderRow}>
                         <Ionicons
-                          name={r.cleared ? 'checkmark-circle' : 'ellipse-outline'}
+                          name={
+                            r.freedAt
+                              ? 'checkmark-circle'
+                              : r.reached
+                                ? 'radio-button-on-outline'
+                                : 'ellipse-outline'
+                          }
                           size={14}
-                          color={r.cleared ? '#7FE3B0' : 'rgba(255,255,255,0.5)'}
+                          color={
+                            r.freedAt
+                              ? '#7FE3B0'
+                              : r.reached
+                                ? COLORS.accent
+                                : 'rgba(255,255,255,0.5)'
+                          }
                         />
                         <Text
                           style={[styles.ladderName, r === ladderRung && styles.ladderNameNow]}
@@ -1705,8 +1740,14 @@ export default function PortfolioScreen() {
                           {r.name}
                         </Text>
                         <Text style={styles.ladderMonthly}>{formatCurrency(r.monthlyTHB)}/ด</Text>
-                        <Text style={[styles.ladderState, r.cleared && styles.ladderStateDone]}>
-                          {r.cleared ? 'ปลดแล้ว' : `${r.percent.toFixed(0)}%`}
+                        <Text
+                          style={[
+                            styles.ladderState,
+                            r.reached && styles.ladderStateReached,
+                            r.freedAt && styles.ladderStateDone,
+                          ]}
+                        >
+                          {r.freedAt ? 'ปลดแล้ว' : r.reached ? 'ถึงแล้ว' : `${r.percent.toFixed(0)}%`}
                         </Text>
                       </View>
                     ))}
@@ -2719,6 +2760,15 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
   ladderStateDone: { color: '#7FE3B0', opacity: 1 },
+  // ทุนถึงแล้วแต่ยังไม่ยืนยัน = ทอง (คนละสีกับเขียวที่แปลว่าเกิดขึ้นจริงแล้ว)
+  ladderStateReached: { color: COLORS.accent, opacity: 1 },
+  ladderReached: {
+    fontSize: 11.5,
+    fontFamily: FONTS.regular,
+    color: COLORS.accent,
+    marginTop: 4,
+    lineHeight: 16,
+  },
   // ขั้นที่กำลังทำในลิสต์ต้องหาเจอทันที ไม่งั้นกางลิสต์แล้วหลุดโฟกัส
   ladderNameNow: { fontFamily: FONTS.semibold, opacity: 1 },
   ladderCleared: {

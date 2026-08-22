@@ -303,8 +303,10 @@ export default function LifeGoalScreen() {
               icon="shield-checkmark-outline"
               title="ด่านพื้นฐาน · ให้พอร์ตจ่ายชีวิตแทน"
               tone={COLORS.success}
-              value={`${baseLadder.clearedCount}/${baseLadder.rungs.length}`}
-              valueSub="ปลดแล้ว"
+              // "ถึงแล้ว" ไม่ใช่ "ปลดแล้ว" — reachedCount คิดจากทุนล้วน ๆ
+              // ส่วนการปลดจริงต้องมีคนกดยืนยันที่หน้าค่าเสื่อม (ดู utils/expenseLadder.ts)
+              value={`${baseLadder.reachedCount}/${baseLadder.rungs.length}`}
+              valueSub="ทุนถึงแล้ว"
               sub={
                 baseLadder.current
                   ? `ขั้นถัดไป ${baseLadder.current.name} · ต้องมีพอร์ต ฿${formatCurrency(
