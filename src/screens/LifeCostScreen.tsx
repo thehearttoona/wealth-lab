@@ -481,6 +481,12 @@ export default function LifeCostScreen() {
               ต้องจ่ายเองเดือนละ ฿{formatCurrency(ladder.totalMonthlyTHB)} — ปลดทีละอย่าง
               เงินที่เคยจ่ายอันนั้นจะว่างมาลงทุนต่อ ทำให้อันถัดไปมาเร็วขึ้นเรื่อย ๆ
             </Text>
+            {/* ยอดต่อเดือนที่พอร์ตจ่ายได้ตอนนี้ — เลขตัวเดียวกับที่หัวพอร์ตใช้เป็นเป้า
+                (affordableMonthlyTHB จาก buildExpenseLadder) สองหน้าจึงไม่มีทางบอกไม่ตรงกัน */}
+            <Text style={styles.investNow}>
+              ถ้าขายตอนนี้ พอร์ตจ่ายได้เดือนละ ฿{formatCurrency(ladder.affordableMonthlyTHB)} (
+              {ladder.monthlyProgressPercent.toFixed(0)}% ของที่ต้องจ่าย) — แบบไม่แตะเงินต้น
+            </Text>
 
             {ladder.rungs.map((r) => (
               <View key={`${r.kind}:${r.id}`} style={styles.rungRow}>
@@ -763,6 +769,12 @@ export default function LifeCostScreen() {
 
 const styles = StyleSheet.create({
   menuCardDesktop: { borderRadius: RADIUS.lg },
+  investNow: {
+    ...TEXT.caption,
+    color: COLORS.primary,
+    marginTop: 6,
+    lineHeight: 18,
+  },
   container: { flex: 1, backgroundColor: COLORS.background },
   content: { padding: 16, paddingBottom: 32 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },

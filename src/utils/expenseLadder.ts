@@ -30,6 +30,12 @@ export interface LadderRung extends OutflowItem {
   capitalTHB: number;
   /** ทุนสะสมตั้งแต่ขั้นแรกถึงขั้นนี้ — ตัวที่ใช้ตัดสินว่าปลดถึงไหนแล้ว */
   cumulativeTHB: number;
+  /**
+   * ยอด **ต่อเดือน** สะสมถึงขั้นนี้ — หน่วยที่คนคิดเป็นจริง ๆ (2026-08-22 เจ้าของบอก)
+   * "เดือนละ 12,000" อ่านออกทันทีว่าคืออะไร ส่วน "ทุน 1,354,356" ต้องแปลในหัวก่อน
+   * เป็นเลขเดียวกับ cumulativeTHB แค่คนละหน่วย (× r ÷ 12) จึงไม่มีทางขัดกันเอง
+   */
+  cumulativeMonthlyTHB: number;
   cleared: boolean;
   /** ความคืบหน้าเฉพาะขั้นนี้ 0–100 (ขั้นก่อนหน้าต้องปลดครบก่อนถึงจะเริ่มนับ) */
   percent: number;
@@ -46,6 +52,14 @@ export interface ExpenseLadder {
   totalCapitalTHB: number;
   /** เงินที่ "กลับมา" แล้วต่อเดือน จากขั้นที่ปลดไปแล้ว — ตัวที่ทำให้ลูปเร่งตัวเอง */
   freedMonthlyTHB: number;
+  /**
+   * ทุนที่มีอยู่ตอนนี้จ่ายได้เดือนละเท่าไหร่ **แบบไม่แตะเงินต้น**
+   * คิดจากผลตอบแทนหลังเงินเฟ้อ ไม่ใช่ผลตอบแทนเปล่า ๆ — ที่ 7% พอร์ตได้มากกว่านี้ต่อเดือน
+   * แต่ส่วนที่เกินต้องกันไว้ให้ยอดจ่ายโตตามเงินเฟ้อ ไม่ใช่เงินที่ใช้ได้ (ดูหัวไฟล์)
+   */
+  affordableMonthlyTHB: number;
+  /** จ่ายได้กี่ % ของยอดต่อเดือนทั้งหมด (0–100) — เลขเดียวกับสัดส่วนทุน แค่คนละหน่วย */
+  monthlyProgressPercent: number;
   /** ผลตอบแทนสุทธิหลังเงินเฟ้อที่ใช้คิด (%) */
   realReturnPercent: number;
   /** คิดไม่ได้เพราะอะไร — null = คิดได้ปกติ */
@@ -59,6 +73,8 @@ const EMPTY = (realReturnPercent: number, reason: string | null): ExpenseLadder 
   totalMonthlyTHB: 0,
   totalCapitalTHB: 0,
   freedMonthlyTHB: 0,
+  affordableMonthlyTHB: 0,
+  monthlyProgressPercent: 0,
   realReturnPercent,
   reason,
 });
@@ -99,19 +115,28 @@ export const buildExpenseLadder = (
     return {
       ...i,
       cumulativeTHB: running,
+      // × r ÷ 12 คือการกลับสูตร capital = monthly × 12 ÷ r จึงเท่ากับผลรวม monthlyTHB
+      // ของขั้นแรกถึงขั้นนี้พอดี (คิดกลับแทนที่จะบวกซ้ำ เพื่อไม่ให้สองตัวเลขหลุดจากกันได้)
+      cumulativeMonthlyTHB: (running * r) / 12,
       cleared: capitalTHB >= running,
       percent: i.capitalTHB > 0 ? Math.min(100, (into / i.capitalTHB) * 100) : 0,
     };
   });
 
   const cleared = rungs.filter((x) => x.cleared);
+  const totalMonthlyTHB = usable.reduce((s, i) => s + i.monthlyTHB, 0);
+  // ทุนติดลบ/เพี้ยนถูกกันเป็น 0 — จ่ายได้ติดลบไม่มีความหมาย
+  const affordableMonthlyTHB = Math.max(0, (capitalTHB * r) / 12);
   return {
     rungs,
     current: rungs.find((x) => !x.cleared) ?? null,
     clearedCount: cleared.length,
-    totalMonthlyTHB: usable.reduce((s, i) => s + i.monthlyTHB, 0),
+    totalMonthlyTHB,
     totalCapitalTHB: running,
     freedMonthlyTHB: cleared.reduce((s, i) => s + i.monthlyTHB, 0),
+    affordableMonthlyTHB,
+    monthlyProgressPercent:
+      totalMonthlyTHB > 0 ? Math.min(100, (affordableMonthlyTHB / totalMonthlyTHB) * 100) : 0,
     realReturnPercent,
     reason: null,
   };

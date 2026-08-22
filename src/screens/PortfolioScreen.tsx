@@ -1367,12 +1367,22 @@ export default function PortfolioScreen() {
   // reason != null = ผลตอบแทนไม่ชนะเงินเฟ้อ ทุนเป็นอนันต์ → ใช้เป็นเป้าไม่ได้ ต้องถอยไปเป้าที่ตั้งเอง
   const ladderReady = lifeLadder.rungs.length > 0 && !lifeLadder.reason;
   const useLadderGoal = ladderReady && goalSource === 'life';
-  // ขั้นที่กำลังทำ — null = ปลดครบทุกขั้นแล้ว แล้วเป้าจะกลายเป็นยอดปลดครบ
+  // ── หน่วยของเป้าคือ "บาทต่อเดือน" (2026-08-22 เจ้าของบอก) ──
+  // "เดือนละ 12,000" อ่านออกทันทีว่าคืออะไร ส่วน "ทุน 1,354,356" ต้องแปลในหัวก่อน
+  // เป้าเต็มคือยอดต่อเดือนของทุกอย่าง ไม่ใช่แค่ขั้นที่กำลังทำ — คนอยากรู้ว่าปลายทางเท่าไหร่
+  // แล้วรายการข้างล่างเป็นตัวบอกว่าตอนนี้ถึงอันไหนแล้ว
   const ladderRung = lifeLadder.current;
-  const ladderTarget = ladderRung ? ladderRung.cumulativeTHB : lifeLadder.totalCapitalTHB;
-  const ladderPercent =
-    ladderTarget > 0 ? Math.max(0, Math.min(100, (summary.totalValue / ladderTarget) * 100)) : 0;
-  const ladderGapTHB = Math.max(0, ladderTarget - summary.totalValue);
+  const ladderTargetMonthly = lifeLadder.totalMonthlyTHB;
+  // "ถ้าขายตอนนี้" = มูลค่าพอร์ตวันนี้ (คำเดียวกับที่ analyzePortfolioGoal ใช้)
+  // แปลงเป็น "จ่ายได้เดือนละเท่าไหร่แบบไม่แตะเงินต้น" ผ่าน affordableMonthlyTHB
+  const ladderNowMonthly = lifeLadder.affordableMonthlyTHB;
+  const ladderPercent = Math.max(0, Math.min(100, lifeLadder.monthlyProgressPercent));
+  const ladderGapMonthly = Math.max(0, ladderTargetMonthly - ladderNowMonthly);
+  // รายการเรียงจากน้อยไปมากอยู่แล้ว (bulidExpenseLadder เรียงตามทุน = เรียงตามยอดต่อเดือน)
+  // ตัดที่ 8 แถวเพื่อไม่ให้หัวพอร์ตยาวเกิน แล้วบอกตรง ๆ ว่าเหลืออีกกี่อย่าง — ห้ามตัดเงียบ
+  const LADDER_ROWS_MAX = 8;
+  const ladderVisibleRungs = lifeLadder.rungs.slice(0, LADDER_ROWS_MAX);
+  const ladderHiddenCount = lifeLadder.rungs.length - ladderVisibleRungs.length;
 
   const goalGap = (() => {
     const target = goal?.targetAmount;
@@ -1589,19 +1599,17 @@ export default function PortfolioScreen() {
             )}
 
             {useLadderGoal ? (
-              /* ── เป้า = ทุนที่ต้องมีเพื่อปลดค่าใช้จ่ายจริง ──
-                 เป้าคือ "ทุนสะสมถึงขั้นที่กำลังทำ" ไม่ใช่ยอดปลดครบ เพราะยอดปลดครบเป็นหลักล้าน
-                 อยู่ไกลจนแถบไม่ขยับ ส่วนขั้นถัดไปเป็นก้อนที่ปลดได้จริงในเวลาที่มองเห็น */
+              /* ── เป้า = ยอดที่ต้องจ่ายทุกเดือน (หน่วยบาท/เดือน) ──
+                 หน่วยนี้คือหน่วยที่คนคิดเป็นจริง ๆ: "เดือนละ 12,000" อ่านออกทันทีว่าคืออะไร
+                 ส่วน "ทุน 1,354,356" ต้องแปลในหัวก่อนถึงจะรู้ว่ามันแปลว่าอะไร
+                 ฝั่งซ้ายคือ "ถ้าขายตอนนี้ พอร์ตจ่ายได้เดือนละเท่าไหร่" (มูลค่าวันนี้ × ผลตอบแทนจริง ÷ 12)
+                 ทุนยังอยู่ในบรรทัดล่างสำหรับคนที่อยากรู้ก้อน แต่ไม่ใช่พระเอกอีกแล้ว */
               <>
                 <View style={styles.goalCardTopRow}>
                   <Text style={styles.headerGoalSub}>
-                    มูลค่าพอร์ต {formatCurrency(summary.totalValue)}
+                    ถ้าขายตอนนี้ จ่ายได้เดือนละ {formatCurrency(ladderNowMonthly)}
                   </Text>
-                  <Text style={styles.headerGoalSub}>
-                    {ladderRung
-                      ? `เป้า ${formatCurrency(ladderTarget)}`
-                      : `ปลดครบทุกขั้นแล้ว (${formatCurrency(ladderTarget)})`}
-                  </Text>
+                  <Text style={styles.headerGoalSub}>เป้า เดือนละ {formatCurrency(ladderTargetMonthly)}</Text>
                 </View>
                 <View style={styles.headerGoalTrack}>
                   <View
@@ -1614,27 +1622,52 @@ export default function PortfolioScreen() {
                     ]}
                   />
                 </View>
-                {/* บรรทัดนี้คือเหตุผลของตัวเลขข้างบน — ปลดขั้นนี้แล้วได้อะไรกลับมาเป็นเงินต่อเดือน */}
                 <Text style={styles.headerGoalHint}>
                   {ladderRung
-                    ? `ขั้นนี้คือ "${ladderRung.name}" — ปลดแล้วไม่ต้องจ่ายเดือนละ ` +
-                      `${formatCurrency(ladderRung.monthlyTHB)} อีก · เหลืออีก ${formatCurrency(ladderGapTHB)}`
-                    : `ผลตอบแทนจ่ายค่าใช้จ่ายประจำได้เดือนละ ${formatCurrency(lifeLadder.totalMonthlyTHB)} แล้ว`}
+                    ? `ปลดไปแล้ว ${lifeLadder.clearedCount}/${lifeLadder.rungs.length} อย่าง · ` +
+                      `ขั้นถัดไป "${ladderRung.name}" เดือนละ ${formatCurrency(ladderRung.monthlyTHB)} · ` +
+                      `ยังขาดกำลังจ่ายอีกเดือนละ ${formatCurrency(ladderGapMonthly)}`
+                    : `พอร์ตจ่ายค่าใช้จ่ายประจำได้ครบทุกอย่างแล้ว เดือนละ ${formatCurrency(lifeLadder.totalMonthlyTHB)}`}
                 </Text>
-                <Text style={styles.headerGoalHint}>
-                  ปลดไปแล้ว {lifeLadder.clearedCount}/{lifeLadder.rungs.length} อย่าง ·
-                  {' '}ปลดครบทุกขั้นต้องมี {formatCurrency(lifeLadder.totalCapitalTHB)}
-                  {lifeLadder.freedMonthlyTHB > 0
-                    ? ` · ได้เงินคืนแล้วเดือนละ ${formatCurrency(lifeLadder.freedMonthlyTHB)}`
-                    : ''}
-                </Text>
-                {/* ผลตอบแทนเป็นข้อสมมติ ไม่ใช่คำสัญญา — ต้องพิมพ์กำกับทุกที่ที่เอาไปคิดทุน */}
+
+                {/* ── รายการเรียงจากน้อยไปมาก: "ถ้าขายตอนนี้ได้เป้าของอะไรบ้าง" ──
+                    เจ้าของขอเห็นรายอย่าง ไม่ใช่แค่ยอดรวม — เพราะสิ่งที่ตัดสินใจได้คือ
+                    "อีกนิดเดียวก็ปลดค่าเน็ตแล้ว" ไม่ใช่ "ไปได้ 26% ของทุนทั้งหมด"
+                    เรียงจากน้อยไปมากอยู่แล้วตั้งแต่ buildExpenseLadder (ทุนน้อย = ยอดต่อเดือนน้อย) */}
+                <View style={styles.ladderList}>
+                  {ladderVisibleRungs.map((r) => (
+                    <View key={`${r.kind}:${r.id}`} style={styles.ladderRow}>
+                      <Ionicons
+                        name={r.cleared ? 'checkmark-circle' : 'ellipse-outline'}
+                        size={14}
+                        color={r.cleared ? '#7FE3B0' : 'rgba(255,255,255,0.5)'}
+                      />
+                      <Text style={styles.ladderName} numberOfLines={1}>
+                        {r.name}
+                      </Text>
+                      <Text style={styles.ladderMonthly}>{formatCurrency(r.monthlyTHB)}/ด</Text>
+                      <Text style={[styles.ladderState, r.cleared && styles.ladderStateDone]}>
+                        {r.cleared ? 'ปลดแล้ว' : `${r.percent.toFixed(0)}%`}
+                      </Text>
+                    </View>
+                  ))}
+                  {ladderHiddenCount > 0 && (
+                    <Text style={styles.ladderMore}>
+                      + อีก {ladderHiddenCount} อย่าง — ดูครบที่ "ดูบันได"
+                    </Text>
+                  )}
+                </View>
+
+                {/* ผลตอบแทนเป็นข้อสมมติ ไม่ใช่คำสัญญา — ต้องพิมพ์กำกับทุกที่ที่เอาไปคิดกำลังจ่าย */}
                 <Text style={styles.headerGoalAssume}>
-                  คิดที่ผลตอบแทน {ladderRatePercent}% ต่อปี หักเงินเฟ้อ {INFLATION_RATE}% แล้วเหลือ{' '}
+                  "จ่ายได้เดือนละ" คือจ่ายได้ตลอดไปโดยไม่แตะเงินต้น คิดที่ผลตอบแทน{' '}
+                  {ladderRatePercent}% ต่อปี หักเงินเฟ้อ {INFLATION_RATE}% แล้วเหลือ{' '}
                   {lifeLadder.realReturnPercent.toFixed(1)}%
                   {goal?.expectedAnnualReturnPercent && goal.expectedAnnualReturnPercent > 0
                     ? ' (เลขที่คุณตั้งไว้เอง)'
                     : ' (ค่าเริ่มต้น ตั้งเองได้ที่ปุ่มแก้ไขในโหมดเป้าที่ตั้งเอง)'}
+                  {'\n'}เท่ากับต้องมีทุน {formatCurrency(lifeLadder.totalCapitalTHB)} · ตอนนี้{' '}
+                  {formatCurrency(summary.totalValue)}
                 </Text>
               </>
             ) : !goalAnalysis ? (
@@ -2596,6 +2629,40 @@ const styles = StyleSheet.create({
     opacity: 0.82,
     marginTop: 6,
     lineHeight: 16,
+  },
+  // รายการบันไดในหัวพอร์ต — พื้นน้ำเงิน จึงใช้ขาวโปร่งทั้งชุด
+  ladderList: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.18)',
+    paddingTop: 4,
+  },
+  ladderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  // minWidth: 0 บังคับ ไม่งั้นชื่อยาวดันตัวเลขหลุดขอบบนเว็บ (§1.4)
+  ladderName: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12.5,
+    fontFamily: FONTS.medium,
+    color: '#ffffff',
+    opacity: 0.95,
+  },
+  ladderMonthly: { fontSize: 12.5, fontFamily: FONTS.semibold, color: '#ffffff' },
+  ladderState: {
+    minWidth: 56,
+    textAlign: 'right',
+    fontSize: 11,
+    fontFamily: FONTS.regular,
+    color: '#ffffff',
+    opacity: 0.72,
+  },
+  ladderStateDone: { color: '#7FE3B0', opacity: 1 },
+  ladderMore: {
+    fontSize: 11,
+    fontFamily: FONTS.light,
+    color: '#ffffff',
+    opacity: 0.72,
+    marginTop: 4,
   },
   headerGoalDivider: {
     height: 1,
