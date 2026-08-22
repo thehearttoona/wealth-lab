@@ -43,6 +43,7 @@ import TaxDeductionScreen from '../screens/TaxDeductionScreen';
 import PersonalInfoScreen from '../screens/PersonalInfoScreen';
 import PurchaseGoalsScreen from '../screens/PurchaseGoalsScreen';
 import LifeCostScreen from '../screens/LifeCostScreen';
+import LifeLedgerScreen from '../screens/LifeLedgerScreen';
 import LifeGoalScreen from '../screens/LifeGoalScreen';
 import SellReviewScreen from '../screens/SellReviewScreen';
 import RealizedScreen from '../screens/RealizedScreen';
@@ -404,6 +405,18 @@ export default function Navigation() {
           component={LifeGoalScreen}
           options={({ navigation }) => ({
             title: 'เป้าหมายใหญ่สุดของชีวิต',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+                <Ionicons name="chevron-back" size={16} color="#ffffff" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen
+          name="LifeLedger"
+          component={LifeLedgerScreen}
+          options={({ navigation }) => ({
+            title: 'บัญชีให้พอร์ตจ่ายชีวิต',
             headerLeft: () => (
               <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
                 <Ionicons name="chevron-back" size={16} color="#ffffff" />

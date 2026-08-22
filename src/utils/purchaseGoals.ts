@@ -7,6 +7,10 @@
 //      (ไม่ใช่นับให้ทุกชิ้นพร้อมกัน — ของ 3 ชิ้นจะได้ปลดล็อกพร้อมกันทั้งที่กำไรมีก้อนเดียว)
 //   3. ของที่กด "ซื้อแล้ว" กินโควตาของตัวเองไปถาวร — หัก requiredTHB (ราคา × ตัวคูณ) ไม่ใช่หักแค่ราคาของ
 //      เพราะกฎคือ "ต้องทำกำไรให้ได้ N เท่าก่อนซื้อ" พอซื้อแล้วกำไรก้อนนั้นจึงถือว่าใช้สิทธิ์ไปแล้ว
+//   4. **บัญชีให้พอร์ตจ่ายชีวิตหักก่อนคิวรางวัลทั้งคิว** (2026-08-22 เจ้าของเลือกเอง) — ผ่าน reservedTHB
+//      ค่าเสื่อม + ค่าใช้จ่ายประจำเป็นของที่ต้องจ่ายอยู่ดี รางวัลเป็นของที่เลือกจะซื้อ
+//      ถ้าไม่หักก่อน กำไรก้อนเดียวจะดูเหมือนจ่ายได้ทั้งค่าชีวิตและปลดล็อกรางวัล = นับซ้ำ
+//      (ยอดที่ต้องหักคิดที่ utils/lifeLedger.ts ที่เดียว ไฟล์นี้แค่รับตัวเลขมา)
 //
 // ทุกอย่างเป็นเลขคณิตตรงไปตรงมา ไม่มีการพยากรณ์
 
@@ -35,6 +39,8 @@ export interface PurchaseGoalPlan {
   realizedProfitTHB: number;
   /** โควตาที่ของซึ่งซื้อแล้วกินไป */
   spentTHB: number;
+  /** กำไรที่บัญชีให้พอร์ตจ่ายชีวิตกินไปก่อน (ยอดค้าง) — คิวรางวัลได้ที่เหลือ */
+  reservedTHB: number;
   /** เหลือให้คิวที่ยังไม่ซื้อแบ่งกัน */
   availableTHB: number;
   pending: PurchaseGoalProgress[];
@@ -55,20 +61,29 @@ export const requiredProfitOf = (goal: PurchaseGoal): number => {
 const byQueue = (a: PurchaseGoal, b: PurchaseGoal): number =>
   a.sortOrder - b.sortOrder || (a.createdAt || '').localeCompare(b.createdAt || '');
 
+/**
+ * @param reservedTHB กำไรที่บัญชีให้พอร์ตจ่ายชีวิตจองไว้ก่อน (ยอดค้างจาก utils/lifeLedger)
+ *   หักออกจากกำไรก่อนแจกคิว ไม่ใช่หักจากชิ้นใดชิ้นหนึ่ง — มันคือด่านที่อยู่ก่อนคิวทั้งคิว
+ *   ทุกจอที่โชว์คิวรางวัลต้องส่งค่าเดียวกัน ไม่งั้นสองหน้าจะบอก "เหลือให้รางวัล" ไม่ตรงกัน
+ */
 export function planPurchaseGoals(
   goals: PurchaseGoal[],
-  realizedProfitTHB: number
+  realizedProfitTHB: number,
+  reservedTHB = 0
 ): PurchaseGoalPlan {
   const sorted = [...goals].sort(byQueue);
   const purchasedGoals = sorted.filter((g) => !!g.purchasedAt);
   const pendingGoals = sorted.filter((g) => !g.purchasedAt);
 
   const spentTHB = purchasedGoals.reduce((s, g) => s + requiredProfitOf(g), 0);
+  const reserved = Math.max(0, reservedTHB);
   // กำไรขาดทุนรวมติดลบได้ (ขายขาดทุน) — availableTHB ต้องไม่ติดลบ ไม่งั้น progress จะกลายเป็นเลขลบ
-  const availableTHB = Math.max(0, realizedProfitTHB - spentTHB);
+  const availableTHB = Math.max(0, realizedProfitTHB - spentTHB - reserved);
 
   let pool = availableTHB;
-  let cumulativeRequired = spentTHB;
+  // unlockAtTHB คือ "กำไรสะสมต้องถึงเท่านี้" จึงต้องนับยอดที่ชีวิตจองไว้เข้าไปด้วย
+  // ไม่งั้นการ์ดจะบอกว่าปลดล็อกที่ ฿50,000 ทั้งที่จริงต้องถึง ฿50,000 + ยอดค้าง
+  let cumulativeRequired = spentTHB + reserved;
 
   const pending: PurchaseGoalProgress[] = pendingGoals.map((goal, i) => {
     const priceTHB = Math.max(0, convertToTHB(goal.price, goal.currency));
@@ -111,6 +126,7 @@ export function planPurchaseGoals(
   return {
     realizedProfitTHB,
     spentTHB,
+    reservedTHB: reserved,
     availableTHB,
     pending,
     purchased,

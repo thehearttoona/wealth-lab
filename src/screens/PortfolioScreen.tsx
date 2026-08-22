@@ -74,6 +74,8 @@ import { getTaxProfile } from '../services/taxStorage';
 import { PurchaseGoal } from '../types/purchaseGoal';
 import { getPurchaseGoals } from '../services/purchaseGoalStorage';
 import { planPurchaseGoals } from '../utils/purchaseGoals';
+import { loadLifeLedger } from '../services/ledgerProfit';
+import { LifeLedger } from '../utils/lifeLedger';
 import { calculateTax, estimateGainTax, taxYearOf } from '../utils/taxCalc';
 import { UserProfile, incomeExemptionFor } from '../types/userProfile';
 import { getUserProfile } from '../services/userProfileStorage';
@@ -327,6 +329,8 @@ export default function PortfolioScreen() {
   // ── การขายจริง: ตัวชี้วัดฝีมือที่วัดได้ (ต่างจากกำไรลอยตัว) ──
   const [realizedTrades, setRealizedTrades] = useState<RealizedTrade[]>([]);
   const [purchaseGoals, setPurchaseGoals] = useState<PurchaseGoal[]>([]);
+  // บัญชีให้พอร์ตจ่ายชีวิต — โชว์เป็นแถวเมนู และเป็นตัวหักกำไรก่อนคิวรางวัล
+  const [lifeLedger, setLifeLedger] = useState<LifeLedger | null>(null);
   // ข้อมูลภาษีปีนี้ — null = ยังไม่ได้ตั้งค่าที่หน้า "ภาษี" (หรือยังไม่ได้รัน SQL)
   const [taxProfile, setTaxProfile] = useState<TaxProfile | null>(null);
   // ข้อมูลส่วนตัว — ใช้แค่ยกเว้นเงินได้ 190,000 (อายุ 65+/ผู้พิการ) ให้เลขภาษีตรงกับหน้าภาษี
@@ -375,11 +379,15 @@ export default function PortfolioScreen() {
       // ยังไม่มีตาราง/ยังไม่ตั้งแผน — ปล่อยเป็น null
     }
     try {
-      setRealizedTrades(await getRealizedTrades());
+      const trades = await getRealizedTrades();
+      setRealizedTrades(trades);
+      // ส่ง trades ต่อเข้าไปเลย ไม่ยิงซ้ำ — loadLifeLedger ทนตารางหายเองอยู่แล้ว
+      setLifeLedger(await loadLifeLedger(trades));
     } catch {
       // ยังไม่ได้รัน sql/realized_trades.sql — การ์ด "ผลงานจริง" จะไม่โชว์เอง
       // (ถ้ากดขายจริงแล้วตารางยังไม่มี handleConfirmSell จะบอกให้ไปรัน SQL อยู่แล้ว)
       setRealizedTrades([]);
+      setLifeLedger(null);
     }
     try {
       // ของที่อยากได้ — โชว์เป็นบรรทัดสรุปในเมนู ไม่มีตาราง/ไม่มีของก็ซ่อนบรรทัดนั้น
@@ -1282,7 +1290,13 @@ export default function PortfolioScreen() {
 
   // คิวรางวัล — ใช้กำไร realized ก้อนเดียวกับการ์ด "ผลงานจริง" ด้านบน
   // ไม่ห่อ useMemo เพราะ realized เองก็คิดใหม่ทุก render อยู่แล้ว ห่อไปก็ไม่ได้ประหยัดอะไร
-  const purchasePlan = planPurchaseGoals(purchaseGoals, realized.totalPnlTHB);
+  // ยอดค้างของบัญชีชีวิตกินกำไรก่อนคิวรางวัลทั้งคิว — ต้องส่งค่าเดียวกับหน้า PurchaseGoals
+  // ไม่งั้นสองหน้าจะบอก "เหลือให้รางวัล" ไม่ตรงกัน (กฎข้อ 4 ใน utils/purchaseGoals)
+  const purchasePlan = planPurchaseGoals(
+    purchaseGoals,
+    realized.totalPnlTHB,
+    lifeLedger?.owedTHB ?? 0
+  );
 
   const goalAnalysis: PortfolioGoalAnalysis | null = goal
     ? analyzePortfolioGoal(
@@ -1585,6 +1599,47 @@ export default function PortfolioScreen() {
             มันคือ "ผลของรอบที่ปิดไปแล้ว" อ่านคู่กับรอบที่เปิดอยู่ในหน้าเดียวกันตรงกว่า
             แถวรอบลงทุนจึงต้องโชว์ยอดกำไรที่ขายแล้วไว้ด้วย ไม่งั้นทางเข้าจะหายไปจากพอร์ตเงียบ ๆ */}
         <MenuCard style={isDesktop && styles.menuCardDesktop}>
+          {/* บัญชีให้พอร์ตจ่ายชีวิตอยู่แถวแรก เพราะเป็นเป้าที่มาก่อนเป้าอื่นทั้งหมด
+              (เจ้าของเลือกเอง 2026-08-22) — กำไรก้อนแรกไปจ่ายค่าเสื่อม + ค่าใช้จ่ายประจำ
+              ที่เกินจากนั้นถึงเป็นกำไรของตัวเองจริง ๆ
+              ⚠️ ยอดค้างไม่ใช่ "เป้าของเดือนนี้" ห้ามเขียนแบบมีเส้นตาย (ดู utils/lifeLedger.ts) */}
+          {/* แถวนี้โชว์ตลอด ไม่รอให้มีข้อมูลก่อนเหมือนแถวรางวัล/ภาษี — ทางเข้าที่โผล่หลังใช้แล้ว
+              เท่ากับไม่มีทางเข้าเลยตอนเริ่ม (ไก่กับไข่) */}
+          {lifeLedger && (
+            <MenuRow
+              icon="wallet-outline"
+              title="บัญชีให้พอร์ตจ่ายชีวิต"
+              tone={
+                lifeLedger.monthCount === 0
+                  ? COLORS.primary
+                  : lifeLedger.owedTHB > 0
+                    ? COLORS.warning
+                    : COLORS.success
+              }
+              value={
+                lifeLedger.monthCount === 0
+                  ? 'ยังไม่เริ่ม'
+                  : baht(lifeLedger.owedTHB > 0 ? lifeLedger.owedTHB : lifeLedger.surplusTHB)
+              }
+              valueSub={
+                lifeLedger.monthCount === 0
+                  ? undefined
+                  : lifeLedger.owedTHB > 0
+                    ? 'ค้างอยู่'
+                    : 'กำไรจริง'
+              }
+              valueNegative={lifeLedger.monthCount > 0 && lifeLedger.owedTHB > 0}
+              sub={
+                lifeLedger.monthCount === 0
+                  ? 'จดค่าเสื่อม + ค่าใช้จ่ายประจำรายเดือน แล้วให้กำไรที่ขายได้ไปจ่ายให้'
+                  : lifeLedger.owedTHB > 0
+                    ? `${lifeLedger.monthsOwed} เดือนที่กำไรยังไปไม่ถึง · จ่ายครบแล้ว ${lifeLedger.monthsCovered} เดือน`
+                    : `พอร์ตจ่ายค่าชีวิตครบ ${lifeLedger.monthsCovered} เดือนแล้ว`
+              }
+              onPress={() => navigation.navigate('LifeLedger')}
+              first
+            />
+          )}
           <MenuRow
             icon="cash-outline"
             title="เงินรอลงทุน"
@@ -1599,7 +1654,7 @@ export default function PortfolioScreen() {
                 : powderStat.reason ?? 'ยังไม่ได้จดยอด'
             }
             onPress={() => navigation.navigate('DryPowder')}
-            first
+            first={!lifeLedger}
           />
           <MenuRow
             icon="repeat-outline"

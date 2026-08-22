@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import {
   LifeCost,
   LifeCostKind,
@@ -37,6 +37,9 @@ import { getPortfolioSummary } from '../services/investmentStorage';
 import { COLORS, RADIUS, TEXT, FONTS, formatCurrency, toChristianYear } from '../utils/constants';
 import { ActionButton } from '../components/ActionButton';
 import { Mascot, MascotEmpty, MascotState } from '../components/Mascot';
+import { MenuRow, MenuCard } from '../components/MenuRow';
+import { loadLifeLedger } from '../services/ledgerProfit';
+import { LifeLedger } from '../utils/lifeLedger';
 import { notify, confirmAsk } from '../utils/dialog';
 import { useResponsive } from '../utils/responsive';
 
@@ -78,6 +81,7 @@ const moodFor = (count: number, overdue: number, gap: number): MascotState => {
  * เหตุผลอยู่ในหัวไฟล์ utils/lifeCost.ts — ห้ามเอาไปบวกที่ไหนโดยไม่อ่านก่อน
  */
 export default function LifeCostScreen() {
+  const navigation = useNavigation<any>();
   const { isDesktop } = useResponsive();
   const [items, setItems] = useState<LifeCost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,6 +107,8 @@ export default function LifeCostScreen() {
   const [years, setYears] = useState(10);
   const [portfolioValue, setPortfolioValue] = useState(0);
   const [bills, setBills] = useState<RecurringBill[]>([]);
+  // บัญชีให้พอร์ตจ่ายชีวิต — หน้านี้แค่โชว์ยอดค้างเป็นทางเข้า ไม่คิดซ้ำ (คิดที่ utils/lifeLedger)
+  const [lifeLedger, setLifeLedger] = useState<LifeLedger | null>(null);
 
   const today = new Date().toISOString().slice(0, 10);
   const todayDate = useMemo(() => new Date(`${today}T00:00:00`), [today]);
@@ -127,6 +133,8 @@ export default function LifeCostScreen() {
     } catch {
       setBills([]);
     }
+    // ยังไม่ได้รัน sql/life_ledger.sql = ได้บัญชีเปล่า แถวยังโชว์ได้เป็นทางเข้าไปเริ่ม
+    setLifeLedger(await loadLifeLedger());
     setLoading(false);
   }, []);
 
@@ -428,10 +436,53 @@ export default function LifeCostScreen() {
           )}
         </View>
 
-        {/* ── บันได "ให้พอร์ตจ่ายชีวิตแทน" — ด่านที่ต้องผ่านก่อนเป้าอื่นทั้งหมด ──
-            เป็นเป้า **ลงเงิน** ไม่ใช่เป้า **กำไรรายเดือน** โดยตั้งใจ: โควตากำไรรายเดือน
-            สร้างแรงกดดันให้ขายตอนสิ้นเดือนให้ครบเป้า ซึ่งขัดกับทั้งระบบ
-            (จังหวะขายมาจากรอบถึงเป้า ไม่ใช่ปฏิทิน) */}
+        {/* ── ทางเข้าบัญชีให้พอร์ตจ่ายชีวิต ──
+            อยู่เหนือการ์ดบันไดเพราะเป็นคำถามที่ใกล้กว่า: บันไดตอบ "ต้องมีทุนเท่าไหร่ถึงปลดถาวร"
+            (หลักแสน–หลักล้าน) บัญชีตอบ "เดือนที่ผ่านมาพอร์ตจ่ายทันหรือยัง" ซึ่งขยับได้ทุกรอบที่ปิด */}
+        {lifeLedger && (
+          <MenuCard style={isDesktop && styles.menuCardDesktop}>
+            <MenuRow
+              icon="wallet-outline"
+              title="บัญชีให้พอร์ตจ่ายชีวิต"
+              tone={
+                lifeLedger.monthCount === 0
+                  ? COLORS.primary
+                  : lifeLedger.owedTHB > 0
+                    ? COLORS.warning
+                    : COLORS.success
+              }
+              value={
+                lifeLedger.monthCount === 0
+                  ? 'ยังไม่เริ่ม'
+                  : `฿${formatCurrency(
+                      lifeLedger.owedTHB > 0 ? lifeLedger.owedTHB : lifeLedger.surplusTHB
+                    )}`
+              }
+              valueSub={
+                lifeLedger.monthCount === 0
+                  ? undefined
+                  : lifeLedger.owedTHB > 0
+                    ? 'ค้างอยู่'
+                    : 'กำไรจริง'
+              }
+              valueNegative={lifeLedger.monthCount > 0 && lifeLedger.owedTHB > 0}
+              sub={
+                lifeLedger.monthCount === 0
+                  ? 'จดยอดรายเดือน แล้วให้กำไรที่ขายได้จริงไปจ่ายให้ทีละเดือน'
+                  : `จ่ายครบแล้ว ${lifeLedger.monthsCovered} เดือน จาก ${lifeLedger.monthCount} เดือนที่จด`
+              }
+              onPress={() => navigation.navigate('LifeLedger')}
+              first
+            />
+          </MenuCard>
+        )}
+
+        {/* ── บันได "ให้พอร์ตจ่ายชีวิตแทน" — ปลดค่าใช้จ่ายถาวรด้วยขนาดทุน ──
+            การ์ดนี้เป็นเป้า **ลงเงิน** และยังต้องเป็นแบบนั้น: มันตอบว่า "ต้องมีทุนเท่าไหร่
+            ถึงไม่ต้องควักเงินเดือนอีกเลย" ซึ่งเป็นเรื่องของขนาดพอร์ต ไม่ใช่ผลงานรายเดือน
+            ⚠️ ที่ยังห้ามอยู่คือ **โควตากำไรรายเดือน** (ต้องทำให้ได้ ฿X ทุกเดือน) เพราะมันมีเส้นตาย
+            แล้วจะสั่งให้ขายวันที่ 30 ให้ครบเป้า — ส่วน "บัญชีให้พอร์ตจ่ายชีวิต" ข้างบนไม่ใช่โควตา
+            มันเป็นบัญชีเดินสะพัดที่ยอดค้างไม่มีวันครบกำหนด (ดู utils/lifeLedger.ts) */}
         {ladder.rungs.length > 0 && (
           <View style={styles.investCard}>
             <Text style={styles.investTitle}>
@@ -520,7 +571,8 @@ export default function LifeCostScreen() {
               ทุนที่ต้องมีคิดจากผลตอบแทนหลังหักเงินเฟ้อ {ladder.realReturnPercent.toFixed(1)}%
               ({ratePercent}% − เงินเฟ้อ {INFLATION_RATE}%) เพราะค่าใช้จ่ายโตตามเงินเฟ้อไปด้วย
               {'\n'}ผลตอบแทนเป็นข้อสมมติที่คุณเลือกเอง ไม่ใช่สิ่งที่รับประกันได้ ·
-              เลขนี้เป็นเป้า "ลงเงินเพิ่ม" ไม่ใช่เป้า "ต้องทำกำไรให้ได้เท่านี้"
+              เลขนี้เป็นเป้า "ลงเงินเพิ่ม" คือปลดค่าใช้จ่ายถาวรด้วยขนาดทุน ส่วนการดูว่าเดือนที่ผ่านมา
+              กำไรจ่ายค่าชีวิตทันหรือยัง อยู่ที่ "บัญชีให้พอร์ตจ่ายชีวิต" ข้างบน
             </Text>
           </View>
         )}
@@ -722,6 +774,7 @@ export default function LifeCostScreen() {
 }
 
 const styles = StyleSheet.create({
+  menuCardDesktop: { borderRadius: RADIUS.lg },
   container: { flex: 1, backgroundColor: COLORS.background },
   content: { padding: 16, paddingBottom: 32 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },

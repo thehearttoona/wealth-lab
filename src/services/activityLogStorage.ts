@@ -30,6 +30,7 @@ export type ActivityEntity =
   | 'tax_profile'
   | 'life_cost'
   | 'life_goal'
+  | 'life_ledger'
   | 'currency'
   | 'platform'
   // นำเข้าจากสเตตเมนต์ = 1 แถวต่อการนำเข้า 1 ครั้ง (ไม่ใช่ต่อรายการ)

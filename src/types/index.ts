@@ -60,8 +60,10 @@ export type RootStackParamList = {
   Tax: undefined;
   PersonalInfo: undefined;
   PurchaseGoals: undefined;
-  LifeCost: undefined;
-  LifeGoal: undefined;   // เป้าหมายใหญ่สุดของชีวิต — บันไดเงินก้อน วัดจากความมั่งคั่งสุทธิ   // ค่าเสื่อมของชีวิต — ของที่จะต้องจ่ายอีกแน่ ๆ แค่ยังไม่ถึงวัน
+  LifeCost: undefined;   // ค่าเสื่อมของชีวิต — ของที่จะต้องจ่ายอีกแน่ ๆ แค่ยังไม่ถึงวัน
+  LifeGoal: undefined;   // เป้าหมายใหญ่สุดของชีวิต — บันไดเงินก้อน วัดจากความมั่งคั่งสุทธิ
+  // บัญชีให้พอร์ตจ่ายชีวิต — ค่าใช้จ่ายสะสมรายเดือน vs กำไรที่ขายจริง (บัญชีเดินสะพัด ไม่ใช่โควตา)
+  LifeLedger: undefined;
   SellReview: undefined;
   // หน้าที่แยกออกจากพอร์ต (เดิมเป็นการ์ดเรียงกันอยู่ในหน้าเดียว)
   Realized: undefined;

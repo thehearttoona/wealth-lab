@@ -28,6 +28,7 @@ import {
 } from '../services/purchaseGoalStorage';
 import { getCurrencies } from '../services/currencyStorage';
 import { getRealizedTrades } from '../services/realizedStorage';
+import { loadLifeLedger } from '../services/ledgerProfit';
 import { summarizeRealized } from '../utils/realizedAnalysis';
 import { planPurchaseGoals, PurchaseGoalProgress } from '../utils/purchaseGoals';
 import { COLORS, RADIUS, TEXT, FONTS, formatCurrency, formatCurrencyWithType, convertToTHB } from '../utils/constants';
@@ -73,6 +74,8 @@ export default function PurchaseGoalsScreen() {
   const [busy, setBusy] = useState(false);
   // ของที่ซื้อแล้วยุบไว้ก่อน — ลิสต์นี้ยาวขึ้นเรื่อย ๆ และไม่ใช่ของที่ต้องดูทุกวัน
   const [showPurchased, setShowPurchased] = useState(false);
+  // ยอดค้างของบัญชีให้พอร์ตจ่ายชีวิต — กินกำไรก่อนคิวนี้ทั้งคิว
+  const [reservedTHB, setReservedTHB] = useState(0);
 
   // modal เพิ่ม/แก้ไข
   const [modalVisible, setModalVisible] = useState(false);
@@ -92,8 +95,12 @@ export default function PurchaseGoalsScreen() {
     try {
       const trades = await getRealizedTrades();
       setRealizedProfit(summarizeRealized(trades).totalPnlTHB);
+      // บัญชีให้พอร์ตจ่ายชีวิตหักก่อนคิวรางวัลทั้งคิว (กฎข้อ 4 ใน utils/purchaseGoals)
+      // ส่ง trades ที่โหลดมาแล้วต่อไปเลย ไม่ต้องยิงซ้ำ
+      setReservedTHB((await loadLifeLedger(trades)).owedTHB);
     } catch {
       setRealizedProfit(0);
+      setReservedTHB(0);
     }
     try {
       setGoals(await getPurchaseGoals());
@@ -122,7 +129,10 @@ export default function PurchaseGoalsScreen() {
     }, [load])
   );
 
-  const plan = useMemo(() => planPurchaseGoals(goals, realizedProfit), [goals, realizedProfit]);
+  const plan = useMemo(
+    () => planPurchaseGoals(goals, realizedProfit, reservedTHB),
+    [goals, realizedProfit, reservedTHB]
+  );
 
   // ── modal ──
   const openAdd = () => {
@@ -390,6 +400,13 @@ export default function PurchaseGoalsScreen() {
             <Text style={styles.kpiLabel}>กันไว้ให้ของที่ซื้อแล้ว</Text>
             <Text style={styles.kpiValue}>{formatCurrency(plan.spentTHB)}</Text>
           </View>
+          {/* ค่าชีวิตกินก่อนคิวรางวัล — โผล่เฉพาะตอนมียอดค้าง ไม่งั้นเป็นช่อง 0 กวนสายตา */}
+          {plan.reservedTHB > 0 && (
+            <View style={styles.kpiCell}>
+              <Text style={styles.kpiLabel}>กันไว้จ่ายค่าชีวิต</Text>
+              <Text style={styles.kpiValue}>{formatCurrency(plan.reservedTHB)}</Text>
+            </View>
+          )}
           <View style={styles.kpiCell}>
             <Text style={styles.kpiLabel}>เหลือให้คิว</Text>
             <Text style={styles.kpiValue}>{formatCurrency(plan.availableTHB)}</Text>
@@ -409,6 +426,14 @@ export default function PurchaseGoalsScreen() {
             ของที่ซื้อแล้วกินโควตา {formatCurrency(plan.spentTHB)} ซึ่งเกินกำไรที่ขายจริงตอนนี้{' '}
             {formatCurrency(plan.realizedProfitTHB)} อยู่{' '}
             {formatCurrency(plan.spentTHB - plan.realizedProfitTHB)} — คิวจะยังไม่ขยับจนกำไรไล่ทัน
+          </Text>
+        )}
+
+        {/* บอกตรง ๆ ว่าคิวถอยเพราะอะไร — ไม่งั้นยอดที่เคยปลดล็อกได้หายไปเฉย ๆ อ่านเป็นบั๊ก */}
+        {plan.reservedTHB > 0 && (
+          <Text style={styles.nextUpText}>
+            บัญชีให้พอร์ตจ่ายชีวิตค้างอยู่ {formatCurrency(plan.reservedTHB)} — กำไรไปจ่ายค่าเสื่อม
+            กับค่าใช้จ่ายประจำก่อน ที่เหลือจึงเข้าคิวรางวัล
           </Text>
         )}
 
